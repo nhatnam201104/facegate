@@ -72,7 +72,7 @@ Lệnh này in thời gian detect, thời gian embed và số mặt đạt chấ
 app/
   engines.py     backend nhận diện (OpenCVEngine: YuNet+SFace, OnnxEngine: SCRFD+ArcFace)
   quality.py     đánh giá kích thước, độ mờ, ánh sáng, góc mặt (heuristic)
-  tracker.py     IoU tracker + trạng thái từng track
+  tracker.py     bám mặt: IoU trên vị trí dự đoán theo vận tốc, dự phòng theo khoảng cách tâm; tách track khi khuôn mặt không khớp, gộp khi cùng nhân viên
   gallery.py     gallery trong RAM, so khớp ngưỡng + margin top-2
   pipeline.py    vòng xử lý chính, rule chấm công, ghi lịch sử, chế độ chờ, vẽ khung
   camera.py      đọc webcam / file / RTSP trong thread riêng, tự kết nối lại

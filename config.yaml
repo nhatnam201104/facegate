@@ -32,7 +32,8 @@ recognition:
   margin: 0.06             # top1 - top2 (2 nguoi khac nhau) phai >= margin
   min_good_frames: 2       # so frame dat chat luong toi thieu truoc khi chot ten
   max_track_embeddings: 10
-  track_max_age: 1.0       # giay: mat track neu khong thay lai
+  track_max_age: 2.0       # giay: giu track (an khung) de noi lai khi mat bi che / quay di
+  split_cosine: 0.25       # frame moi khac khuon mat cua track duoi muc nay -> tach track (tranh tron 2 nguoi)
 
 events:
   # Moi nhan vien chi check-in 1 lan/ngay; cac lan sau chi hien "Da cham cong luc ..."

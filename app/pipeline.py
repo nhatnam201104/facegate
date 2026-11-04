@@ -21,6 +21,7 @@ from .tracker import IoUTracker, Track
 log = logging.getLogger("pipeline")
 
 VERIFY_SLACK = 0.05   # danh tinh da chot bi huy khi cosine tut duoi (nguong - VERIFY_SLACK)
+DRAW_FRESH = 0.5      # chi ve khung cua track vua thay trong N giay (track dang cho noi lai thi an)
 MOTION_SIZE = (160, 90)      # anh nho de do chuyen dong (re, khong dung model)
 MOTION_PIXEL_DIFF = 20       # do lech muc xam de tinh 1 pixel la "thay doi"
 SLEEP_PREVIEW_EVERY = 2.0    # che do cho: cap nhat hinh tren man hinh moi N giay
@@ -73,6 +74,7 @@ class Pipeline:
         self.margin = float(rc["margin"])
         self.min_good = int(rc["min_good_frames"])
         self.max_embs = int(rc["max_track_embeddings"])
+        self.split_cos = float(rc.get("split_cosine", 0.25))
         self.tracker = IoUTracker(max_age=float(rc["track_max_age"]))
         lc = cfg.get("liveness", {})
         self.live_thr = float(lc.get("threshold", 0.7))
@@ -274,8 +276,9 @@ class Pipeline:
         faces = self._detect(frame)
         matched, expired = self.tracker.update(faces, now)
         for t, f in matched:
-            if t.clip_sid is None and self.clips is not None and self.clips.enabled:
-                t.clip_sid = self.clips.start()
+            if t.id not in self.tracker.tracks:   # da bi gop vao track khac trong vong nay
+                continue
+            self._start_clip(t)
             self._update_track(t, f, frame, now)
         for t in expired:
             self._on_track_end(t)
@@ -292,12 +295,23 @@ class Pipeline:
                 t.reset_identity()
                 t.event_done = False
 
+    def _start_clip(self, t: Track) -> None:
+        if t.clip_sid is None and self.clips is not None and self.clips.enabled:
+            t.clip_sid = self.clips.start()
+
     def _update_track(self, t: Track, f: Face, frame: np.ndarray, now: float) -> None:
         q = assess(frame, f, self.qcfg)
         t.last_reason = q.reason
         if q.ok:
             with self.engine_lock:
                 emb = self.engine.embed_aligned(self.engine.align(frame, f))
+            if len(t.embs) >= 2 and float(emb @ t.agg_embedding()) < self.split_cos:
+                # tracker noi nham nguoi khac vao track nay -> tach, khong tron embedding 2 nguoi
+                log.info("Track %d: khuon mat moi khong khop (cos %.2f) -> tach track",
+                         t.id, float(emb @ t.agg_embedding()))
+                self._on_track_end(t)
+                t = self.tracker.split(t, f, now)
+                self._start_clip(t)
             t.embs.append((emb, max(q.score, 0.05)))
             t.embs = t.embs[-self.max_embs:]
             t.good_frames += 1
@@ -308,7 +322,7 @@ class Pipeline:
                 t.live.append(self.liveness.real_prob(frame, f.bbox))
                 t.live = t.live[-self.live_win:]
             if t.good_frames >= self.min_good:
-                self._identify(t, now)
+                t = self._identify(t, now)
         elif t.best_crop is None:
             t.best_crop = crop_with_margin(frame, f.bbox)
 
@@ -338,8 +352,9 @@ class Pipeline:
         elif t.employee_id is not None and live and not t.event_done:
             self._emit(t, None)
 
-    def _identify(self, t: Track, now: float) -> None:
-        """Chot danh tinh, va xac minh lai lien tuc sau khi da chot."""
+    def _identify(self, t: Track, now: float) -> Track:
+        """Chot danh tinh, va xac minh lai lien tuc sau khi da chot. Tra ve track de xu ly tiep
+        (co the la track cu cua cung nguoi neu vua gop)."""
         m = self.gallery.match(t.agg_embedding(), self.threshold, self.margin)
         t.best_score = max(t.best_score, m.score)
         if m.employee_id is not None and m.score >= self.threshold:
@@ -349,6 +364,7 @@ class Pipeline:
                 t.employee_id, t.code, t.name = m.employee_id, m.code, m.name
                 t.score, t.margin, t.confirmed_at = m.score, m.margin, now
                 log.info("Nhan dien %s (%s) score=%.3f margin=%.3f", m.name, m.code, m.score, m.margin)
+                return self._merge_same_person(t)
         elif m.employee_id != t.employee_id or m.score < self.threshold - VERIFY_SLACK:
             log.info("Track %d: khong con khop %s (top=%s score=%.3f) -> xac minh lai",
                      t.id, t.code, m.code, m.score)
@@ -356,6 +372,22 @@ class Pipeline:
             t.event_done = False
         else:
             t.score, t.margin = m.score, m.margin
+        return t
+
+    def _merge_same_person(self, t: Track) -> Track:
+        """Track moi vua nhan ra nhan vien X trong khi track cu cua X dang cho noi lai (mat mat < max_age):
+        gop vao track cu -> 1 lan xuat hien, 1 clip. Chi gop track cu KHONG thay trong vong nay
+        (2 mat cung luc giong X, vd nguoi that + anh dien thoai, thi khong gop)."""
+        for o in self.tracker.tracks.values():
+            if (o is not t and o.employee_id == t.employee_id and o.last_seen < t.last_seen
+                    and not o.spoof and not t.spoof):
+                log.info("Track %d: cung %s voi track %d vua mat -> gop", t.id, t.code, o.id)
+                if self.clips is not None:
+                    self.clips.stop(t.clip_sid, keep=False)   # clip cua o van dang ghi ca doan nay
+                self.tracker.absorb(o, t)
+                o.embs, o.live = o.embs[-self.max_embs:], o.live[-self.live_win:]
+                return o
+        return t
 
     def _live_state(self, t: Track) -> str:
         """off -> coi nhu nguoi that | checking | live | spoof."""
@@ -477,6 +509,8 @@ class Pipeline:
         view = cv2.resize(frame, (int(w * s), int(h * s))) if s < 1 else frame.copy()
         boxes = []
         for t in list(self.tracker.tracks.values()):
+            if now - t.last_seen > DRAW_FRESH:   # dang cho noi lai: khong ve khung "ma" o vi tri cu
+                continue
             lm = t.live_mean
             ltxt = f" · thật {lm:.2f}" if self.liveness is not None and lm is not None else ""
             state = self._live_state(t)
