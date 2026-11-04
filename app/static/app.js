@@ -27,7 +27,7 @@ async function loadPeople() {
   });
 }
 
-const reloadVideo = img => img.src = "/video.mjpg?" + Date.now();
+const reloadVideo = (img, url = "/video.mjpg") => img.src = `${url}?${Date.now()}`;
 reloadVideo($("#video"));
 $("#video").onerror = () => setTimeout(() => reloadVideo($("#video")), 2000);
 let lastStatus = null;
@@ -187,7 +187,7 @@ function applyEnrollMode() {
 function updateEnrollPreview() {
   const img = $("#enrollVideo");
   const show = $("#tab-enroll").classList.contains("active") && !$("#camRow").hidden;
-  if (show && !img.getAttribute("src")) reloadVideo(img);
+  if (show && !img.getAttribute("src")) reloadVideo(img, "/video_raw.mjpg");  // luong sach, khong khung tracker
   if (!show && img.getAttribute("src")) img.removeAttribute("src");
 }
 document.querySelectorAll("input[name=mode]").forEach(r => r.onchange = applyEnrollMode);

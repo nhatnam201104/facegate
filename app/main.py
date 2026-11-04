@@ -15,6 +15,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 
+import cv2
 import uvicorn
 from fastapi import Body, FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.concurrency import run_in_threadpool
@@ -107,6 +108,41 @@ async def video():
                 await asyncio.sleep(0.2)
                 continue
             yield b"--frame\r\nContent-Type: image/jpeg\r\nContent-Length: " + str(len(jpg)).encode() + b"\r\n\r\n" + jpg + b"\r\n"
+
+    return StreamingResponse(gen(), media_type="multipart/x-mixed-replace; boundary=frame")
+
+
+@app.get("/video_raw.mjpg")
+async def video_raw():
+    """Luong camera sach (khong khung tracker/nhan/HUD): dung cho man hinh dang ky co huong dan."""
+    pcfg = ctx.cfg["pipeline"]
+    interval = 1.0 / max(1.0, float(pcfg["stream_fps"]))
+    width = float(pcfg["stream_width"])
+
+    def next_jpeg(last: int):
+        deadline = time.time() + 2.0
+        while time.time() < deadline:
+            fid, frame = ctx.camera.read()      # doc moi lan: nguon camera co the bi doi o tab Truc tiep
+            if frame is not None and fid != last:
+                h, w = frame.shape[:2]
+                s = min(1.0, width / w)
+                view = cv2.resize(frame, (int(w * s), int(h * s))) if s < 1 else frame
+                ok, buf = cv2.imencode(".jpg", view, [cv2.IMWRITE_JPEG_QUALITY, 80])
+                if ok:
+                    return fid, buf.tobytes()
+            time.sleep(0.02)
+        return last, None
+
+    async def gen():
+        last = -1
+        while True:
+            t0 = time.time()
+            last, jpg = await run_in_threadpool(next_jpeg, last)
+            if jpg is None:
+                await asyncio.sleep(0.2)
+                continue
+            yield b"--frame\r\nContent-Type: image/jpeg\r\nContent-Length: " + str(len(jpg)).encode() + b"\r\n\r\n" + jpg + b"\r\n"
+            await asyncio.sleep(max(0.0, interval - (time.time() - t0)))
 
     return StreamingResponse(gen(), media_type="multipart/x-mixed-replace; boundary=frame")
 
