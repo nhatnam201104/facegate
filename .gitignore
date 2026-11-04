@@ -1,0 +1,18 @@
+# Moi truong Python
+.venv/
+__pycache__/
+*.pyc
+
+# Du lieu chay (DB nhan vien, anh khuon mat, clip) - du lieu sinh trac hoc, KHONG push
+data/
+
+# Model tai bang setup.bat / scripts/download_models.py
+models/*.onnx
+
+# Cong cu / IDE
+.remember/
+.claude/
+.vscode/
+.idea/
+*.tmp
+*.log

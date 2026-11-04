@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FaceGate · Demo nhận diện cổng</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <div class="brand"><span class="dot" id="camDot"></span>FaceGate <small>PoC demo</small></div>
+  <nav>
+    <button data-tab="live" class="active">Trực tiếp</button>
+    <button data-tab="attendance">Chấm công</button>
+    <button data-tab="history">Lịch sử</button>
+    <button data-tab="enroll">Đăng ký</button>
+    <button data-tab="employees">Nhân viên</button>
+    <button data-tab="events">Sự kiện &amp; đánh giá</button>
+  </nav>
+  <div class="status" id="statusLine">Đang kết nối…</div>
+</header>
+
+<main>
+  <!-- LIVE -->
+  <section id="tab-live" class="tab active">
+    <div class="srcbar">
+      <div class="srcnow">
+        <span class="rec" id="recBadge">ĐANG NHẬN DIỆN</span>
+        <span class="muted">Nguồn:</span> <b id="srcLabel">…</b>
+        <button type="button" class="btn" id="zoneBtn" title="Chỉ chuyển động trong vùng này mới đánh thức chế độ chờ">Vùng cửa</button>
+      </div>
+      <form id="srcForm" class="srcform">
+        <select name="kind" aria-label="Loại nguồn video">
+          <option value="webcam">Webcam</option>
+          <option value="file">File video</option>
+          <option value="rtsp">Camera RTSP</option>
+        </select>
+        <input name="value" id="srcValue" value="0" aria-label="Chỉ số webcam hoặc URL RTSP">
+        <input type="file" name="file" id="srcFile" accept="video/*" hidden aria-label="File video">
+        <button type="submit" class="primary" id="srcBtn">Đổi nguồn</button>
+        <span id="srcMsg" class="msg"></span>
+      </form>
+    </div>
+    <div class="live">
+      <div class="video">
+        <img id="video" alt="Video trực tiếp">
+        <div class="placeholder" id="videoPh">Đang kết nối nguồn video…</div>
+        <svg id="zoneSvg" hidden aria-label="Vùng phát hiện chuyển động"></svg>
+        <div class="zonebar" id="zoneBar" hidden>
+          <span>Bấm lên hình để chấm các góc <b>vùng lối đi</b> (≥ 3 điểm). Tránh cửa sổ, cây, màn hình.</span>
+          <button type="button" class="btn" id="zoneUndo">Xóa điểm cuối</button>
+          <button type="button" class="btn" id="zoneFull">Toàn khung</button>
+          <button type="button" class="btn" id="zoneCancel">Hủy</button>
+          <button type="button" class="primary" id="zoneSave">Lưu vùng</button>
+          <span class="msg" id="zoneMsg"></span>
+        </div>
+        <div class="greet" id="greet" hidden role="status" aria-live="polite">
+          <img id="greetImg" alt="">
+          <div><div class="greet-kind" id="greetKind"></div><div class="greet-name" id="greetName"></div>
+            <div class="greet-sub" id="greetSub"></div></div>
+        </div>
+      </div>
+      <aside>
+        <div class="today" id="today" aria-label="Thống kê hôm nay">
+          <div><b id="tdPresent">–</b><span>Có mặt</span></div>
+          <div><b id="tdLate">–</b><span>Đi muộn</span></div>
+          <div class="bad"><b id="tdSpoof">–</b><span>Giả mạo</span></div>
+          <small class="muted" id="tdShift"></small>
+        </div>
+        <h3>Sự kiện mới <label class="mute"><input type="checkbox" id="soundOn" checked> Âm báo</label></h3>
+        <ul id="feed" class="feed"><li class="muted">Chưa có sự kiện</li></ul>
+        <div class="legend">
+          <span><i style="background:#5ac83c"></i>Đã nhận diện</span>
+          <span><i style="background:#ffa500"></i>Đang xác minh</span>
+          <span><i style="background:#e63c3c"></i>Unknown / Giả mạo</span>
+          <span><i style="background:#aaa"></i>Chất lượng thấp</span>
+        </div>
+      </aside>
+    </div>
+  </section>
+
+  <!-- ATTENDANCE -->
+  <section id="tab-attendance" class="tab">
+    <form class="filters card" id="attForm">
+      <label>Từ ngày <input type="date" name="date_from"></label>
+      <label>Đến ngày <input type="date" name="date_to"></label>
+      <label>Nhân viên <select name="code" class="peopleSel"><option value="">Tất cả</option></select></label>
+      <div class="quick">
+        <button type="button" data-range="today">Hôm nay</button>
+        <button type="button" data-range="week">Tuần này</button>
+        <button type="button" data-range="month">Tháng này</button>
+      </div>
+      <button type="submit" class="primary">Xem</button>
+      <a class="btn" id="attCsv" href="#">Xuất CSV</a>
+      <span class="muted" id="attShift"></span>
+    </form>
+    <div class="card">
+      <h3>Tổng hợp theo nhân viên</h3>
+      <table><thead><tr><th>Mã</th><th>Họ tên</th><th>Số ngày check-in</th><th>Đúng giờ</th><th>Đi muộn</th>
+        <th>Tổng phút muộn</th><th>Vắng</th></tr></thead><tbody id="attSum"></tbody></table>
+    </div>
+    <div class="card">
+      <h3>Chi tiết theo ngày</h3>
+      <table><thead><tr><th>Ngày</th><th>Mã</th><th>Họ tên</th><th>Giờ check-in</th><th>Đi muộn</th>
+        <th>Trạng thái</th><th></th></tr></thead><tbody id="attBody"></tbody></table>
+    </div>
+  </section>
+
+  <!-- HISTORY -->
+  <section id="tab-history" class="tab">
+    <form class="filters card" id="histForm">
+      <label>Từ ngày <input type="date" name="date_from"></label>
+      <label>Đến ngày <input type="date" name="date_to"></label>
+      <label>Người <select name="code" class="peopleSel"><option value="">Tất cả</option></select></label>
+      <label>Loại <select name="kind">
+        <option value="">Tất cả</option><option value="employee">Nhân viên</option>
+        <option value="unknown">Người lạ</option><option value="spoof">Giả mạo</option></select></label>
+      <button type="submit" class="primary">Lọc</button>
+      <button type="button" class="btn" id="histZip">Tải tất cả clip (ZIP)</button>
+      <span class="muted" id="histCount"></span>
+    </form>
+    <div class="grid" id="histGrid"></div>
+  </section>
+
+  <!-- ENROLL -->
+  <section id="tab-enroll" class="tab">
+    <div class="cols">
+      <form id="enrollForm" class="card">
+        <h3>Đăng ký khuôn mặt</h3>
+        <label>Mã nhân viên <input name="code" required placeholder="VD: NV001" pattern="[A-Za-z0-9_.\-]{1,32}"></label>
+        <label>Họ tên <input name="name" required placeholder="Nguyễn Văn A"></label>
+        <p class="hint">Quay 6–10 giây: nhìn thẳng → xoay trái/phải → ngẩng/cúi nhẹ. Đủ sáng, chỉ một người trong khung.</p>
+        <div class="mode">
+          <label><input type="radio" name="mode" value="file" checked> Tải video lên</label>
+          <label><input type="radio" name="mode" value="camera"> Quay từ camera cổng</label>
+        </div>
+        <label id="fileRow">Video (MP4/WebM) <input type="file" name="file" accept="video/*">
+          <small class="muted">Video chỉ dùng để đăng ký. Nhận diện trực tiếp vẫn chạy trên nguồn ở tab Trực tiếp.</small></label>
+        <div id="camRow" hidden>
+          <label>Số giây quay <input type="number" name="seconds" value="8" min="4" max="20"></label>
+          <div class="preview video">
+            <img id="enrollVideo" alt="Xem trước camera">
+            <span class="rec on" id="enrollRec" hidden>ĐANG QUAY <b id="enrollCount"></b></span>
+          </div>
+        </div>
+        <button type="submit" class="primary" id="enrollBtn">Xử lý đăng ký</button>
+        <div id="enrollMsg" class="msg"></div>
+      </form>
+      <div class="card" id="enrollResult"><h3>Kết quả</h3><p class="muted">Chưa có.</p></div>
+    </div>
+  </section>
+
+  <!-- EMPLOYEES -->
+  <section id="tab-employees" class="tab">
+    <div class="card">
+      <h3>Danh sách nhân viên <small class="muted">— HR duyệt trước khi kích hoạt nhận diện</small></h3>
+      <table><thead><tr><th></th><th>Mã</th><th>Họ tên</th><th>Trạng thái</th><th>Embedding</th><th>Cảnh báo</th><th></th></tr></thead>
+        <tbody id="empBody"></tbody></table>
+    </div>
+  </section>
+
+  <!-- EVENTS -->
+  <section id="tab-events" class="tab">
+    <div class="metrics" id="metrics"></div>
+    <div class="card">
+      <h3>Sự kiện <small class="muted">— gán nhãn để tính false accept / false reject</small>
+        <a class="btn" href="/api/events.csv">Xuất CSV</a> <button class="btn" id="reloadEvents">Tải lại</button></h3>
+      <table><thead><tr><th>Ảnh</th><th>Thời gian</th><th>Kết quả</th><th>Score</th><th>Người thật</th><th>Vào/ra</th><th>Trễ</th><th>HRM</th><th>Nhãn</th></tr></thead>
+        <tbody id="evBody"></tbody></table>
+    </div>
+  </section>
+</main>
+
+<div id="modal" hidden><img id="modalImg" alt=""></div>
+<div id="player" hidden role="dialog" aria-label="Xem clip">
+  <div class="player-box">
+    <div class="player-head"><b id="playerTitle"></b><span class="muted" id="playerSub"></span>
+      <a class="btn" id="playerDl" download>Tải clip</a><button class="btn" id="playerClose">Đóng ✕</button></div>
+    <video id="playerVideo" controls autoplay playsinline></video>
+  </div>
+</div>
+<script src="/static/app.js"></script>
+<script src="/static/attendance.js"></script>
+<script src="/static/history.js"></script>
+<script src="/static/zone.js"></script>
+</body>
+</html>

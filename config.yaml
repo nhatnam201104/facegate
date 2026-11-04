@@ -1,0 +1,102 @@
+# ==== FaceGate demo - cau hinh ====
+# Sua file nay roi chay lai run.bat
+
+camera:
+  # 0 = webcam laptop | duong dan file video (vd: data/test.mp4) | RTSP:
+  # rtsp://user:pass@192.168.1.64:554/Streaming/Channels/102   (102 = substream Hikvision)
+  source: 0
+  name: gate-1
+  loop_file: true          # file video: phat lap lai de demo
+
+pipeline:
+  # opencv : YuNet + SFace (OpenCV Zoo, Apache-2.0)  -> mac dinh, an toan license
+  # onnx   : SCRFD-500M + ArcFace MobileFaceNet (InsightFace, CHI dung nghien cuu/benchmark)
+  backend: opencv
+  detect_fps: 5            # so lan detect moi giay (3-5 la du)
+  det_score: 0.6           # nguong tin cay cua detector
+  max_faces: 3             # PoC: toi da 3 mat cung luc
+  stream_fps: 15           # fps video gui len trinh duyet
+  stream_width: 960        # resize khung hinh hien thi
+
+quality:
+  min_face: 60             # canh ngan nho nhat cua mat (pixel)
+  min_blur: 40             # phuong sai Laplacian toi thieu (cang cao cang net)
+  min_brightness: 45
+  max_brightness: 225
+  max_yaw: 35              # do, quay ngang qua muc nay thi bo qua frame
+
+recognition:
+  thresholds:              # nguong cosine theo backend - can hieu chinh bang footage that
+    opencv: 0.42
+    onnx: 0.40
+  margin: 0.06             # top1 - top2 (2 nguoi khac nhau) phai >= margin
+  min_good_frames: 2       # so frame dat chat luong toi thieu truoc khi chot ten
+  max_track_embeddings: 10
+  track_max_age: 1.0       # giay: mat track neu khong thay lai
+
+events:
+  # Moi nhan vien chi check-in 1 lan/ngay; cac lan sau chi hien "Da cham cong luc ..."
+  # none: xac nhan dung nguoi that la ghi check-in
+  # line: chi ghi khi di qua duong ao theo chieu VAO (in_when)
+  direction: none
+  line: [[0.0, 0.6], [1.0, 0.6]]   # toa do chuan hoa 0..1 (x, y)
+  in_when: down            # down: di tu tren xuong duoi qua line = IN; up: nguoc lai
+  log_unknown: true        # luu su kien Unknown de danh gia (khong gui HRM)
+
+
+liveness:                  # chong gia mao bang anh/man hinh (MiniFASNet, passive)
+  enabled: true
+  threshold: 0.70          # TB xac suat "nguoi that" >= muc nay moi duoc cham cong
+  spoof_below: 0.35        # TB duoi muc nay = gia mao: canh bao, khong cham cong
+  min_frames: 4            # so frame tot toi thieu truoc khi ket luan
+  window: 8                # lay trung binh tren N frame gan nhat cua track
+
+attendance:
+  shift_start: "08:00"
+  shift_end: "17:00"
+  grace_minutes: 5         # tre/som trong khoang nay van tinh dung gio
+  workdays: [1, 2, 3, 4, 5]   # 1 = Thu 2 ... 7 = Chu nhat (tinh vang)
+
+clips:                     # clip video moi lan xuat hien (tab Lich su)
+  enabled: true
+  fps: 10
+  width: 640
+  pre_seconds: 2           # lay them truoc khi mat xuat hien
+  post_seconds: 1.5        # va sau khi mat roi khung hinh
+  max_seconds: 60          # clip dai nhat cho 1 lan xuat hien
+  retention_days: 30       # tu xoa clip cu (du lieu sinh trac hoc)
+
+
+power:                     # che do cho: tranh nhan dien lien tuc 24/7 khi khong co ai
+  sleep: true
+  idle_seconds: 30         # khong thay mat / chuyen dong trong N giay -> vao che do cho
+  motion_threshold: 0.01   # ti le diem anh thay doi de danh thuc (0.01 = 1%); tang neu hay tu bat vi nhieu sang
+  sleep_check_fps: 4       # so lan do chuyen dong moi giay khi dang cho
+  confirm_seconds: 1.0     # co chuyen dong trong vung -> tim khuon mat trong N giay; khong thay = la cay/bong, ngu tiep
+  # Vung loi di (toa do 0..1). Chi chuyen dong trong vung moi danh thuc. Ve tren web: tab Truc tiep > "Vung cua".
+  # Vung ve tren web luu o data/settings.json va duoc uu tien hon dong nay.
+  motion_zone: [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]
+
+enrollment:
+  sample_fps: 10           # tach frame tu video dang ky
+  min_frames: 5
+  max_frames: 15
+  per_bin: 3               # toi da so frame cho moi o goc nhin
+  dedup_cosine: 0.95       # 2 frame giong nhau hon muc nay thi bo bot 1
+  keep_video: false        # mac dinh xoa video goc sau khi xu ly
+  camera_seconds: 8
+
+hrm:
+  adapter: mock            # mock | erpnext
+  erpnext:
+    url: http://localhost:8000
+    api_key: ""
+    api_secret: ""
+    device_id: gate-1
+
+storage:
+  data_dir: data
+
+server:
+  host: 127.0.0.1
+  port: 8090
