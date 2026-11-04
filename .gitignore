@@ -16,3 +16,4 @@ models/*.onnx
 .idea/
 *.tmp
 *.log
+.ua/

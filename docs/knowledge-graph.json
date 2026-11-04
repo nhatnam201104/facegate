@@ -1,0 +1,2658 @@
+{
+ "version": "1.0.0",
+ "project": {
+  "name": "facegate",
+  "languages": [
+   "python",
+   "javascript",
+   "html",
+   "css",
+   "yaml",
+   "markdown",
+   "batch"
+  ],
+  "frameworks": [
+   "FastAPI",
+   "Uvicorn"
+  ],
+  "description": "PoC chạy CPU trên Windows: nhận diện khuôn mặt nhân viên tại cổng để chấm công (check-in, phút đi muộn), có chống giả mạo, chế độ ngủ, clip lịch sử và adapter HRM.",
+  "analyzedAt": "2026-11-04T04:36:49.911378+00:00",
+  "gitCommitHash": "1c2894e13f655f41e3fe02fc73ec25fa74987ba4"
+ },
+ "nodes": [
+  {
+   "id": "file:app/camera.py",
+   "type": "file",
+   "name": "camera.py",
+   "filePath": "app/camera.py",
+   "summary": "Bọc nguồn camera/RTSP/file video trong một thread đọc nền, kèm tiện ích kiểm tra khung hình đen và kiểm tra nguồn có đọc được không; hỗ trợ ghi video.",
+   "tags": [
+    "camera",
+    "video-capture",
+    "threading",
+    "service"
+   ],
+   "complexity": "moderate"
+  },
+  {
+   "id": "class:app/camera.py:Camera",
+   "type": "class",
+   "name": "Camera",
+   "filePath": "app/camera.py",
+   "lineRange": [
+    45,
+    186
+   ],
+   "summary": "Lớp đọc frame liên tục từ webcam/RTSP/file trong thread riêng, cho phép đổi nguồn, đọc frame mới nhất và ghi video.",
+   "tags": [
+    "camera",
+    "threading",
+    "service"
+   ],
+   "complexity": "moderate"
+  },
+  {
+   "id": "file:app/clips.py",
+   "type": "file",
+   "name": "clips.py",
+   "filePath": "app/clips.py",
+   "summary": "Ghi clip video cho mỗi lần khuôn mặt xuất hiện, có pre-roll/post-roll, mã hóa trong thread riêng qua hàng đợi và dọn clip cũ định kỳ.",
+   "tags": [
+    "video-recording",
+    "threading",
+    "queue",
+    "service"
+   ],
+   "complexity": "complex"
+  },
+  {
+   "id": "class:app/clips.py:ClipRecorder",
+   "type": "class",
+   "name": "ClipRecorder",
+   "filePath": "app/clips.py",
+   "lineRange": [
+    42,
+    233
+   ],
+   "summary": "Điều phối vòng đời clip (start/push/stop), ghi WebM/MP4 bất đồng bộ, gọi callback khi hoàn tất và xóa file khi không giữ lại.",
+   "tags": [
+    "recorder",
+    "threading",
+    "queue"
+   ],
+   "complexity": "complex"
+  },
+  {
+   "id": "file:app/config.py",
+   "type": "file",
+   "name": "config.py",
+   "filePath": "app/config.py",
+   "summary": "Nạp cấu hình từ file YAML và giải quyết các đường dẫn dữ liệu/mô hình cho toàn ứng dụng.",
+   "tags": [
+    "config",
+    "yaml",
+    "utility"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:app/config.py:load_config",
+   "type": "function",
+   "name": "load_config",
+   "filePath": "app/config.py",
+   "lineRange": [
+    9,
+    27
+   ],
+   "summary": "Đọc config YAML, bổ sung khóa _paths và trả về dict cấu hình.",
+   "tags": [
+    "config",
+    "loader",
+    "utility"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "file:app/db.py",
+   "type": "file",
+   "name": "db.py",
+   "filePath": "app/db.py",
+   "summary": "Lớp lưu trữ SQLite (demo) cho nhân viên, embedding, sự kiện chấm công, lần xuất hiện và outbox HRM, có migrate nhẹ.",
+   "tags": [
+    "database",
+    "sqlite",
+    "data-access",
+    "storage"
+   ],
+   "complexity": "complex"
+  },
+  {
+   "id": "class:app/db.py:DB",
+   "type": "class",
+   "name": "DB",
+   "filePath": "app/db.py",
+   "lineRange": [
+    88,
+    225
+   ],
+   "summary": "Repository SQLite thread-safe: CRUD nhân viên, embedding, sự kiện, appearance, nhãn và trạng thái đẩy HRM.",
+   "tags": [
+    "repository",
+    "sqlite",
+    "database"
+   ],
+   "complexity": "complex"
+  },
+  {
+   "id": "file:app/gallery.py",
+   "type": "file",
+   "name": "gallery.py",
+   "filePath": "app/gallery.py",
+   "summary": "Gallery embedding trong RAM và so khớp open-set bằng cosine với ngưỡng và margin top-2.",
+   "tags": [
+    "face-matching",
+    "embedding",
+    "open-set",
+    "service"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "class:app/gallery.py:Gallery",
+   "type": "class",
+   "name": "Gallery",
+   "filePath": "app/gallery.py",
+   "lineRange": [
+    24,
+    70
+   ],
+   "summary": "Giữ ma trận embedding đã chuẩn hóa, nạp lại từ DB và trả về Match tốt nhất theo ngưỡng/margin.",
+   "tags": [
+    "gallery",
+    "matching",
+    "thread-safe"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "class:app/gallery.py:Match",
+   "type": "class",
+   "name": "Match",
+   "filePath": "app/gallery.py",
+   "lineRange": [
+    11,
+    21
+   ],
+   "summary": "Dataclass kết quả so khớp: nhân viên, điểm top-1/top-2, cờ chấp nhận và margin.",
+   "tags": [
+    "data-model",
+    "dataclass"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "file:app/hrm.py",
+   "type": "file",
+   "name": "hrm.py",
+   "filePath": "app/hrm.py",
+   "summary": "Adapter đẩy sự kiện chấm công sang HRM (mock JSONL hoặc ERPNext) với outbox và retry trong worker nền.",
+   "tags": [
+    "hrm",
+    "integration",
+    "outbox",
+    "retry"
+   ],
+   "complexity": "moderate"
+  },
+  {
+   "id": "class:app/hrm.py:MockHRM",
+   "type": "class",
+   "name": "MockHRM",
+   "filePath": "app/hrm.py",
+   "lineRange": [
+    19,
+    28
+   ],
+   "summary": "HRM giả ghi sự kiện ra data/hrm_mock.jsonl phục vụ demo.",
+   "tags": [
+    "hrm",
+    "mock",
+    "adapter"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "class:app/hrm.py:ERPNextHRM",
+   "type": "class",
+   "name": "ERPNextHRM",
+   "filePath": "app/hrm.py",
+   "lineRange": [
+    31,
+    50
+   ],
+   "summary": "Adapter POST Employee Checkin lên ERPNext/Frappe HRMS qua urllib.",
+   "tags": [
+    "hrm",
+    "erpnext",
+    "http-client"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "class:app/hrm.py:HRMWorker",
+   "type": "class",
+   "name": "HRMWorker",
+   "filePath": "app/hrm.py",
+   "lineRange": [
+    57,
+    88
+   ],
+   "summary": "Thread nền lấy sự kiện chờ đẩy từ DB, gọi adapter và cập nhật trạng thái retry.",
+   "tags": [
+    "worker",
+    "outbox",
+    "threading"
+   ],
+   "complexity": "moderate"
+  },
+  {
+   "id": "file:app/liveness.py",
+   "type": "file",
+   "name": "liveness.py",
+   "filePath": "app/liveness.py",
+   "summary": "Chống giả mạo thụ động bằng hai model MiniFASNet ONNX (V2, V1SE), trung bình softmax để tính xác suất người thật.",
+   "tags": [
+    "anti-spoofing",
+    "liveness",
+    "onnx",
+    "ml-inference"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "class:app/liveness.py:Liveness",
+   "type": "class",
+   "name": "Liveness",
+   "filePath": "app/liveness.py",
+   "lineRange": [
+    32,
+    52
+   ],
+   "summary": "Chạy hai model MiniFASNet trên vùng crop khuôn mặt và trả xác suất người thật.",
+   "tags": [
+    "liveness",
+    "onnx",
+    "inference"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:app/liveness.py:create_liveness",
+   "type": "function",
+   "name": "create_liveness",
+   "filePath": "app/liveness.py",
+   "lineRange": [
+    55,
+    60
+   ],
+   "summary": "Factory tạo Liveness từ cấu hình, trả None nếu tắt hoặc thiếu model.",
+   "tags": [
+    "factory",
+    "liveness"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "file:app/main.py",
+   "type": "file",
+   "name": "main.py",
+   "filePath": "app/main.py",
+   "summary": "Điểm vào FastAPI: lifespan khởi tạo pipeline/DB/camera, phục vụ video MJPEG, WebSocket, API đăng ký, nhân viên, sự kiện, metrics và CSV.",
+   "tags": [
+    "entry-point",
+    "fastapi",
+    "api-handler",
+    "websocket"
+   ],
+   "complexity": "complex"
+  },
+  {
+   "id": "function:app/main.py:lifespan",
+   "type": "function",
+   "name": "lifespan",
+   "filePath": "app/main.py",
+   "lineRange": [
+    43,
+    69
+   ],
+   "summary": "Khởi tạo và dọn dẹp tài nguyên (DB, camera, pipeline, HRM worker) khi app chạy.",
+   "tags": [
+    "api-handler",
+    "fastapi"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:app/main.py:video",
+   "type": "function",
+   "name": "video",
+   "filePath": "app/main.py",
+   "lineRange": [
+    93,
+    110
+   ],
+   "summary": "Endpoint stream MJPEG khung hình đã vẽ kết quả.",
+   "tags": [
+    "api-handler",
+    "fastapi"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:app/main.py:ws",
+   "type": "function",
+   "name": "ws",
+   "filePath": "app/main.py",
+   "lineRange": [
+    114,
+    129
+   ],
+   "summary": "WebSocket đẩy trạng thái/sự kiện thời gian thực tới giao diện.",
+   "tags": [
+    "api-handler",
+    "fastapi"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:app/main.py:set_source",
+   "type": "function",
+   "name": "set_source",
+   "filePath": "app/main.py",
+   "lineRange": [
+    214,
+    240
+   ],
+   "summary": "Đổi nguồn camera (webcam/RTSP/file upload) và lưu thiết lập.",
+   "tags": [
+    "api-handler",
+    "fastapi"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:app/main.py:enroll_video",
+   "type": "function",
+   "name": "enroll_video",
+   "filePath": "app/main.py",
+   "lineRange": [
+    265,
+    278
+   ],
+   "summary": "Đăng ký nhân viên từ video tải lên.",
+   "tags": [
+    "api-handler",
+    "fastapi"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:app/main.py:enroll_camera",
+   "type": "function",
+   "name": "enroll_camera",
+   "filePath": "app/main.py",
+   "lineRange": [
+    282,
+    293
+   ],
+   "summary": "Đăng ký nhân viên từ camera trong số giây chỉ định.",
+   "tags": [
+    "api-handler",
+    "fastapi"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:app/main.py:metrics",
+   "type": "function",
+   "name": "metrics",
+   "filePath": "app/main.py",
+   "lineRange": [
+    349,
+    375
+   ],
+   "summary": "Tính chỉ số thống kê chấm công/nhận diện.",
+   "tags": [
+    "api-handler",
+    "fastapi"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:app/main.py:events_csv",
+   "type": "function",
+   "name": "events_csv",
+   "filePath": "app/main.py",
+   "lineRange": [
+    379,
+    391
+   ],
+   "summary": "Xuất sự kiện chấm công ra CSV.",
+   "tags": [
+    "api-handler",
+    "fastapi"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:app/main.py:main",
+   "type": "function",
+   "name": "main",
+   "filePath": "app/main.py",
+   "lineRange": [
+    394,
+    396
+   ],
+   "summary": "Chạy uvicorn khởi động ứng dụng.",
+   "tags": [
+    "api-handler",
+    "fastapi"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "file:app/draw.py",
+   "type": "file",
+   "name": "draw.py",
+   "filePath": "app/draw.py",
+   "summary": "Vẽ overlay lên khung hình (bbox, nhãn tên không dấu/có dấu bằng font, trạng thái) để stream video.",
+   "tags": [
+    "rendering",
+    "overlay",
+    "opencv",
+    "utility"
+   ],
+   "complexity": "moderate"
+  },
+  {
+   "id": "function:app/draw.py:draw_overlay",
+   "type": "function",
+   "name": "draw_overlay",
+   "filePath": "app/draw.py",
+   "lineRange": [
+    46,
+    77
+   ],
+   "summary": "Vẽ bbox, tên và trạng thái của các track lên frame.",
+   "tags": [
+    "rendering",
+    "overlay"
+   ],
+   "complexity": "moderate"
+  },
+  {
+   "id": "function:app/draw.py:strip_accents",
+   "type": "function",
+   "name": "strip_accents",
+   "filePath": "app/draw.py",
+   "lineRange": [
+    38,
+    40
+   ],
+   "summary": "Bỏ dấu tiếng Việt khỏi chuỗi để vẽ bằng font OpenCV.",
+   "tags": [
+    "utility",
+    "text"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "file:app/engines.py",
+   "type": "file",
+   "name": "engines.py",
+   "filePath": "app/engines.py",
+   "summary": "Bao bọc các engine nhận diện khuôn mặt (OpenCV YuNet/SFace và ONNX) với lớp Face, căn chỉnh khuôn mặt và factory create_engine.",
+   "tags": [
+    "face-recognition",
+    "engine",
+    "factory",
+    "onnx"
+   ],
+   "complexity": "complex"
+  },
+  {
+   "id": "class:app/engines.py:Face",
+   "type": "class",
+   "name": "Face",
+   "filePath": "app/engines.py",
+   "lineRange": [
+    22,
+    33
+   ],
+   "summary": "Dataclass mô tả một khuôn mặt phát hiện được (bbox, landmark, điểm).",
+   "tags": [
+    "data-model"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "class:app/engines.py:OpenCVEngine",
+   "type": "class",
+   "name": "OpenCVEngine",
+   "filePath": "app/engines.py",
+   "lineRange": [
+    58,
+    94
+   ],
+   "summary": "Engine dùng OpenCV YuNet phát hiện và SFace trích embedding.",
+   "tags": [
+    "engine",
+    "opencv"
+   ],
+   "complexity": "moderate"
+  },
+  {
+   "id": "class:app/engines.py:OnnxEngine",
+   "type": "class",
+   "name": "OnnxEngine",
+   "filePath": "app/engines.py",
+   "lineRange": [
+    97,
+    176
+   ],
+   "summary": "Engine ONNX tự giải mã anchor để phát hiện và nhúng khuôn mặt.",
+   "tags": [
+    "engine",
+    "onnx"
+   ],
+   "complexity": "complex"
+  },
+  {
+   "id": "function:app/engines.py:create_engine",
+   "type": "function",
+   "name": "create_engine",
+   "filePath": "app/engines.py",
+   "lineRange": [
+    179,
+    187
+   ],
+   "summary": "Factory chọn engine theo cấu hình.",
+   "tags": [
+    "factory"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:app/engines.py:align_face",
+   "type": "function",
+   "name": "align_face",
+   "filePath": "app/engines.py",
+   "lineRange": [
+    46,
+    50
+   ],
+   "summary": "Căn chỉnh khuôn mặt theo landmark về kích thước chuẩn.",
+   "tags": [
+    "alignment"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "file:app/enrollment.py",
+   "type": "file",
+   "name": "enrollment.py",
+   "filePath": "app/enrollment.py",
+   "summary": "Xử lý đăng ký nhân viên từ video: đọc frame, phát hiện, lọc chất lượng, chia theo tư thế và tạo embedding.",
+   "tags": [
+    "enrollment",
+    "video",
+    "face-recognition",
+    "pipeline"
+   ],
+   "complexity": "complex"
+  },
+  {
+   "id": "function:app/enrollment.py:process_enrollment",
+   "type": "function",
+   "name": "process_enrollment",
+   "filePath": "app/enrollment.py",
+   "lineRange": [
+    54,
+    169
+   ],
+   "summary": "Quy trình đăng ký: duyệt frame video, đánh giá chất lượng, chọn mẫu theo pose và trả embedding.",
+   "tags": [
+    "enrollment",
+    "core-logic"
+   ],
+   "complexity": "complex"
+  },
+  {
+   "id": "function:app/enrollment.py:read_video_frames",
+   "type": "function",
+   "name": "read_video_frames",
+   "filePath": "app/enrollment.py",
+   "lineRange": [
+    27,
+    45
+   ],
+   "summary": "Đọc và lấy mẫu frame từ file video.",
+   "tags": [
+    "video",
+    "io"
+   ],
+   "complexity": "moderate"
+  },
+  {
+   "id": "class:app/enrollment.py:EnrollError",
+   "type": "class",
+   "name": "EnrollError",
+   "filePath": "app/enrollment.py",
+   "lineRange": [
+    17,
+    18
+   ],
+   "summary": "Ngoại lệ lỗi đăng ký.",
+   "tags": [
+    "error"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "file:app/pipeline.py",
+   "type": "file",
+   "name": "pipeline.py",
+   "filePath": "app/pipeline.py",
+   "summary": "Pipeline xử lý thời gian thực: đọc camera, phát hiện/theo dõi/nhận diện, vùng chuyển động, chống giả mạo, ghi sự kiện chấm công và phát video.",
+   "tags": [
+    "pipeline",
+    "real-time",
+    "core-logic",
+    "attendance"
+   ],
+   "complexity": "complex"
+  },
+  {
+   "id": "class:app/pipeline.py:Pipeline",
+   "type": "class",
+   "name": "Pipeline",
+   "filePath": "app/pipeline.py",
+   "lineRange": [
+    67,
+    555
+   ],
+   "summary": "Luồng chính điều phối camera, tracker, nhận diện, ghi clip/snapshot và sự kiện chấm công.",
+   "tags": [
+    "orchestrator",
+    "threading",
+    "core-logic"
+   ],
+   "complexity": "complex"
+  },
+  {
+   "id": "function:app/pipeline.py:validate_zone",
+   "type": "function",
+   "name": "validate_zone",
+   "filePath": "app/pipeline.py",
+   "lineRange": [
+    32,
+    47
+   ],
+   "summary": "Kiểm tra tính hợp lệ của vùng chuyển động.",
+   "tags": [
+    "validation"
+   ],
+   "complexity": "moderate"
+  },
+  {
+   "id": "function:app/pipeline.py:crop_with_margin",
+   "type": "function",
+   "name": "crop_with_margin",
+   "filePath": "app/pipeline.py",
+   "lineRange": [
+    58,
+    64
+   ],
+   "summary": "Cắt vùng khuôn mặt có lề.",
+   "tags": [
+    "utility"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "file:app/quality.py",
+   "type": "file",
+   "name": "quality.py",
+   "filePath": "app/quality.py",
+   "summary": "Đánh giá chất lượng khuôn mặt (kích thước, độ nét, tư thế) để quyết định có dùng nhận diện/đăng ký hay không.",
+   "tags": [
+    "quality",
+    "validation",
+    "face-recognition"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "class:app/quality.py:Quality",
+   "type": "class",
+   "name": "Quality",
+   "filePath": "app/quality.py",
+   "lineRange": [
+    13,
+    24
+   ],
+   "summary": "Kết quả đánh giá chất lượng.",
+   "tags": [
+    "data-model"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:app/quality.py:assess",
+   "type": "function",
+   "name": "assess",
+   "filePath": "app/quality.py",
+   "lineRange": [
+    38,
+    66
+   ],
+   "summary": "Tính các chỉ số chất lượng cho một khuôn mặt.",
+   "tags": [
+    "quality"
+   ],
+   "complexity": "moderate"
+  },
+  {
+   "id": "function:app/quality.py:estimate_pose",
+   "type": "function",
+   "name": "estimate_pose",
+   "filePath": "app/quality.py",
+   "lineRange": [
+    27,
+    35
+   ],
+   "summary": "Ước lượng góc đầu từ landmark.",
+   "tags": [
+    "pose"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "file:app/tracker.py",
+   "type": "file",
+   "name": "tracker.py",
+   "filePath": "app/tracker.py",
+   "summary": "Tracker IoU gán ID cho khuôn mặt giữa các frame, giữ embedding và danh tính tích lũy theo track.",
+   "tags": [
+    "tracking",
+    "iou",
+    "real-time"
+   ],
+   "complexity": "moderate"
+  },
+  {
+   "id": "class:app/tracker.py:Track",
+   "type": "class",
+   "name": "Track",
+   "filePath": "app/tracker.py",
+   "lineRange": [
+    24,
+    73
+   ],
+   "summary": "Trạng thái một track: bbox, embedding tích lũy và danh tính.",
+   "tags": [
+    "data-model"
+   ],
+   "complexity": "moderate"
+  },
+  {
+   "id": "class:app/tracker.py:IoUTracker",
+   "type": "class",
+   "name": "IoUTracker",
+   "filePath": "app/tracker.py",
+   "lineRange": [
+    90,
+    178
+   ],
+   "summary": "Tracker ghép detection với track theo IoU, hỗ trợ tách/gộp.",
+   "tags": [
+    "tracking"
+   ],
+   "complexity": "moderate"
+  },
+  {
+   "id": "function:app/tracker.py:iou",
+   "type": "function",
+   "name": "iou",
+   "filePath": "app/tracker.py",
+   "lineRange": [
+    15,
+    20
+   ],
+   "summary": "Tính IoU giữa hai bbox.",
+   "tags": [
+    "utility",
+    "geometry"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "file:scripts/benchmark.py",
+   "type": "file",
+   "name": "benchmark.py",
+   "filePath": "scripts/benchmark.py",
+   "summary": "Script benchmark tốc độ phát hiện và nhúng của engine trên video.",
+   "tags": [
+    "benchmark",
+    "script",
+    "performance"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:scripts/benchmark.py:run",
+   "type": "function",
+   "name": "run",
+   "filePath": "scripts/benchmark.py",
+   "lineRange": [
+    18,
+    45
+   ],
+   "summary": "Chạy đo hiệu năng engine.",
+   "tags": [
+    "benchmark"
+   ],
+   "complexity": "moderate"
+  },
+  {
+   "id": "function:scripts/benchmark.py:main",
+   "type": "function",
+   "name": "main",
+   "filePath": "scripts/benchmark.py",
+   "lineRange": [
+    48,
+    62
+   ],
+   "summary": "Điểm vào CLI của benchmark.",
+   "tags": [
+    "entry-point"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "file:app/attendance.py",
+   "type": "file",
+   "name": "attendance.py",
+   "filePath": "app/attendance.py",
+   "summary": "Logic chấm công theo check-in: mỗi nhân viên một lần/ngày, tính số phút đi muộn, vắng, lời chào và bảng công theo ca làm việc.",
+   "tags": [
+    "attendance",
+    "business-logic",
+    "timesheet",
+    "utility"
+   ],
+   "complexity": "moderate",
+   "languageNotes": "Dùng frozen dataclass cho Shift và các hàm thuần để tính toán thời gian."
+  },
+  {
+   "id": "class:app/attendance.py:Shift",
+   "type": "class",
+   "name": "Shift",
+   "filePath": "app/attendance.py",
+   "lineRange": [
+    11,
+    25
+   ],
+   "summary": "Dataclass bất biến mô tả ca làm việc (giờ bắt đầu, kết thúc, thời gian ân hạn, ngày làm việc), tạo từ cấu hình.",
+   "tags": [
+    "data-model",
+    "config",
+    "dataclass"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:app/attendance.py:late_minutes",
+   "type": "function",
+   "name": "late_minutes",
+   "filePath": "app/attendance.py",
+   "lineRange": [
+    42,
+    46
+   ],
+   "summary": "Tính số phút đi muộn của một mốc thời gian so với ca, có trừ thời gian ân hạn.",
+   "tags": [
+    "attendance",
+    "utility",
+    "calculation"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:app/attendance.py:greeting",
+   "type": "function",
+   "name": "greeting",
+   "filePath": "app/attendance.py",
+   "lineRange": [
+    49,
+    52
+   ],
+   "summary": "Sinh lời chào tương ứng với giờ check-in và ca làm việc.",
+   "tags": [
+    "attendance",
+    "utility",
+    "ui-text"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:app/attendance.py:day_range",
+   "type": "function",
+   "name": "day_range",
+   "filePath": "app/attendance.py",
+   "lineRange": [
+    33,
+    35
+   ],
+   "summary": "Trả về mốc timestamp đầu và cuối của một ngày.",
+   "tags": [
+    "utility",
+    "date",
+    "time-range"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:app/attendance.py:timesheet",
+   "type": "function",
+   "name": "timesheet",
+   "filePath": "app/attendance.py",
+   "lineRange": [
+    59,
+    116
+   ],
+   "summary": "Truy vấn DB và dựng bảng công theo từng nhân viên/ngày: giờ vào, đi muộn, vắng, trạng thái theo ca.",
+   "tags": [
+    "timesheet",
+    "database",
+    "attendance",
+    "aggregation"
+   ],
+   "complexity": "moderate"
+  },
+  {
+   "id": "function:app/attendance.py:today_stats",
+   "type": "function",
+   "name": "today_stats",
+   "filePath": "app/attendance.py",
+   "lineRange": [
+    133,
+    144
+   ],
+   "summary": "Tổng hợp thống kê chấm công của ngày hôm nay (đúng giờ, muộn, vắng, chưa đến).",
+   "tags": [
+    "statistics",
+    "attendance",
+    "dashboard"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "file:app/records.py",
+   "type": "file",
+   "name": "records.py",
+   "filePath": "app/records.py",
+   "summary": "Router FastAPI cung cấp API bảng công, xuất CSV, danh sách người và lịch sử xuất hiện kèm tải zip clip video.",
+   "tags": [
+    "api-handler",
+    "fastapi",
+    "csv-export",
+    "attendance"
+   ],
+   "complexity": "moderate",
+   "languageNotes": "Dùng APIRouter, FileResponse và BackgroundTask để dọn file zip tạm sau khi gửi."
+  },
+  {
+   "id": "function:app/records.py:attendance",
+   "type": "function",
+   "name": "attendance",
+   "filePath": "app/records.py",
+   "lineRange": [
+    61,
+    62
+   ],
+   "summary": "Endpoint trả bảng công theo khoảng ngày và mã nhân viên.",
+   "tags": [
+    "api-handler",
+    "attendance",
+    "endpoint"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:app/records.py:attendance_csv",
+   "type": "function",
+   "name": "attendance_csv",
+   "filePath": "app/records.py",
+   "lineRange": [
+    66,
+    72
+   ],
+   "summary": "Endpoint xuất bảng công dạng CSV.",
+   "tags": [
+    "api-handler",
+    "csv-export",
+    "attendance"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:app/records.py:attendance_today",
+   "type": "function",
+   "name": "attendance_today",
+   "filePath": "app/records.py",
+   "lineRange": [
+    76,
+    77
+   ],
+   "summary": "Endpoint trả thống kê chấm công hôm nay.",
+   "tags": [
+    "api-handler",
+    "statistics",
+    "endpoint"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:app/records.py:people",
+   "type": "function",
+   "name": "people",
+   "filePath": "app/records.py",
+   "lineRange": [
+    82,
+    88
+   ],
+   "summary": "Endpoint liệt kê danh sách nhân viên/người đã xuất hiện.",
+   "tags": [
+    "api-handler",
+    "employees",
+    "endpoint"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:app/records.py:appearances",
+   "type": "function",
+   "name": "appearances",
+   "filePath": "app/records.py",
+   "lineRange": [
+    104,
+    106
+   ],
+   "summary": "Endpoint trả lịch sử xuất hiện lọc theo ngày, mã, loại.",
+   "tags": [
+    "api-handler",
+    "events",
+    "endpoint"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:app/records.py:appearances_zip",
+   "type": "function",
+   "name": "appearances_zip",
+   "filePath": "app/records.py",
+   "lineRange": [
+    110,
+    132
+   ],
+   "summary": "Endpoint đóng gói các clip video lịch sử xuất hiện thành file zip tạm (giới hạn số clip) để tải về.",
+   "tags": [
+    "api-handler",
+    "zip",
+    "video",
+    "download"
+   ],
+   "complexity": "moderate"
+  },
+  {
+   "id": "file:app/state.py",
+   "type": "file",
+   "name": "state.py",
+   "filePath": "app/state.py",
+   "summary": "Trạng thái dùng chung giữa các router: Broadcaster đẩy tin nhắn tới client WebSocket từ thread bất kỳ và đối tượng ctx khởi tạo trong lifespan.",
+   "tags": [
+    "state",
+    "singleton",
+    "websocket",
+    "shared-context"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "class:app/state.py:Broadcaster",
+   "type": "class",
+   "name": "Broadcaster",
+   "filePath": "app/state.py",
+   "lineRange": [
+    7,
+    16
+   ],
+   "summary": "Callable phát thông điệp tới tập hàng đợi asyncio của các client, an toàn đa luồng nhờ call_soon_threadsafe.",
+   "tags": [
+    "broadcast",
+    "asyncio",
+    "thread-safe",
+    "websocket"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "class:app/state.py:Ctx",
+   "type": "class",
+   "name": "Ctx",
+   "filePath": "app/state.py",
+   "lineRange": [
+    19,
+    20
+   ],
+   "summary": "Đối tượng rỗng làm container ngữ cảnh ứng dụng, được gán thuộc tính trong lifespan.",
+   "tags": [
+    "singleton",
+    "context",
+    "state"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "document:README.md",
+   "type": "document",
+   "name": "README.md",
+   "filePath": "README.md",
+   "summary": "Tài liệu tổng quan FaceGate PoC: mục tiêu, trạng thái hiện tại, luồng nghiệp vụ, hướng dẫn xem demo trong 5 phút, rủi ro cần PM quyết định và bước tiếp theo.",
+   "tags": [
+    "tài-liệu",
+    "tổng-quan",
+    "entry-point",
+    "poc"
+   ],
+   "complexity": "moderate"
+  },
+  {
+   "id": "config:config.yaml",
+   "type": "config",
+   "name": "config.yaml",
+   "filePath": "config.yaml",
+   "summary": "Cấu hình trung tâm của demo: camera, pipeline nhận diện, ngưỡng chất lượng, liveness, chấm công, clip, chế độ chờ, đăng ký khuôn mặt, HRM adapter và server.",
+   "tags": [
+    "cấu-hình",
+    "pipeline",
+    "liveness",
+    "chấm-công",
+    "hrm"
+   ],
+   "complexity": "moderate",
+   "languageNotes": "YAML với comment giải thích từng ngưỡng; một số vùng (motion_zone) bị settings.json ghi đè."
+  },
+  {
+   "id": "config:requirements.txt",
+   "type": "config",
+   "name": "requirements.txt",
+   "filePath": "requirements.txt",
+   "summary": "Danh sách phụ thuộc Python: OpenCV, numpy, FastAPI, uvicorn, onnxruntime, pyyaml, pillow, python-multipart.",
+   "tags": [
+    "phụ-thuộc",
+    "python",
+    "build-system"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "file:run.bat",
+   "type": "file",
+   "name": "run.bat",
+   "filePath": "run.bat",
+   "summary": "Script khởi động: kiểm tra .venv, mở trình duyệt tại 127.0.0.1:8090 và chạy app.main.",
+   "tags": [
+    "script",
+    "windows",
+    "khởi-động",
+    "entry-point"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "file:setup.bat",
+   "type": "file",
+   "name": "setup.bat",
+   "filePath": "setup.bat",
+   "summary": "Script cài đặt: tạo .venv, cài requirements.txt và tải model bằng scripts/download_models.py.",
+   "tags": [
+    "script",
+    "windows",
+    "cài-đặt",
+    "build-system"
+   ],
+   "complexity": "simple",
+   "languageNotes": "Batch dùng nhãn :err và goto để xử lý lỗi."
+  },
+  {
+   "id": "config:.gitattributes",
+   "type": "config",
+   "name": ".gitattributes",
+   "filePath": ".gitattributes",
+   "summary": "Cấu hình Git chuẩn hóa line ending (LF mặc định, CRLF cho .bat) và đánh dấu .onnx là binary.",
+   "tags": [
+    "configuration",
+    "git",
+    "line-endings"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "file:app/__init__.py",
+   "type": "file",
+   "name": "__init__.py",
+   "filePath": "app/__init__.py",
+   "summary": "File rỗng đánh dấu thư mục app là Python package.",
+   "tags": [
+    "package-marker",
+    "entry-point",
+    "python"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "file:app/static/app.js",
+   "type": "file",
+   "name": "app.js",
+   "filePath": "app/static/app.js",
+   "summary": "Logic frontend chính: WebSocket nhận sự kiện nhận diện, hiển thị camera feed, lời chào, đăng ký và quản lý nhân viên, tải sự kiện.",
+   "tags": [
+    "frontend",
+    "websocket",
+    "ui",
+    "dashboard"
+   ],
+   "complexity": "complex"
+  },
+  {
+   "id": "file:app/static/attendance.js",
+   "type": "file",
+   "name": "attendance.js",
+   "filePath": "app/static/attendance.js",
+   "summary": "Tải và hiển thị bảng chấm công theo khoảng thời gian chọn.",
+   "tags": [
+    "frontend",
+    "attendance",
+    "ui"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "file:app/static/history.js",
+   "type": "file",
+   "name": "history.js",
+   "filePath": "app/static/history.js",
+   "summary": "Xem lịch sử nhận diện và phát lại clip video của từng sự kiện.",
+   "tags": [
+    "frontend",
+    "history",
+    "video-player"
+   ],
+   "complexity": "moderate"
+  },
+  {
+   "id": "file:app/static/index.html",
+   "type": "file",
+   "name": "index.html",
+   "filePath": "app/static/index.html",
+   "summary": "Trang HTML đơn của dashboard FaceGate, chứa các tab camera, chấm công, nhân viên, lịch sử và nạp các script.",
+   "tags": [
+    "markup",
+    "dashboard",
+    "frontend",
+    "entry-point"
+   ],
+   "complexity": "moderate"
+  },
+  {
+   "id": "file:app/static/style.css",
+   "type": "file",
+   "name": "style.css",
+   "filePath": "app/static/style.css",
+   "summary": "Stylesheet cho giao diện dashboard FaceGate.",
+   "tags": [
+    "css",
+    "styling",
+    "frontend"
+   ],
+   "complexity": "moderate"
+  },
+  {
+   "id": "file:app/static/zone.js",
+   "type": "file",
+   "name": "zone.js",
+   "filePath": "app/static/zone.js",
+   "summary": "Vẽ và chỉnh vùng nhận diện (zone) trên khung video bằng canvas.",
+   "tags": [
+    "frontend",
+    "canvas",
+    "zone-editor"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "file:docs/GIOI_THIEU_DU_AN.html",
+   "type": "file",
+   "name": "GIOI_THIEU_DU_AN.html",
+   "filePath": "docs/GIOI_THIEU_DU_AN.html",
+   "summary": "Trang HTML giới thiệu dự án FaceGate: mục tiêu, kiến trúc và cách hoạt động.",
+   "tags": [
+    "documentation",
+    "markup",
+    "overview"
+   ],
+   "complexity": "complex"
+  },
+  {
+   "id": "file:models/.gitkeep",
+   "type": "file",
+   "name": ".gitkeep",
+   "filePath": "models/.gitkeep",
+   "summary": "File giữ chỗ để Git theo dõi thư mục models (chứa model ONNX tải về).",
+   "tags": [
+    "placeholder",
+    "models",
+    "git"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "file:scripts/download_models.py",
+   "type": "file",
+   "name": "download_models.py",
+   "filePath": "scripts/download_models.py",
+   "summary": "Script tải model YuNet, SFace, MiniFASNet (và tùy chọn SCRFD/ArcFace) vào thư mục models.",
+   "tags": [
+    "script",
+    "model-download",
+    "cli",
+    "entry-point"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:scripts/download_models.py:download",
+   "type": "function",
+   "name": "download",
+   "filePath": "scripts/download_models.py",
+   "lineRange": [
+    34,
+    52
+   ],
+   "summary": "Tải một model từ URL về thư mục models, bỏ qua nếu đã tồn tại.",
+   "tags": [
+    "utility",
+    "download",
+    "cli"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:scripts/download_models.py:main",
+   "type": "function",
+   "name": "main",
+   "filePath": "scripts/download_models.py",
+   "lineRange": [
+    55,
+    68
+   ],
+   "summary": "Phân tích tham số CLI và tải các nhóm model tương ứng.",
+   "tags": [
+    "utility",
+    "download",
+    "cli"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:app/static/app.js:loadPeople",
+   "type": "function",
+   "name": "loadPeople",
+   "filePath": "app/static/app.js",
+   "lineRange": [
+    20,
+    28
+   ],
+   "summary": "Tải danh sách nhân viên từ API.",
+   "tags": [
+    "frontend",
+    "ui",
+    "function"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:app/static/app.js:connectWS",
+   "type": "function",
+   "name": "connectWS",
+   "filePath": "app/static/app.js",
+   "lineRange": [
+    36,
+    54
+   ],
+   "summary": "Kết nối WebSocket và tự kết nối lại.",
+   "tags": [
+    "frontend",
+    "ui",
+    "function"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:app/static/app.js:showStatus",
+   "type": "function",
+   "name": "showStatus",
+   "filePath": "app/static/app.js",
+   "lineRange": [
+    55,
+    85
+   ],
+   "summary": "Hiển thị trạng thái nhận diện hiện tại lên giao diện.",
+   "tags": [
+    "frontend",
+    "ui",
+    "function"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:app/static/app.js:addFeed",
+   "type": "function",
+   "name": "addFeed",
+   "filePath": "app/static/app.js",
+   "lineRange": [
+    115,
+    127
+   ],
+   "summary": "Thêm một mục vào feed sự kiện.",
+   "tags": [
+    "frontend",
+    "ui",
+    "function"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:app/static/app.js:beep",
+   "type": "function",
+   "name": "beep",
+   "filePath": "app/static/app.js",
+   "lineRange": [
+    132,
+    145
+   ],
+   "summary": "Phát âm báo khi nhận diện.",
+   "tags": [
+    "frontend",
+    "ui",
+    "function"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:app/static/app.js:showGreet",
+   "type": "function",
+   "name": "showGreet",
+   "filePath": "app/static/app.js",
+   "lineRange": [
+    147,
+    167
+   ],
+   "summary": "Hiển thị lời chào nhân viên.",
+   "tags": [
+    "frontend",
+    "ui",
+    "function"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:app/static/app.js:loadEmployees",
+   "type": "function",
+   "name": "loadEmployees",
+   "filePath": "app/static/app.js",
+   "lineRange": [
+    233,
+    246
+   ],
+   "summary": "Tải và vẽ bảng nhân viên.",
+   "tags": [
+    "frontend",
+    "ui",
+    "function"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:app/static/app.js:loadEvents",
+   "type": "function",
+   "name": "loadEvents",
+   "filePath": "app/static/app.js",
+   "lineRange": [
+    258,
+    281
+   ],
+   "summary": "Tải và vẽ danh sách sự kiện.",
+   "tags": [
+    "frontend",
+    "ui",
+    "function"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:app/static/attendance.js:setRange",
+   "type": "function",
+   "name": "setRange",
+   "filePath": "app/static/attendance.js",
+   "lineRange": [
+    6,
+    12
+   ],
+   "summary": "Đặt khoảng thời gian lọc chấm công.",
+   "tags": [
+    "frontend",
+    "ui",
+    "function"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:app/static/attendance.js:loadAttendance",
+   "type": "function",
+   "name": "loadAttendance",
+   "filePath": "app/static/attendance.js",
+   "lineRange": [
+    19,
+    46
+   ],
+   "summary": "Tải và vẽ bảng chấm công.",
+   "tags": [
+    "frontend",
+    "ui",
+    "function"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:app/static/history.js:loadHistory",
+   "type": "function",
+   "name": "loadHistory",
+   "filePath": "app/static/history.js",
+   "lineRange": [
+    18,
+    41
+   ],
+   "summary": "Tải lịch sử nhận diện.",
+   "tags": [
+    "frontend",
+    "ui",
+    "function"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:app/static/history.js:playClip",
+   "type": "function",
+   "name": "playClip",
+   "filePath": "app/static/history.js",
+   "lineRange": [
+    43,
+    50
+   ],
+   "summary": "Phát clip video của sự kiện.",
+   "tags": [
+    "frontend",
+    "ui",
+    "function"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:app/static/history.js:openHistory",
+   "type": "function",
+   "name": "openHistory",
+   "filePath": "app/static/history.js",
+   "lineRange": [
+    57,
+    62
+   ],
+   "summary": "Mở panel lịch sử.",
+   "tags": [
+    "frontend",
+    "ui",
+    "function"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:app/static/zone.js:drawZone",
+   "type": "function",
+   "name": "drawZone",
+   "filePath": "app/static/zone.js",
+   "lineRange": [
+    13,
+    22
+   ],
+   "summary": "Vẽ vùng nhận diện lên canvas.",
+   "tags": [
+    "frontend",
+    "ui",
+    "function"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:app/static/zone.js:startZoneEdit",
+   "type": "function",
+   "name": "startZoneEdit",
+   "filePath": "app/static/zone.js",
+   "lineRange": [
+    26,
+    34
+   ],
+   "summary": "Bắt đầu chế độ chỉnh vùng.",
+   "tags": [
+    "frontend",
+    "ui",
+    "function"
+   ],
+   "complexity": "simple"
+  }
+ ],
+ "edges": [
+  {
+   "source": "file:app/camera.py",
+   "target": "class:app/camera.py:Camera",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:app/clips.py",
+   "target": "class:app/clips.py:ClipRecorder",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:app/config.py",
+   "target": "function:app/config.py:load_config",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:app/db.py",
+   "target": "class:app/db.py:DB",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:app/gallery.py",
+   "target": "class:app/gallery.py:Gallery",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:app/gallery.py",
+   "target": "class:app/gallery.py:Match",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:app/hrm.py",
+   "target": "class:app/hrm.py:MockHRM",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:app/hrm.py",
+   "target": "class:app/hrm.py:ERPNextHRM",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:app/hrm.py",
+   "target": "class:app/hrm.py:HRMWorker",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:app/liveness.py",
+   "target": "class:app/liveness.py:Liveness",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:app/liveness.py",
+   "target": "function:app/liveness.py:create_liveness",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:app/main.py",
+   "target": "function:app/main.py:lifespan",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:app/main.py",
+   "target": "function:app/main.py:video",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:app/main.py",
+   "target": "function:app/main.py:ws",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:app/main.py",
+   "target": "function:app/main.py:set_source",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:app/main.py",
+   "target": "function:app/main.py:enroll_video",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:app/main.py",
+   "target": "function:app/main.py:enroll_camera",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:app/main.py",
+   "target": "function:app/main.py:metrics",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:app/main.py",
+   "target": "function:app/main.py:events_csv",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:app/main.py",
+   "target": "function:app/main.py:main",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:app/main.py",
+   "target": "file:app/attendance.py",
+   "type": "imports",
+   "direction": "forward",
+   "weight": 0.7
+  },
+  {
+   "source": "file:app/main.py",
+   "target": "file:app/camera.py",
+   "type": "imports",
+   "direction": "forward",
+   "weight": 0.7
+  },
+  {
+   "source": "file:app/main.py",
+   "target": "file:app/clips.py",
+   "type": "imports",
+   "direction": "forward",
+   "weight": 0.7
+  },
+  {
+   "source": "file:app/main.py",
+   "target": "file:app/config.py",
+   "type": "imports",
+   "direction": "forward",
+   "weight": 0.7
+  },
+  {
+   "source": "file:app/main.py",
+   "target": "file:app/db.py",
+   "type": "imports",
+   "direction": "forward",
+   "weight": 0.7
+  },
+  {
+   "source": "file:app/main.py",
+   "target": "file:app/engines.py",
+   "type": "imports",
+   "direction": "forward",
+   "weight": 0.7
+  },
+  {
+   "source": "file:app/main.py",
+   "target": "file:app/enrollment.py",
+   "type": "imports",
+   "direction": "forward",
+   "weight": 0.7
+  },
+  {
+   "source": "file:app/main.py",
+   "target": "file:app/gallery.py",
+   "type": "imports",
+   "direction": "forward",
+   "weight": 0.7
+  },
+  {
+   "source": "file:app/main.py",
+   "target": "file:app/hrm.py",
+   "type": "imports",
+   "direction": "forward",
+   "weight": 0.7
+  },
+  {
+   "source": "file:app/main.py",
+   "target": "file:app/liveness.py",
+   "type": "imports",
+   "direction": "forward",
+   "weight": 0.7
+  },
+  {
+   "source": "file:app/main.py",
+   "target": "file:app/pipeline.py",
+   "type": "imports",
+   "direction": "forward",
+   "weight": 0.7
+  },
+  {
+   "source": "file:app/main.py",
+   "target": "file:app/records.py",
+   "type": "imports",
+   "direction": "forward",
+   "weight": 0.7
+  },
+  {
+   "source": "file:app/main.py",
+   "target": "file:app/state.py",
+   "type": "imports",
+   "direction": "forward",
+   "weight": 0.7
+  },
+  {
+   "source": "file:app/draw.py",
+   "target": "function:app/draw.py:draw_overlay",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:app/draw.py",
+   "target": "function:app/draw.py:strip_accents",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:app/engines.py",
+   "target": "class:app/engines.py:Face",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:app/engines.py",
+   "target": "class:app/engines.py:OpenCVEngine",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:app/engines.py",
+   "target": "class:app/engines.py:OnnxEngine",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:app/engines.py",
+   "target": "function:app/engines.py:create_engine",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:app/engines.py",
+   "target": "function:app/engines.py:align_face",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:app/enrollment.py",
+   "target": "function:app/enrollment.py:process_enrollment",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:app/enrollment.py",
+   "target": "function:app/enrollment.py:read_video_frames",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:app/enrollment.py",
+   "target": "class:app/enrollment.py:EnrollError",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:app/pipeline.py",
+   "target": "class:app/pipeline.py:Pipeline",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:app/pipeline.py",
+   "target": "function:app/pipeline.py:validate_zone",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:app/pipeline.py",
+   "target": "function:app/pipeline.py:crop_with_margin",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:app/quality.py",
+   "target": "class:app/quality.py:Quality",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:app/quality.py",
+   "target": "function:app/quality.py:assess",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:app/quality.py",
+   "target": "function:app/quality.py:estimate_pose",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:app/tracker.py",
+   "target": "class:app/tracker.py:Track",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:app/tracker.py",
+   "target": "class:app/tracker.py:IoUTracker",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:app/tracker.py",
+   "target": "function:app/tracker.py:iou",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:scripts/benchmark.py",
+   "target": "function:scripts/benchmark.py:run",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:scripts/benchmark.py",
+   "target": "function:scripts/benchmark.py:main",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:app/enrollment.py",
+   "target": "file:app/pipeline.py",
+   "type": "imports",
+   "direction": "forward",
+   "weight": 0.7
+  },
+  {
+   "source": "file:app/enrollment.py",
+   "target": "file:app/quality.py",
+   "type": "imports",
+   "direction": "forward",
+   "weight": 0.7
+  },
+  {
+   "source": "file:app/pipeline.py",
+   "target": "file:app/attendance.py",
+   "type": "imports",
+   "direction": "forward",
+   "weight": 0.7
+  },
+  {
+   "source": "file:app/pipeline.py",
+   "target": "file:app/draw.py",
+   "type": "imports",
+   "direction": "forward",
+   "weight": 0.7
+  },
+  {
+   "source": "file:app/pipeline.py",
+   "target": "file:app/engines.py",
+   "type": "imports",
+   "direction": "forward",
+   "weight": 0.7
+  },
+  {
+   "source": "file:app/pipeline.py",
+   "target": "file:app/quality.py",
+   "type": "imports",
+   "direction": "forward",
+   "weight": 0.7
+  },
+  {
+   "source": "file:app/pipeline.py",
+   "target": "file:app/tracker.py",
+   "type": "imports",
+   "direction": "forward",
+   "weight": 0.7
+  },
+  {
+   "source": "file:app/quality.py",
+   "target": "file:app/engines.py",
+   "type": "imports",
+   "direction": "forward",
+   "weight": 0.7
+  },
+  {
+   "source": "file:app/tracker.py",
+   "target": "file:app/engines.py",
+   "type": "imports",
+   "direction": "forward",
+   "weight": 0.7
+  },
+  {
+   "source": "file:scripts/benchmark.py",
+   "target": "file:app/config.py",
+   "type": "imports",
+   "direction": "forward",
+   "weight": 0.7
+  },
+  {
+   "source": "file:scripts/benchmark.py",
+   "target": "file:app/engines.py",
+   "type": "imports",
+   "direction": "forward",
+   "weight": 0.7
+  },
+  {
+   "source": "file:scripts/benchmark.py",
+   "target": "file:app/quality.py",
+   "type": "imports",
+   "direction": "forward",
+   "weight": 0.7
+  },
+  {
+   "source": "file:app/attendance.py",
+   "target": "class:app/attendance.py:Shift",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1.0
+  },
+  {
+   "source": "file:app/attendance.py",
+   "target": "function:app/attendance.py:late_minutes",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1.0
+  },
+  {
+   "source": "file:app/attendance.py",
+   "target": "function:app/attendance.py:greeting",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1.0
+  },
+  {
+   "source": "file:app/attendance.py",
+   "target": "function:app/attendance.py:day_range",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1.0
+  },
+  {
+   "source": "file:app/attendance.py",
+   "target": "function:app/attendance.py:timesheet",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1.0
+  },
+  {
+   "source": "file:app/attendance.py",
+   "target": "function:app/attendance.py:today_stats",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1.0
+  },
+  {
+   "source": "file:app/attendance.py",
+   "target": "class:app/attendance.py:Shift",
+   "type": "exports",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:app/attendance.py",
+   "target": "function:app/attendance.py:timesheet",
+   "type": "exports",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:app/attendance.py",
+   "target": "function:app/attendance.py:today_stats",
+   "type": "exports",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:app/records.py",
+   "target": "function:app/records.py:attendance",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1.0
+  },
+  {
+   "source": "file:app/records.py",
+   "target": "function:app/records.py:attendance_csv",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1.0
+  },
+  {
+   "source": "file:app/records.py",
+   "target": "function:app/records.py:attendance_today",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1.0
+  },
+  {
+   "source": "file:app/records.py",
+   "target": "function:app/records.py:people",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1.0
+  },
+  {
+   "source": "file:app/records.py",
+   "target": "function:app/records.py:appearances",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1.0
+  },
+  {
+   "source": "file:app/records.py",
+   "target": "function:app/records.py:appearances_zip",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1.0
+  },
+  {
+   "source": "file:app/records.py",
+   "target": "file:app/attendance.py",
+   "type": "imports",
+   "direction": "forward",
+   "weight": 0.7
+  },
+  {
+   "source": "file:app/records.py",
+   "target": "file:app/state.py",
+   "type": "imports",
+   "direction": "forward",
+   "weight": 0.7
+  },
+  {
+   "source": "function:app/records.py:attendance_today",
+   "target": "function:app/attendance.py:today_stats",
+   "type": "calls",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:app/state.py",
+   "target": "class:app/state.py:Broadcaster",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1.0
+  },
+  {
+   "source": "file:app/state.py",
+   "target": "class:app/state.py:Ctx",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1.0
+  },
+  {
+   "source": "file:app/state.py",
+   "target": "class:app/state.py:Broadcaster",
+   "type": "exports",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:app/state.py",
+   "target": "class:app/state.py:Ctx",
+   "type": "exports",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "config:requirements.txt",
+   "target": "file:setup.bat",
+   "type": "configures",
+   "direction": "forward",
+   "weight": 0.6
+  },
+  {
+   "source": "file:setup.bat",
+   "target": "file:run.bat",
+   "type": "related",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "document:README.md",
+   "target": "config:config.yaml",
+   "type": "documents",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "document:README.md",
+   "target": "file:run.bat",
+   "type": "documents",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "config:config.yaml",
+   "target": "file:app/config.py",
+   "type": "configures",
+   "direction": "forward",
+   "weight": 0.6
+  },
+  {
+   "source": "file:run.bat",
+   "target": "file:app/main.py",
+   "type": "deploys",
+   "direction": "forward",
+   "weight": 0.7
+  },
+  {
+   "source": "file:setup.bat",
+   "target": "file:scripts/download_models.py",
+   "type": "depends_on",
+   "direction": "forward",
+   "weight": 0.6
+  },
+  {
+   "source": "file:scripts/download_models.py",
+   "target": "function:scripts/download_models.py:download",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:scripts/download_models.py",
+   "target": "function:scripts/download_models.py:download",
+   "type": "exports",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:scripts/download_models.py",
+   "target": "function:scripts/download_models.py:main",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:scripts/download_models.py",
+   "target": "function:scripts/download_models.py:main",
+   "type": "exports",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:app/static/app.js",
+   "target": "function:app/static/app.js:loadPeople",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:app/static/app.js",
+   "target": "function:app/static/app.js:connectWS",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:app/static/app.js",
+   "target": "function:app/static/app.js:showStatus",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:app/static/app.js",
+   "target": "function:app/static/app.js:addFeed",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:app/static/app.js",
+   "target": "function:app/static/app.js:beep",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:app/static/app.js",
+   "target": "function:app/static/app.js:showGreet",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:app/static/app.js",
+   "target": "function:app/static/app.js:loadEmployees",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:app/static/app.js",
+   "target": "function:app/static/app.js:loadEvents",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:app/static/attendance.js",
+   "target": "function:app/static/attendance.js:setRange",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:app/static/attendance.js",
+   "target": "function:app/static/attendance.js:loadAttendance",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:app/static/history.js",
+   "target": "function:app/static/history.js:loadHistory",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:app/static/history.js",
+   "target": "function:app/static/history.js:playClip",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:app/static/history.js",
+   "target": "function:app/static/history.js:openHistory",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:app/static/zone.js",
+   "target": "function:app/static/zone.js:drawZone",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:app/static/zone.js",
+   "target": "function:app/static/zone.js:startZoneEdit",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  }
+ ],
+ "layers": [
+  {
+   "id": "layer:giao-dien-web",
+   "name": "Giao diện web",
+   "description": "Trang web điều khiển và xem trực tiếp: 6 tab, vẽ vùng cửa, bảng công, lịch sử clip.",
+   "nodeIds": [
+    "file:app/static/index.html",
+    "file:app/static/app.js",
+    "file:app/static/attendance.js",
+    "file:app/static/history.js",
+    "file:app/static/style.css",
+    "file:app/static/zone.js"
+   ]
+  },
+  {
+   "id": "layer:api-trang-thai",
+   "name": "API và trạng thái dùng chung",
+   "description": "FastAPI: REST, WebSocket, MJPEG; state chung giữa các router; API bảng công và lịch sử.",
+   "nodeIds": [
+    "file:app/main.py",
+    "file:app/state.py",
+    "file:app/records.py",
+    "file:app/config.py",
+    "file:app/__init__.py"
+   ]
+  },
+  {
+   "id": "layer:nhan-dien",
+   "name": "Xử lý nhận diện",
+   "description": "Luồng camera → detect → tracker → quality → embedding → so khớp → chống giả mạo → vẽ khung.",
+   "nodeIds": [
+    "file:app/camera.py",
+    "file:app/pipeline.py",
+    "file:app/tracker.py",
+    "file:app/engines.py",
+    "file:app/quality.py",
+    "file:app/gallery.py",
+    "file:app/liveness.py",
+    "file:app/enrollment.py",
+    "file:app/draw.py"
+   ]
+  },
+  {
+   "id": "layer:nghiep-vu-luu-tru",
+   "name": "Nghiệp vụ và lưu trữ",
+   "description": "Luật chấm công (check-in, đi muộn), SQLite, clip video, đẩy sang HRM.",
+   "nodeIds": [
+    "file:app/attendance.py",
+    "file:app/db.py",
+    "file:app/clips.py",
+    "file:app/hrm.py"
+   ]
+  },
+  {
+   "id": "layer:cau-hinh-cong-cu",
+   "name": "Cấu hình, cài đặt và tài liệu",
+   "description": "config.yaml, script cài đặt/chạy, công cụ tải model và benchmark, tài liệu.",
+   "nodeIds": [
+    "config:config.yaml",
+    "config:requirements.txt",
+    "config:.gitattributes",
+    "file:run.bat",
+    "file:setup.bat",
+    "document:README.md",
+    "file:scripts/download_models.py",
+    "file:scripts/benchmark.py",
+    "file:docs/GIOI_THIEU_DU_AN.html",
+    "file:models/.gitkeep"
+   ]
+  }
+ ],
+ "tour": [
+  {
+   "order": 1,
+   "title": "Tổng quan dự án",
+   "description": "FaceGate là PoC chấm công bằng khuôn mặt chạy CPU trên Windows. README mô tả luồng xử lý từ camera tới giao diện web.",
+   "nodeIds": [
+    "document:README.md"
+   ]
+  },
+  {
+   "order": 2,
+   "title": "Cài đặt và khởi chạy",
+   "description": "setup.bat tạo môi trường và tải model; run.bat khởi động server tại cổng 8090.",
+   "nodeIds": [
+    "file:setup.bat",
+    "file:run.bat",
+    "file:scripts/download_models.py"
+   ]
+  },
+  {
+   "order": 3,
+   "title": "Cấu hình trung tâm",
+   "description": "config.yaml chứa ngưỡng nhận diện, liveness, ca làm, chế độ ngủ, clip; app/config.py nạp file này.",
+   "nodeIds": [
+    "config:config.yaml",
+    "file:app/config.py"
+   ]
+  },
+  {
+   "order": 4,
+   "title": "Điểm vào của ứng dụng",
+   "description": "app/main.py dựng FastAPI, khai báo các endpoint, MJPEG/WebSocket và khởi tạo các thành phần.",
+   "nodeIds": [
+    "file:app/main.py",
+    "file:app/state.py"
+   ]
+  },
+  {
+   "order": 5,
+   "title": "Nguồn video",
+   "description": "camera.py đọc webcam/file/RTSP trong thread riêng, có watchdog khung đen và chế độ idle.",
+   "nodeIds": [
+    "file:app/camera.py"
+   ]
+  },
+  {
+   "order": 6,
+   "title": "Vòng xử lý nhận diện",
+   "description": "pipeline.py là trung tâm: detect, track, kiểm tra chất lượng, embedding, định danh, sinh sự kiện, chế độ ngủ.",
+   "nodeIds": [
+    "file:app/pipeline.py",
+    "file:app/engines.py",
+    "file:app/quality.py"
+   ]
+  },
+  {
+   "order": 7,
+   "title": "Bám mặt và so khớp",
+   "description": "tracker.py gán khung giữa các lần detect (IoU + vận tốc), gallery.py so khớp open-set bằng ngưỡng và margin.",
+   "nodeIds": [
+    "file:app/tracker.py",
+    "file:app/gallery.py"
+   ]
+  },
+  {
+   "order": 8,
+   "title": "Chống giả mạo",
+   "description": "liveness.py chạy MiniFASNet để chặn ảnh in hoặc ảnh trên màn hình điện thoại.",
+   "nodeIds": [
+    "file:app/liveness.py"
+   ]
+  },
+  {
+   "order": 9,
+   "title": "Chấm công",
+   "description": "attendance.py tính check-in đầu tiên mỗi ngày và số phút đi muộn; records.py mở API bảng công và lịch sử.",
+   "nodeIds": [
+    "file:app/attendance.py",
+    "file:app/records.py"
+   ]
+  },
+  {
+   "order": 10,
+   "title": "Lưu trữ và tích hợp",
+   "description": "db.py (SQLite), clips.py (clip mỗi lần xuất hiện), hrm.py (mock/ERPNext với outbox + retry).",
+   "nodeIds": [
+    "file:app/db.py",
+    "file:app/clips.py",
+    "file:app/hrm.py"
+   ]
+  },
+  {
+   "order": 11,
+   "title": "Giao diện web",
+   "description": "index.html và các file JS dựng 6 tab: Trực tiếp, Chấm công, Lịch sử, Đăng ký, Nhân viên, Sự kiện.",
+   "nodeIds": [
+    "file:app/static/index.html",
+    "file:app/static/app.js",
+    "file:app/static/attendance.js",
+    "file:app/static/history.js",
+    "file:app/static/zone.js"
+   ]
+  },
+  {
+   "order": 12,
+   "title": "Tài liệu giới thiệu",
+   "description": "Tài liệu HTML nêu bài toán đã giải, so sánh với đề xuất ban đầu và giới hạn của PoC.",
+   "nodeIds": [
+    "file:docs/GIOI_THIEU_DU_AN.html"
+   ]
+  }
+ ]
+}

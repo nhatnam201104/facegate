@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FaceGate – Hướng dẫn cài đặt và vận hành (kỹ thuật)</title>
+<style>
+:root{--ink:#17202a;--muted:#5d6b78;--line:#e3e8ee;--paper:#fbfaf7;--card:#fff;--accent:#0f7a5c;--accent-soft:#e3f3ec;
+  --warn:#9a5b00;--warn-soft:#fdf1dc;--bad:#a8322b;--bad-soft:#fbe6e4;--code:#f2f4f7;
+  --sans:"Segoe UI",system-ui,-apple-system,"Helvetica Neue",Arial,sans-serif;--mono:Consolas,"Cascadia Mono",Menlo,monospace}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth;scroll-padding-top:16px}
+body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.65 var(--sans);-webkit-font-smoothing:antialiased}
+header.hero{background:#0e1f1a;color:#eef6f2;padding:56px 24px 44px;position:relative;overflow:hidden}
+header.hero::after{content:"";position:absolute;right:-120px;top:-120px;width:420px;height:420px;border-radius:50%;
+  background:radial-gradient(circle,rgba(46,196,144,.35),transparent 65%)}
+.hero-in{max-width:1180px;margin:0 auto;position:relative;z-index:1}
+.kicker{display:inline-block;font-size:12px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;
+  color:#7fe0bd;border:1px solid #2c6b56;border-radius:999px;padding:3px 12px;margin-bottom:18px}
+header h1{margin:0;font-size:clamp(30px,4.2vw,48px);line-height:1.12;letter-spacing:-.02em;font-weight:800}
+header p{margin:12px 0 0;max-width:760px;color:#b9cfc6;font-size:17px}
+.wrap{max-width:1180px;margin:0 auto;padding:36px 24px 80px;display:grid;grid-template-columns:230px minmax(0,1fr);gap:48px}
+.toc{position:sticky;top:20px;align-self:start;font-size:14px}
+.toc b{display:block;font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin-bottom:10px}
+.toc ul{list-style:none;margin:0;padding:0;border-left:2px solid var(--line)}
+.toc li a{display:block;padding:6px 0 6px 14px;margin-left:-2px;border-left:2px solid transparent;color:var(--muted);text-decoration:none}
+.toc li a:hover,.toc li a.on{color:var(--accent);border-left-color:var(--accent)}
+article{min-width:0}
+article h2{font-size:26px;letter-spacing:-.01em;margin:52px 0 14px;padding-top:6px;border-top:1px solid var(--line)}
+article h2:first-child{margin-top:0;border-top:0}
+article h3{font-size:18.5px;margin:30px 0 8px;color:#0b3b2e}
+article p,article li{max-width:78ch}
+article li{margin:4px 0}
+article li>ul,article li>ol{margin:4px 0}
+a{color:var(--accent)}
+code{font-family:var(--mono);font-size:.88em;background:var(--code);border:1px solid var(--line);border-radius:5px;padding:1px 5px}
+pre{background:#0e1f1a;color:#d6efe5;border-radius:12px;padding:20px 22px;overflow:auto;font:13.5px/1.6 var(--mono);
+  box-shadow:0 12px 28px -18px rgba(14,31,26,.7)}
+pre code{background:none;border:0;padding:0;color:inherit;font-size:inherit}
+.tw{overflow-x:auto;margin:16px 0 22px;border:1px solid var(--line);border-radius:12px;background:var(--card);
+  box-shadow:0 1px 0 rgba(0,0,0,.02),0 10px 24px -20px rgba(23,32,42,.35)}
+table{border-collapse:collapse;width:100%;font-size:14.5px}
+th,td{text-align:left;vertical-align:top;padding:10px 14px;border-bottom:1px solid var(--line)}
+thead th{background:#f4f6f8;font-size:12.5px;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);white-space:nowrap}
+tbody tr:last-child td{border-bottom:0}
+tbody tr:hover td{background:#fafcfb}
+td:first-child{font-weight:600}
+table.cmp td:nth-child(2){color:var(--muted)}
+table.cmp td:nth-child(3){background:#f7fbf9}
+table.cmp{min-width:720px}
+table.ba td:nth-child(2){color:var(--bad)}
+table.ba td:nth-child(3){color:var(--accent);font-weight:600}
+.st{display:inline-block;font-size:12.5px;font-weight:700;border-radius:999px;padding:2px 10px;white-space:nowrap}
+.st.ok{background:var(--accent-soft);color:var(--accent)}
+.st.part{background:var(--warn-soft);color:var(--warn)}
+.st.no{background:var(--bad-soft);color:var(--bad)}
+footer{max-width:1180px;margin:0 auto;padding:0 24px 40px;color:var(--muted);font-size:13px}
+@media (max-width:900px){.wrap{grid-template-columns:1fr;gap:12px}.toc{position:static}}
+@media print{
+  body{background:#fff;font-size:11.5pt}header.hero{background:#fff;color:#000;padding:0 0 12px;border-bottom:2px solid #000}
+  header.hero::after,.toc{display:none}.kicker{color:#000;border-color:#000}header p{color:#333}
+  .wrap{display:block;padding:12px 0}.tw{box-shadow:none;overflow:visible}table.cmp{min-width:0}
+  h2{break-after:avoid}tr,pre{break-inside:avoid}pre{background:#f4f4f4;color:#000;box-shadow:none}
+}
+</style>
+</head>
+<body>
+<header class="hero"><div class="hero-in">
+  <span class="kicker">Hướng dẫn kỹ thuật</span>
+  <h1>FaceGate – Hướng dẫn cài đặt và vận hành (kỹ thuật)</h1>
+  <p>Tài liệu dành cho người cài đặt và chạy demo. Tổng quan dự án xem <a href="../README.md">README</a>.</p>
+</div></header>
+<div class="wrap">
+<nav class="toc" aria-label="Mục lục"><b>Mục lục</b>
+<ul>
+<li><a href="#1-yeu-cau">1. Yêu cầu</a></li>
+<li><a href="#2-cai-at-mot-lan">2. Cài đặt (một lần)</a></li>
+<li><a href="#3-chay">3. Chạy</a></li>
+<li><a href="#4-kich-ban-demo">4. Kịch bản demo</a></li>
+<li><a href="#5-benchmark-backend">5. Benchmark backend</a></li>
+<li><a href="#6-cau-truc">6. Cấu trúc</a></li>
+<li><a href="#7-luu-y-quan-trong">7. Lưu ý quan trọng</a></li>
+</ul>
+</nav>
+
+<article>
+
+<p>Bản demo chạy <strong>cục bộ trên Windows, chỉ dùng CPU</strong>, theo các phương án kỹ thuật đã đề xuất:</p>
+<pre><code>Webcam / file video / RTSP ──► Reader thread (giữ frame mới nhất)
+        ► Detect 3–5 FPS (YuNet hoặc SCRFD) ► IoU tracker ► Quality filter
+        ► Align + Embedding (SFace hoặc ArcFace) ► Gom embedding theo track
+        ► So khớp open-set (ngưỡng + margin top-2, xác minh lại liên tục)
+        ► Chống giả mạo MiniFASNet (ảnh in / màn hình điện thoại) ► Rule chấm công (check-in/out, dedup)
+        ► SQLite + snapshot + clip mỗi lần xuất hiện ► HRM adapter (mock | ERPNext) qua outbox + retry
+        ► FastAPI: MJPEG video + WebSocket + REST  ►  Giao diện web
+</code></pre>
+<h2 id="1-yeu-cau">1. Yêu cầu</h2>
+<ul>
+<li>Windows 10/11, <strong>Python 3.10 trở lên</strong> (khi cài nhớ tick <em>Add Python to PATH</em>).</li>
+<li>Webcam laptop, hoặc một file video quay ở cổng, hoặc camera IP có RTSP.</li>
+</ul>
+<h2 id="2-cai-at-mot-lan">2. Cài đặt (một lần)</h2>
+<p>Clone repo (hoặc giải nén), mở thư mục, <strong>double-click <code>setup.bat</code></strong>. Script sẽ:</p>
+<ol>
+<li>tạo môi trường ảo <code>.venv</code>;</li>
+<li>cài thư viện trong <code>requirements.txt</code>;</li>
+<li>tải model YuNet + SFace (OpenCV Zoo) và MiniFASNet chống giả mạo vào thư mục <code>models/</code>.</li>
+</ol>
+<blockquote>
+<p>Model (<code>models/*.onnx</code>) và dữ liệu chạy (<code>data/</code>) không nằm trong git: model do <code>setup.bat</code> tải về, <code>data/</code> tự tạo khi chạy lần đầu.</p>
+</blockquote>
+<p>Muốn benchmark thêm backend ONNX (SCRFD + ArcFace), mở terminal trong thư mục và chạy:</p>
+<pre><code class="language-bat">.venv\Scripts\python scripts\download_models.py --onnx
+</code></pre>
+<blockquote>
+<p>Nếu tải model lỗi: mở các link trong <code>scripts/download_models.py</code> bằng trình duyệt, tải về và đặt vào <code>models/</code>.</p>
+</blockquote>
+<h2 id="3-chay">3. Chạy</h2>
+<p><strong>Double-click <code>run.bat</code></strong>. Trình duyệt sẽ mở http://127.0.0.1:8090.</p>
+<p><strong>Đổi nguồn nhận diện ngay trên web:</strong> ở tab Trực tiếp, chọn Webcam / File video / Camera RTSP rồi bấm <strong>Đổi nguồn</strong>. Khi chọn file video, webcam được tắt hẳn. Video tải lên lưu ở <code>data/sources/</code> (chỉ giữ file đang dùng). Nguồn đổi trên web chỉ có hiệu lực tới khi tắt app; mỗi lần mở lại <code>run.bat</code> sẽ dùng <code>camera.source</code> trong <code>config.yaml</code>.</p>
+<p>Thay đổi ngưỡng, backend hay nguồn mặc định thì sửa <code>config.yaml</code>, sau đó tắt cửa sổ đang chạy và mở lại <code>run.bat</code>.</p>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Muốn</th>
+<th>Sửa trong <code>config.yaml</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Dùng webcam khác</td>
+<td><code>camera.source: 1</code></td>
+</tr>
+<tr>
+<td>Chạy trên footage đã quay</td>
+<td><code>camera.source: data/footage.mp4</code></td>
+</tr>
+<tr>
+<td>Camera Hikvision</td>
+<td><code>camera.source: rtsp://user:pass@IP:554/Streaming/Channels/102</code> (102 = substream)</td>
+</tr>
+<tr>
+<td>Đổi backend</td>
+<td><code>pipeline.backend: opencv</code> hoặc <code>onnx</code></td>
+</tr>
+<tr>
+<td>Chế độ chờ khi không có người</td>
+<td><code>power.sleep</code>, <code>power.idle_seconds</code> (mặc định 30 giây); tăng <code>power.motion_threshold</code> nếu ánh sáng nhấp nháy làm app tự bật</td>
+</tr>
+<tr>
+<td>Chỉ check-in khi đi qua đường ảo theo chiều vào</td>
+<td><code>events.direction: line</code>, chỉnh <code>events.line</code> và <code>events.in_when</code></td>
+</tr>
+<tr>
+<td>Đẩy sang ERPNext</td>
+<td><code>hrm.adapter: erpnext</code> và điền <code>url</code>, <code>api_key</code>, <code>api_secret</code></td>
+</tr>
+</tbody>
+</table></div>
+<h2 id="4-kich-ban-demo">4. Kịch bản demo</h2>
+<ol>
+<li><strong>Đăng ký</strong>: tab <em>Đăng ký</em> → nhập mã và họ tên → tải video 6–10 giây (quay bằng điện thoại: nhìn thẳng, xoay trái/phải, ngẩng/cúi nhẹ) <strong>hoặc</strong> chọn <em>Quay từ camera cổng</em>. Hệ thống tự lọc frame, chia theo góc nhìn, bỏ frame trùng, chọn 5–15 frame và báo cáo. Video gốc bị xóa sau khi xử lý.</li>
+<li><strong>Duyệt</strong>: tab <em>Nhân viên</em> → bấm <strong>Duyệt</strong>. Chỉ nhân viên đã duyệt mới được nhận diện. Hệ thống sẽ cảnh báo nếu khuôn mặt giống một nhân viên khác đã có.</li>
+<li><strong>Trực tiếp</strong> (màn hình máy chấm công): đứng trước camera ~1 giây. Lần đầu trong ngày sẽ hiện thẻ <em>Xin chào… · Check-in HH:MM · Đúng giờ / Đi muộn N phút</em> kèm âm báo; các lần sau trong ngày chỉ hiện <em>Đã chấm công hôm nay, check-in lúc …</em> (không ghi thêm). Cột bên phải: số người có mặt, đi muộn, giả mạo hôm nay. Màu khung:<ul>
+<li><strong>xanh lá</strong>: đã nhận diện và đã xác minh người thật (nhãn có <code>thật 0.xx</code>);</li>
+<li><strong>cam</strong>: đang xác minh danh tính hoặc đang kiểm tra người thật;</li>
+<li><strong>đỏ</strong>: Unknown, hoặc <strong>GIẢ MẠO</strong> (ảnh/màn hình) — không chấm công, ghi sự kiện cảnh báo;</li>
+<li><strong>xám</strong>: chất lượng thấp, kèm lý do (mờ, mặt nhỏ, quay ngang…).</li>
+</ul>
+</li>
+<li><strong>Chấm công</strong>: mỗi nhân viên chỉ lưu <strong>giờ check-in đầu tiên trong ngày</strong> và <strong>số phút đi muộn</strong> (tính từ giờ vào ca, trong khoảng <code>grace_minutes</code> coi như đúng giờ). Trạng thái <em>Đúng giờ / Đi muộn / Vắng / Chưa đến</em>, tổng hợp theo nhân viên (số ngày, số lần muộn, tổng phút muộn, vắng), nút <em>Xuất CSV</em>. Giờ vào ca cấu hình ở mục <code>attendance</code> trong <code>config.yaml</code>.</li>
+<li><strong>Lịch sử</strong>: mỗi lần một khuôn mặt xuất hiện trước camera được lưu kèm <strong>clip video</strong> (có khung nhận diện). Lọc theo người, loại (nhân viên / người lạ / giả mạo) và khoảng ngày; xem clip, tải từng clip hoặc <em>Tải tất cả clip (ZIP)</em> kèm <code>danh_sach.csv</code>. Từ bảng công bấm <em>Xem clip</em> để mở đúng người, đúng ngày.</li>
+<li><strong>Sự kiện &amp; đánh giá</strong>: gán nhãn <em>Đúng / Nhầm người / Là NV / Người lạ</em> (và <em>Đúng giả mạo / Người thật</em> cho cảnh báo giả mạo). Hệ thống tính <strong>false accept, false reject, unknown rate, tỉ lệ chặn nhầm người thật, latency p50/p90</strong>. Nút <em>Xuất CSV</em> để lấy số liệu báo cáo.</li>
+<li><strong>Xóa nhân viên</strong> ở tab <em>Nhân viên</em>: camera ngừng nhận diện người đó ngay, kể cả khi họ đang đứng trước camera. Dữ liệu khuôn mặt bị xóa; lịch sử chấm công và clip vẫn giữ (lọc được với nhãn <em>đã xóa</em>).</li>
+<li>Ở chế độ <code>hrm.adapter: mock</code>, mỗi check-in được ghi vào <code>data/hrm_mock.jsonl</code> đúng định dạng Employee Checkin.</li>
+</ol>
+<h2 id="5-benchmark-backend">5. Benchmark backend</h2>
+<pre><code class="language-bat">.venv\Scripts\python scripts\benchmark.py data\footage.mp4
+</code></pre>
+<p>Lệnh này in thời gian detect, thời gian embed và số mặt đạt chất lượng của từng backend trên cùng một video. Kết hợp số liệu này với nhãn ở tab <em>Sự kiện</em> để chọn model.</p>
+<h2 id="6-cau-truc">6. Cấu trúc</h2>
+<pre><code>app/
+  engines.py     backend nhận diện (OpenCVEngine: YuNet+SFace, OnnxEngine: SCRFD+ArcFace)
+  quality.py     đánh giá kích thước, độ mờ, ánh sáng, góc mặt (heuristic)
+  tracker.py     bám mặt: IoU trên vị trí dự đoán theo vận tốc, dự phòng theo khoảng cách tâm; tách track khi khuôn mặt không khớp, gộp khi cùng nhân viên
+  gallery.py     gallery trong RAM, so khớp ngưỡng + margin top-2
+  pipeline.py    vòng xử lý chính, rule chấm công, ghi lịch sử, chế độ chờ, vẽ khung
+  camera.py      đọc webcam / file / RTSP trong thread riêng, tự kết nối lại
+  liveness.py    chống giả mạo MiniFASNet (gộp V2 + V1SE)
+  attendance.py  giờ vào ca, check-in mỗi ngày, đi muộn/vắng, bảng công
+  clips.py       ghi clip WebM mỗi lần xuất hiện (thread riêng, pre/post-roll, tự xóa clip cũ)
+  records.py     API bảng công + lịch sử + tải ZIP
+  enrollment.py  đăng ký từ video: lọc → chia góc → bỏ trùng → kiểm tra trùng người
+  hrm.py         adapter HRM (mock, ERPNext) + outbox/retry
+  db.py          SQLite (khi lên server sẽ chuyển sang PostgreSQL + pgvector)
+  main.py        FastAPI: REST, WebSocket, MJPEG, đổi nguồn video, vùng cửa
+  state.py       trạng thái dùng chung giữa các router
+  static/        giao diện web (app.js, attendance.js, history.js, zone.js)
+scripts/         tải model, benchmark
+data/            DB, snapshot, ảnh đăng ký, clips/, settings.json (tự tạo khi chạy, không push)
+</code></pre>
+<h2 id="7-luu-y-quan-trong">7. Lưu ý quan trọng</h2>
+<ul>
+<li><strong>License model</strong>: YuNet và SFace thuộc OpenCV Zoo (Apache-2.0). Weights SCRFD/ArcFace của InsightFace <strong>chỉ dùng cho nghiên cứu/benchmark</strong>; muốn dùng thương mại phải có license riêng.</li>
+<li><strong>Ngưỡng</strong> (<code>recognition.thresholds</code>) là giá trị khởi điểm, cần hiệu chỉnh bằng footage thật. Sau khi đổi backend phải <strong>đăng ký lại</strong>, vì embedding được gắn <code>model_version</code>.</li>
+<li><strong>Chống giả mạo là phần mềm, chỉ giảm rủi ro</strong>: MiniFASNet (Minivision, Apache-2.0) chặn tốt ảnh in và ảnh trên màn hình điện thoại, nhưng video/màn hình chất lượng cao hoặc mặt nạ vẫn có thể lọt. Nếu dữ liệu dùng để <strong>tính lương</strong>, nên dùng máy chấm công có camera IR/3D. Chỉnh <code>liveness.threshold</code> (mặc định 0.70) theo điểm <code>thật 0.xx</code> hiện trên khung: tăng để chặn chặt hơn, giảm nếu người thật bị báo giả mạo.</li>
+<li><strong>Chế độ chờ</strong>: sau <code>idle_seconds</code> không thấy khuôn mặt, app ngừng nhận diện/vẽ khung/mã hoá video và chỉ đo chuyển động trên ảnh 160×90 (4 lần/giây); badge chuyển thành <em>CHẾ ĐỘ CHỜ</em>, hình cập nhật mỗi 2 giây. Để không bị lá cây, bóng đổ, đèn nhấp nháy đánh thức: (1) chỉ tính chuyển động trong <strong>vùng cửa</strong> — bấm nút <em>Vùng cửa</em> ở tab Trực tiếp, chấm các góc lối đi lên hình rồi <em>Lưu vùng</em> (lưu ở <code>data/settings.json</code>); (2) khi có chuyển động trong vùng, app tìm khuôn mặt trong <code>confirm_seconds</code> (1 giây) — thấy mặt mới bật lại, không thấy thì ngủ tiếp (rê chuột lên badge để xem số lần đã bỏ qua). Khi đang chạy, chỉ khuôn mặt mới giữ app thức. Clip vẫn có 2 giây trước khi người xuất hiện. Webcam vẫn mở (đèn vẫn sáng) để không bỏ sót người đến.</li>
+<li><strong>Clip video</strong> lưu tại <code>data/clips/</code>, tự xóa sau <code>clips.retention_days</code> ngày (mặc định 30).</li>
+<li><strong>Dữ liệu khuôn mặt là dữ liệu sinh trắc học</strong>: chỉ dùng với nhân viên đã đồng ý. Thư mục <code>data/</code> chứa ảnh khuôn mặt, không chia sẻ ra ngoài.</li>
+<li>Webcam laptop cho kết quả tốt hơn camera cổng vì mặt to và gần. Muốn đánh giá đúng thực tế, hãy quay footage tại vị trí lắp camera thật rồi chạy với <code>camera.source</code> là file đó.</li>
+</ul>
+</article>
+</div>
+<footer>FaceGate · Hướng dẫn kỹ thuật · github.com/nhatnam201104/facegate</footer>
+<script>
+// danh dau muc dang doc trong muc luc
+const links = [...document.querySelectorAll(".toc a")];
+const obs = new IntersectionObserver(es => es.forEach(e => {
+  if (e.isIntersecting) links.forEach(a => a.classList.toggle("on", a.hash === "#" + e.target.id));
+}), {rootMargin: "0px 0px -70% 0px"});
+document.querySelectorAll("article h2[id]").forEach(el => obs.observe(el));
+</script>
+</body>
+</html>

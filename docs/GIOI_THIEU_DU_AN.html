@@ -1,0 +1,481 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FaceGate – Giới thiệu dự án</title>
+<style>
+:root{--ink:#17202a;--muted:#5d6b78;--line:#e3e8ee;--paper:#fbfaf7;--card:#fff;--accent:#0f7a5c;--accent-soft:#e3f3ec;
+  --warn:#9a5b00;--warn-soft:#fdf1dc;--bad:#a8322b;--bad-soft:#fbe6e4;--code:#f2f4f7;
+  --sans:"Segoe UI",system-ui,-apple-system,"Helvetica Neue",Arial,sans-serif;--mono:Consolas,"Cascadia Mono",Menlo,monospace}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth;scroll-padding-top:16px}
+body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.65 var(--sans);-webkit-font-smoothing:antialiased}
+header.hero{background:#0e1f1a;color:#eef6f2;padding:56px 24px 44px;position:relative;overflow:hidden}
+header.hero::after{content:"";position:absolute;right:-120px;top:-120px;width:420px;height:420px;border-radius:50%;
+  background:radial-gradient(circle,rgba(46,196,144,.35),transparent 65%)}
+.hero-in{max-width:1180px;margin:0 auto;position:relative;z-index:1}
+.kicker{display:inline-block;font-size:12px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;
+  color:#7fe0bd;border:1px solid #2c6b56;border-radius:999px;padding:3px 12px;margin-bottom:18px}
+header h1{margin:0;font-size:clamp(30px,4.2vw,48px);line-height:1.12;letter-spacing:-.02em;font-weight:800}
+header p{margin:12px 0 0;max-width:760px;color:#b9cfc6;font-size:17px}
+.wrap{max-width:1180px;margin:0 auto;padding:36px 24px 80px;display:grid;grid-template-columns:230px minmax(0,1fr);gap:48px}
+.toc{position:sticky;top:20px;align-self:start;font-size:14px}
+.toc b{display:block;font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin-bottom:10px}
+.toc ul{list-style:none;margin:0;padding:0;border-left:2px solid var(--line)}
+.toc li a{display:block;padding:6px 0 6px 14px;margin-left:-2px;border-left:2px solid transparent;color:var(--muted);text-decoration:none}
+.toc li a:hover,.toc li a.on{color:var(--accent);border-left-color:var(--accent)}
+article{min-width:0}
+article h2{font-size:26px;letter-spacing:-.01em;margin:52px 0 14px;padding-top:6px;border-top:1px solid var(--line)}
+article h2:first-child{margin-top:0;border-top:0}
+article h3{font-size:18.5px;margin:30px 0 8px;color:#0b3b2e}
+article p,article li{max-width:78ch}
+article li{margin:4px 0}
+article li>ul,article li>ol{margin:4px 0}
+a{color:var(--accent)}
+code{font-family:var(--mono);font-size:.88em;background:var(--code);border:1px solid var(--line);border-radius:5px;padding:1px 5px}
+pre{background:#0e1f1a;color:#d6efe5;border-radius:12px;padding:20px 22px;overflow:auto;font:13.5px/1.6 var(--mono);
+  box-shadow:0 12px 28px -18px rgba(14,31,26,.7)}
+pre code{background:none;border:0;padding:0;color:inherit;font-size:inherit}
+.tw{overflow-x:auto;margin:16px 0 22px;border:1px solid var(--line);border-radius:12px;background:var(--card);
+  box-shadow:0 1px 0 rgba(0,0,0,.02),0 10px 24px -20px rgba(23,32,42,.35)}
+table{border-collapse:collapse;width:100%;font-size:14.5px}
+th,td{text-align:left;vertical-align:top;padding:10px 14px;border-bottom:1px solid var(--line)}
+thead th{background:#f4f6f8;font-size:12.5px;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);white-space:nowrap}
+tbody tr:last-child td{border-bottom:0}
+tbody tr:hover td{background:#fafcfb}
+td:first-child{font-weight:600}
+table.cmp td:nth-child(2){color:var(--muted)}
+table.cmp td:nth-child(3){background:#f7fbf9}
+table.cmp{min-width:720px}
+table.ba td:nth-child(2){color:var(--bad)}
+table.ba td:nth-child(3){color:var(--accent);font-weight:600}
+.st{display:inline-block;font-size:12.5px;font-weight:700;border-radius:999px;padding:2px 10px;white-space:nowrap}
+.st.ok{background:var(--accent-soft);color:var(--accent)}
+.st.part{background:var(--warn-soft);color:var(--warn)}
+.st.no{background:var(--bad-soft);color:var(--bad)}
+footer{max-width:1180px;margin:0 auto;padding:0 24px 40px;color:var(--muted);font-size:13px}
+@media (max-width:900px){.wrap{grid-template-columns:1fr;gap:12px}.toc{position:static}}
+@media print{
+  body{background:#fff;font-size:11.5pt}header.hero{background:#fff;color:#000;padding:0 0 12px;border-bottom:2px solid #000}
+  header.hero::after,.toc{display:none}.kicker{color:#000;border-color:#000}header p{color:#333}
+  .wrap{display:block;padding:12px 0}.tw{box-shadow:none;overflow:visible}table.cmp{min-width:0}
+  h2{break-after:avoid}tr,pre{break-inside:avoid}pre{background:#f4f4f4;color:#000;box-shadow:none}
+}
+</style>
+</head>
+<body>
+<header class="hero"><div class="hero-in">
+  <span class="kicker">PoC demo · Chấm công khuôn mặt</span>
+  <h1>FaceGate – Giới thiệu dự án</h1>
+  <p>Bản demo PoC camera nhận diện nhân viên tại cổng, phục vụ chấm công HRM. Cập nhật: 04/11/2026.</p>
+</div></header>
+<div class="wrap">
+<nav class="toc" aria-label="Mục lục"><b>Mục lục</b>
+<ul>
+<li><a href="#1-tom-tat">1. Tóm tắt</a></li>
+<li><a href="#2-kien-truc">2. Kiến trúc</a></li>
+<li><a href="#3-cong-nghe-su-dung">3. Công nghệ sử dụng</a></li>
+<li><a href="#4-cac-bai-toan-a-giai-quyet">4. Các bài toán đã giải quyết</a></li>
+<li><a href="#5-so-voi-cong-nghe-a-e-xuat">5. So với công nghệ đã đề xuất</a></li>
+<li><a href="#6-gioi-han-va-rui-ro-con-lai">6. Giới hạn và rủi ro còn lại</a></li>
+<li><a href="#7-buoc-tiep-theo-e-xuat">7. Bước tiếp theo đề xuất</a></li>
+</ul>
+</nav>
+
+<article>
+
+<h2 id="1-tom-tat">1. Tóm tắt</h2>
+<p>FaceGate là bản demo cho phần <strong>HRM</strong> của PoC "camera nhận diện nhân viên và hàng hóa". Bản demo chạy được đầy đủ luồng chấm công bằng khuôn mặt:</p>
+<ol>
+<li>Nhân viên đăng ký bằng một video ngắn.</li>
+<li>HR duyệt.</li>
+<li>Nhân viên đứng trước camera ở cổng.</li>
+<li>Hệ thống nhận diện, kiểm tra người thật, ghi giờ check-in và số phút đi muộn, rồi đẩy sự kiện sang HRM.</li>
+</ol>
+<p>Hệ thống <strong>chỉ dùng CPU</strong>. Do chưa có server Ubuntu, bản demo hiện chạy <strong>cục bộ trên Windows</strong> với webcam laptop, file video quay sẵn hoặc camera IP qua RTSP.</p>
+<p>Phần <strong>sản xuất</strong> (nhận diện hàng hóa/SKU, theo dõi hiện diện theo khu vực) <strong>chưa thuộc phạm vi bản demo này</strong>.</p>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Hạng mục</th>
+<th>Trạng thái</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Nhận diện nhân viên, hiển thị khung và tên gần real-time</td>
+<td><span class="st ok">Đã có</span></td>
+</tr>
+<tr>
+<td>Unknown khi không đủ tin cậy, không đoán tên</td>
+<td><span class="st ok">Đã có</span></td>
+</tr>
+<tr>
+<td>Đăng ký khuôn mặt bằng một video ngắn</td>
+<td><span class="st ok">Đã có</span></td>
+</tr>
+<tr>
+<td>Chấm công: check-in mỗi ngày, số phút đi muộn, vắng</td>
+<td><span class="st ok">Đã có</span></td>
+</tr>
+<tr>
+<td>Chống giả mạo bằng ảnh, màn hình điện thoại</td>
+<td><span class="st ok">Đã có</span> (phần mềm, chỉ giảm rủi ro)</td>
+</tr>
+<tr>
+<td>Lịch sử xuất hiện kèm clip video</td>
+<td><span class="st ok">Đã có</span> (ngoài đề xuất ban đầu)</td>
+</tr>
+<tr>
+<td>Tích hợp HRM</td>
+<td><span class="st part">Bản giả lập</span> (mock) đã chạy; bản ERPNext đã viết nhưng chưa thử với ERP thật</td>
+</tr>
+<tr>
+<td>Camera Hikvision qua RTSP</td>
+<td><span class="st part">Code đã hỗ trợ</span> chưa thử với camera thật</td>
+</tr>
+<tr>
+<td>10 khuôn mặt đồng thời</td>
+<td><span class="st no">Chưa kiểm chứng</span> (đang giới hạn 3)</td>
+</tr>
+<tr>
+<td>Hàng hóa/SKU, zone sản xuất</td>
+<td><span class="st no">Chưa làm</span></td>
+</tr>
+<tr>
+<td>Benchmark độ chính xác trên footage thật</td>
+<td><span class="st part">Đã có công cụ</span> chưa có số liệu</td>
+</tr>
+</tbody>
+</table></div>
+<h2 id="2-kien-truc">2. Kiến trúc</h2>
+<pre><code>Webcam / file video / camera RTSP
+   │  thread đọc riêng, chỉ giữ frame mới nhất (không dồn trễ)
+   ▼
+Phát hiện mặt (YuNet, ~5 lần/giây) ─► Bám mặt (tracker) ─► Lọc chất lượng
+   ─► Căn chỉnh + embedding (SFace) ─► Gom theo track ─► So khớp (ngưỡng + margin)
+   ─► Chống giả mạo (MiniFASNet) ─► Rule chấm công ─► SQLite + ảnh + clip
+   ─► HRM adapter (mock | ERPNext), có hàng đợi gửi lại
+   ▼
+FastAPI: video MJPEG + WebSocket + REST  ─►  Giao diện web (6 tab)
+</code></pre>
+<p>Video hiển thị và AI chạy tách rời. Video đi thẳng lên trình duyệt, còn AI xử lý ở nhịp riêng. Khi AI chậm, hình vẫn mượt, chỉ có khung nhận diện cập nhật thưa hơn.</p>
+<h2 id="3-cong-nghe-su-dung">3. Công nghệ sử dụng</h2>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Lớp</th>
+<th>Công nghệ</th>
+<th>Ghi chú</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Ngôn ngữ, server</td>
+<td>Python 3.10+, FastAPI, Uvicorn</td>
+<td>REST, WebSocket, video MJPEG</td>
+</tr>
+<tr>
+<td>Đọc video</td>
+<td>OpenCV VideoCapture (MSMF/DSHOW trên Windows, FFmpeg cho RTSP)</td>
+<td>Tự kết nối lại, tự phát hiện webcam trả hình đen</td>
+</tr>
+<tr>
+<td>Phát hiện mặt</td>
+<td><strong>YuNet</strong> (OpenCV Zoo, Apache-2.0)</td>
+<td>Có sẵn 5 điểm mốc khuôn mặt để căn chỉnh</td>
+</tr>
+<tr>
+<td>Nhận diện</td>
+<td><strong>SFace</strong> (OpenCV Zoo, Apache-2.0)</td>
+<td>Embedding 128 chiều, so cosine</td>
+</tr>
+<tr>
+<td>Backend thứ hai để so sánh</td>
+<td>SCRFD + ArcFace (InsightFace) qua ONNX Runtime</td>
+<td>Weights chỉ dùng cho nghiên cứu, không dùng thương mại</td>
+</tr>
+<tr>
+<td>Chống giả mạo</td>
+<td><strong>MiniFASNet V2 + V1SE</strong> (Minivision, Apache-2.0) qua ONNX Runtime</td>
+<td>Khoảng 4 ms mỗi khuôn mặt trên CPU</td>
+</tr>
+<tr>
+<td>So khớp</td>
+<td>numpy cosine, gallery nạp sẵn trong RAM</td>
+<td>Đủ nhanh cho 20–50 nhân viên</td>
+</tr>
+<tr>
+<td>Lưu trữ</td>
+<td>SQLite (WAL); ảnh JPEG; clip WebM (VP8)</td>
+<td>Dự kiến chuyển PostgreSQL + pgvector khi lên server</td>
+</tr>
+<tr>
+<td>Giao diện</td>
+<td>HTML, CSS, JavaScript thuần (không framework)</td>
+<td>Trực tiếp, Chấm công, Lịch sử, Đăng ký, Nhân viên, Sự kiện &amp; đánh giá</td>
+</tr>
+<tr>
+<td>Tích hợp HRM</td>
+<td>Adapter mock (file JSONL) và ERPNext (<code>Employee Checkin</code>)</td>
+<td>Có outbox và thử gửi lại khi HRM mất kết nối</td>
+</tr>
+<tr>
+<td>Đóng gói</td>
+<td><code>setup.bat</code> và <code>run.bat</code></td>
+<td>Model tự tải về, không đưa vào git</td>
+</tr>
+</tbody>
+</table></div>
+<p>Toàn bộ thông số (ngưỡng, ca làm, chế độ chờ, nguồn video…) nằm trong <code>config.yaml</code>. Mã nguồn khoảng 3.300 dòng.</p>
+<h2 id="4-cac-bai-toan-a-giai-quyet">4. Các bài toán đã giải quyết</h2>
+<h3 id="41-nhan-dien-tin-cay-khong-oan-ten">4.1. Nhận diện tin cậy, không đoán tên</h3>
+<ul>
+<li>App không kết luận từ một frame lẻ. Nó gom embedding của nhiều frame tốt trên cùng một người (một track), lấy trung bình có trọng số theo chất lượng, rồi mới so khớp.</li>
+<li>
+<p>Hai điều kiện phải cùng đạt:</p>
+<ul>
+<li>Điểm giống người đứng đầu ≥ <strong>ngưỡng</strong> (0,42).</li>
+<li>Chênh lệch với người đứng thứ hai ≥ <strong>margin</strong> (0,06), để không nhầm giữa hai người giống nhau.</li>
+</ul>
+<p>Không đạt thì hiển thị <strong>Unknown</strong>.</p>
+</li>
+<li>
+<p><strong>Xác minh lại liên tục:</strong> sau khi đã chốt tên, nếu khuôn mặt không còn khớp thì danh tính bị hủy và track phải xác minh lại.</p>
+</li>
+<li><strong>Lọc chất lượng trước khi nhận diện:</strong> bỏ các frame có mặt quá nhỏ, mờ, quá tối hoặc quá sáng, quay ngang hay bị cắt mép. Khung màu xám hiện rõ lý do bị loại.</li>
+</ul>
+<h3 id="42-ang-ky-khuon-mat-bang-mot-video">4.2. Đăng ký khuôn mặt bằng một video</h3>
+<ul>
+<li>Nhân viên tải lên video 6–10 giây, hoặc quay trực tiếp từ camera cổng với khung xem trước và đếm ngược.</li>
+<li>Hệ thống tự làm các bước:<ol>
+<li>Tách frame và lọc theo chất lượng.</li>
+<li>Chia frame theo góc nhìn (thẳng, trái, phải, ngẩng, cúi) và bỏ frame trùng.</li>
+<li>Chọn <strong>5–15 frame</strong> tốt nhất.</li>
+<li>Kiểm tra mọi frame là cùng một người.</li>
+<li><strong>Cảnh báo nếu khuôn mặt giống một nhân viên đã có.</strong></li>
+</ol>
+</li>
+<li>Video gốc bị xóa sau khi xử lý. Nhân viên chỉ được nhận diện sau khi HR bấm <strong>Duyệt</strong>.</li>
+<li>Mỗi embedding được gắn <code>model_version</code>. Khi đổi model, hệ thống biết nhân viên nào cần đăng ký lại.</li>
+</ul>
+<h3 id="43-cham-cong">4.3. Chấm công</h3>
+<ul>
+<li>Mỗi nhân viên chỉ có <strong>một lần check-in mỗi ngày</strong>: lần đầu tiên camera xác nhận đúng người và đúng người thật. App lưu <strong>giờ check-in</strong> và <strong>số phút đi muộn</strong> so với giờ vào ca. Mặc định ca bắt đầu 08:00, trễ dưới 5 phút vẫn tính đúng giờ.</li>
+<li>Những lần đi qua sau đó trong ngày không ghi thêm. Màn hình chỉ hiện "Đã chấm công hôm nay, check-in lúc …".</li>
+<li><strong>Màn hình kiểu máy chấm công:</strong><ul>
+<li>Thẻ "Xin chào, …" kèm trạng thái Đúng giờ hoặc Đi muộn N phút, cùng âm báo.</li>
+<li>Số liệu trong ngày: số người có mặt, số người đi muộn, số lần giả mạo.</li>
+</ul>
+</li>
+<li><strong>Bảng công:</strong> lọc theo ngày, tuần, tháng hoặc theo nhân viên. Trạng thái gồm Đúng giờ / Đi muộn / Vắng / Chưa đến. Có tổng hợp theo nhân viên và xuất CSV.</li>
+<li><strong>Xóa nhân viên:</strong> camera ngừng nhận diện người đó ngay, kể cả khi họ đang đứng trước camera. Dữ liệu khuôn mặt bị xóa, còn lịch sử chấm công vẫn được giữ.</li>
+</ul>
+<h3 id="44-chong-gia-mao-bang-anh-man-hinh">4.4. Chống giả mạo bằng ảnh, màn hình</h3>
+<ul>
+<li>Mô hình nhận diện chỉ trả lời "đây là ai". Ảnh của nhân viên trên điện thoại vẫn đúng là mặt người đó, nên mô hình nhận diện không chặn được.</li>
+<li>MiniFASNet trả lời câu hỏi khác: "đây có phải người thật không". Hai model nhìn ở hai vùng: vùng sát mặt để phát hiện vân sọc màn hình và bề mặt giấy, vùng rộng để phát hiện viền điện thoại và tay cầm.</li>
+<li><strong>Chỉ chấm công khi</strong> điểm "người thật" trung bình trên nhiều frame ≥ 0,70. Dưới 0,35 thì coi là <strong>giả mạo</strong>: không chấm công, ghi sự kiện cảnh báo kèm tên người bị giả mạo, và lưu clip làm bằng chứng.</li>
+<li>Trên webcam thử nghiệm, người thật đạt khoảng 0,85–0,96. <strong>Chưa thử có hệ thống với ảnh và video giả mạo thật.</strong></li>
+</ul>
+<h3 id="45-bam-mat-khi-di-chuyen-nhanh-hoac-nhieu-nguoi">4.5. Bám mặt khi di chuyển nhanh hoặc nhiều người</h3>
+<p>Ba cơ chế bám mặt:</p>
+<ul>
+<li><strong>Dự đoán vị trí theo vận tốc:</strong> so khớp với vị trí mặt sắp tới thay vì vị trí cũ.</li>
+<li><strong>Nối theo khoảng cách tâm:</strong> dùng khi mặt di chuyển nhanh, có giới hạn theo kích thước mặt.</li>
+<li><strong>Kiểm tra bằng khuôn mặt:</strong> nếu frame mới không giống người của track, tách thành track mới để không trộn dữ liệu hai người.</li>
+</ul>
+<p>Kết quả trên các kịch bản dựng sẵn:</p>
+<div class="tw"><table class="ba">
+<thead>
+<tr>
+<th>Kịch bản</th>
+<th class="before">Tracker ban đầu</th>
+<th>Tracker hiện tại</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Mặt di chuyển nhanh</td>
+<td>6 track, 5 khung cùng lúc, không chấm công được</td>
+<td>1 track, check-in đúng</td>
+</tr>
+<tr>
+<td>Hai người đi qua nhau</td>
+<td>Người lạ bị ghi thành nhân viên trong lịch sử</td>
+<td>Tách đúng hai người</td>
+</tr>
+<tr>
+<td>Người khác đứng vào chỗ vừa trống</td>
+<td>Bị gộp vào track của người trước</td>
+<td>Tách đúng, người sau ghi là người lạ</td>
+</tr>
+<tr>
+<td>Mặt bị che 1–2 giây rồi xuất hiện lại</td>
+<td>2 lần xuất hiện</td>
+<td>1 lần xuất hiện</td>
+</tr>
+</tbody>
+</table></div>
+<h3 id="46-lich-su-xuat-hien-va-trich-xuat-clip">4.6. Lịch sử xuất hiện và trích xuất clip</h3>
+<ul>
+<li>Mỗi lần một khuôn mặt xuất hiện trước camera được lưu kèm <strong>clip video có khung nhận diện</strong>. Clip lấy thêm 2 giây trước và 1,5 giây sau, được ghi ở một thread riêng nên không làm chậm nhận diện.</li>
+<li>Lọc được theo người (kể cả nhân viên đã xóa), theo loại (nhân viên / người lạ / giả mạo) và theo ngày. Có thể xem trực tiếp, tải từng clip, hoặc tải <strong>cả gói ZIP</strong> kèm danh sách CSV. Từ bảng công bấm "Xem clip" để mở đúng người, đúng ngày.</li>
+<li>Clip tự xóa sau 30 ngày, vì đây là dữ liệu sinh trắc học.</li>
+</ul>
+<h3 id="47-tranh-chay-het-tai-247-che-o-cho">4.7. Tránh chạy hết tải 24/7: chế độ chờ</h3>
+<ul>
+<li>Sau 30 giây không thấy khuôn mặt, app ngừng nhận diện và chỉ đo chuyển động trên một ảnh rất nhỏ (160×90), 4 lần mỗi giây.</li>
+<li>Để lá cây, bóng đổ hay đèn nhấp nháy không đánh thức app:<ol>
+<li>Chỉ tính chuyển động trong <strong>vùng cửa</strong>, do người dùng vẽ trên màn hình.</li>
+<li>Khi có chuyển động, app <strong>tìm khuôn mặt trong 1 giây</strong>. Thấy mặt thì mới bật lại, không thấy thì ngủ tiếp.</li>
+</ol>
+</li>
+<li>Đo trên video 720p cảnh phòng trống: CPU giảm từ khoảng <strong>65–80% xuống 11–26%</strong> của một nhân. Khi có người, app bật lại trong chưa tới 0,3 giây.</li>
+</ul>
+<h3 id="48-van-hanh">4.8. Vận hành</h3>
+<ul>
+<li><strong>Đổi nguồn video ngay trên web:</strong> webcam, file video hoặc RTSP. Mật khẩu trong URL RTSP được che khi hiển thị.</li>
+<li><strong>Tự phục hồi webcam:</strong><ul>
+<li>Ưu tiên backend MSMF, đạt 30 FPS thay vì 10 FPS như DSHOW.</li>
+<li>Tự mở lại camera khi driver kẹt và chỉ trả hình đen.</li>
+<li>Tự thử lại khi ứng dụng khác đang giữ camera.</li>
+</ul>
+</li>
+<li><strong>Đánh giá chất lượng:</strong> gán nhãn từng sự kiện (Đúng / Nhầm người / Là nhân viên / Người lạ / Đúng giả mạo / Người thật). Hệ thống tự tính <strong>false accept, false reject, unknown rate, tỉ lệ chặn nhầm người thật và latency p50/p90</strong>, xuất CSV. Lệnh <code>scripts/benchmark.py</code> so sánh hai backend trên cùng một video.</li>
+</ul>
+<h2 id="5-so-voi-cong-nghe-a-e-xuat">5. So với công nghệ đã đề xuất</h2>
+<div class="tw"><table class="cmp">
+<thead>
+<tr>
+<th>Hạng mục</th>
+<th>Đề xuất ban đầu</th>
+<th>Bản demo hiện tại</th>
+<th>Lý do</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Nơi chạy</td>
+<td>Server Linux (cloud) đọc stream qua VPN/Tailscale</td>
+<td>Chạy cục bộ trên Windows</td>
+<td>Chưa có server Ubuntu. Kiến trúc giữ nguyên, nguồn RTSP đã hỗ trợ. Khuyến nghị đặt máy xử lý tại văn phòng, chỉ gửi sự kiện lên HRM, để giảm băng thông và không phụ thuộc Internet</td>
+</tr>
+<tr>
+<td>Engine suy luận</td>
+<td>OpenVINO CPU</td>
+<td>OpenCV DNN + ONNX Runtime (CPU)</td>
+<td>Cài đặt đơn giản trên Windows, không cần toolkit riêng. Model đều ở định dạng ONNX nên có thể chuyển sang OpenVINO khi lên server Intel để tăng tốc</td>
+</tr>
+<tr>
+<td>Phát hiện mặt</td>
+<td><code>face-detection-retail-0004</code> + <code>landmarks-regression-retail-0009</code></td>
+<td><strong>YuNet</strong></td>
+<td>YuNet có sẵn 5 điểm mốc nên bỏ được model landmarks riêng, và bắt mặt nhỏ, mặt nghiêng tốt hơn. Bộ retail-* thuộc Open Model Zoo đã ngừng phát triển</td>
+</tr>
+<tr>
+<td>Nhận diện</td>
+<td><code>face-reidentification-retail-0095</code></td>
+<td><strong>SFace</strong> (mặc định); SCRFD + ArcFace để so sánh</td>
+<td>SFace chính xác hơn và có license Apache-2.0, dùng thương mại được. ArcFace của InsightFace chính xác cao nhưng weights chỉ cho nghiên cứu nên chỉ dùng để benchmark</td>
+</tr>
+<tr>
+<td>Tìm kiếm vector</td>
+<td>FAISS</td>
+<td>numpy cosine trong RAM</td>
+<td>Với 20–50 nhân viên (khoảng 750 embedding), so khớp dưới 1 ms. FAISS chỉ cần khi có hàng chục nghìn embedding</td>
+</tr>
+<tr>
+<td>Bám mặt</td>
+<td>"Tracking ở các frame giữa"</td>
+<td>Tracker riêng: IoU trên vị trí dự đoán, nối theo khoảng cách, kiểm tra bằng khuôn mặt</td>
+<td>Chỉ cần vài mặt cùng lúc và cần chặn trộn dữ liệu giữa hai người, nên không dùng thư viện ByteTrack</td>
+</tr>
+<tr>
+<td>Chống giả mạo</td>
+<td>"Cần thêm chống giả mạo hoặc dự phòng RFID/QR"</td>
+<td><strong>Đã tích hợp MiniFASNet</strong> (phần mềm)</td>
+<td>Theo yêu cầu chặn chấm công bằng ảnh điện thoại. Vẫn khuyến nghị thiết bị IR hoặc yếu tố thứ hai nếu dùng để tính lương</td>
+</tr>
+<tr>
+<td>Chấm công</td>
+<td>Ghi giờ ra/vào cổng</td>
+<td>Chỉ check-in mỗi ngày và số phút đi muộn</td>
+<td>Thay đổi theo yêu cầu hiện tại. Rule đi qua đường ảo theo chiều vào vẫn có sẵn (<code>events.direction: line</code>)</td>
+</tr>
+<tr>
+<td>Lưu trữ</td>
+<td>(không nêu)</td>
+<td>SQLite</td>
+<td>Đủ cho demo một máy. Dự kiến PostgreSQL + pgvector khi lên server</td>
+</tr>
+<tr>
+<td>Tốc độ</td>
+<td>Video 20–25 FPS, AI 3–5 lần/giây (thử nâng 5–10), hiện tên 0,5–1 giây</td>
+<td>Camera 30 FPS; video gửi lên web 15 FPS; AI khoảng 4,5 lần/giây (~15 ms/lần)</td>
+<td>Video web đặt 15 FPS để giảm tải và có thể tăng trong cấu hình. <strong>Độ trễ hiện tên chưa được đo có hệ thống</strong></td>
+</tr>
+<tr>
+<td>Đồng thời</td>
+<td>Thử 3 mặt, mục tiêu khoảng 10</td>
+<td>Giới hạn 3 mặt (<code>max_faces</code>)</td>
+<td>Đúng bước 1 của kế hoạch. Mức 10 mặt chưa kiểm chứng</td>
+</tr>
+<tr>
+<td>Đăng ký</td>
+<td>Video 6–10 giây, chọn 8–15 frame</td>
+<td>Như đề xuất, chọn 5–15 frame</td>
+<td>Hạ mức tối thiểu xuống 5 frame để video ngắn hoặc thiếu sáng vẫn đăng ký được. Hệ thống cảnh báo khi có ít góc nhìn</td>
+</tr>
+<tr>
+<td>Hàng hóa/SKU</td>
+<td>QR/barcode, ORB/SIFT + RANSAC</td>
+<td>Chưa làm</td>
+<td>Đề xuất tách thành phase 2 với camera đặt riêng. Thứ tự khuyến nghị: barcode → so khớp embedding (DINOv2/CLIP) → YOLO. ORB/SIFT dễ hỏng khi bao bì cong, phản sáng hoặc các SKU chỉ khác nhau chữ</td>
+</tr>
+<tr>
+<td>Zone/khu vực</td>
+<td>Polygon và rule cho hiện diện, giờ vào/ra khu vực</td>
+<td>Mới có "vùng cửa" cho chế độ chờ</td>
+<td>Phần zone cho sản xuất thuộc phase 2. Có thể tận dụng Frigate thay vì tự viết</td>
+</tr>
+<tr>
+<td>Bổ sung ngoài đề xuất</td>
+<td>—</td>
+<td>Lịch sử và clip, chế độ chờ, đổi nguồn trên web, tự phục hồi webcam, đánh giá FAR/FRR trên giao diện</td>
+<td>Phát sinh từ yêu cầu trong quá trình làm demo</td>
+</tr>
+</tbody>
+</table></div>
+<h2 id="6-gioi-han-va-rui-ro-con-lai">6. Giới hạn và rủi ro còn lại</h2>
+<ul>
+<li><strong>Chưa có số liệu độ chính xác trên footage thật.</strong> Công cụ đo đã có sẵn, nhưng cần quay video tại đúng vị trí lắp camera, gán nhãn, rồi chỉnh các ngưỡng (nhận diện 0,42, người thật 0,70).</li>
+<li><strong>Chống giả mạo bằng phần mềm chỉ giảm rủi ro.</strong> Video hoặc màn hình chất lượng cao và mặt nạ vẫn có thể lọt. Nếu dữ liệu dùng để tính lương, nên dùng máy chấm công có camera IR/3D, hoặc thêm thẻ/QR.</li>
+<li><strong>Vị trí lắp camera ảnh hưởng lớn nhất đến độ chính xác.</strong> Lens 2,8 mm có góc rộng nên mặt ở xa sẽ nhỏ. Cửa có nắng phía sau dễ bị ngược sáng. Cần thử thực tế trước khi chốt vị trí, hoặc cân nhắc lens 4 mm.</li>
+<li><strong>Detector đôi khi nhận nhầm tai thành mặt</strong> khi người dùng cúi đầu sát camera. Lỗi này tạo ra vài bản ghi "Người lạ" thừa trong Lịch sử, nhưng không gây chấm công sai.</li>
+<li><strong>Dữ liệu sinh trắc học:</strong> cần nhân viên đồng ý, bộ phận pháp chế xác nhận và phân quyền truy cập. Thư mục <code>data/</code> (DB, ảnh, clip) không được đưa lên git và clip tự xóa sau 30 ngày. Cần phương án thay thế (thẻ/QR) cho nhân viên không đồng ý.</li>
+<li><strong>Giao diện chưa có đăng nhập và phân quyền.</strong> Server hiện chỉ lắng nghe trên <code>127.0.0.1</code>. Phải bổ sung xác thực trước khi mở cho mạng nội bộ.</li>
+</ul>
+<h2 id="7-buoc-tiep-theo-e-xuat">7. Bước tiếp theo đề xuất</h2>
+<ol>
+<li>Quay vài phút footage tại vị trí lắp camera thật, chạy benchmark, gán nhãn và chốt ngưỡng cùng backend nhận diện.</li>
+<li>Lắp thử camera Hikvision qua RTSP (dùng substream H.264), đo FPS, độ trễ hiện tên và CPU.</li>
+<li>Thử chống giả mạo với ảnh in, ảnh và video trên điện thoại, ghi tỉ lệ chặn và tỉ lệ chặn nhầm người thật.</li>
+<li>Kết nối ERPNext/HRM thật. Bổ sung đăng nhập và phân quyền cho giao diện.</li>
+<li>Khi có server Linux: chuyển sang Docker, cân nhắc OpenVINO và PostgreSQL, rồi tăng tải 3 → 5 → khoảng 10 mặt đồng thời theo kế hoạch.</li>
+<li>Phase 2 (sản xuất): nhận diện hàng hóa/SKU và zone hiện diện, dùng camera đặt riêng.</li>
+</ol>
+</article>
+</div>
+<footer>FaceGate · github.com/nhatnam201104/facegate</footer>
+<script>
+// danh dau muc dang doc trong muc luc
+const links = [...document.querySelectorAll(".toc a")];
+const obs = new IntersectionObserver(es => es.forEach(e => {
+  if (e.isIntersecting) links.forEach(a => a.classList.toggle("on", a.hash === "#" + e.target.id));
+}), {rootMargin: "0px 0px -70% 0px"});
+document.querySelectorAll("article h2[id]").forEach(el => obs.observe(el));
+</script>
+</body>
+</html>
