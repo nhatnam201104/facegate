@@ -85,7 +85,13 @@ enrollment:
   per_bin: 3               # toi da so frame cho moi o goc nhin
   dedup_cosine: 0.95       # 2 frame giong nhau hon muc nay thi bo bot 1
   keep_video: false        # mac dinh xoa video goc sau khi xu ly
-  camera_seconds: 8
+  guided:                  # dang ky quay tu camera: 5 goc chu thap co dinh, dat dung goc moi sang buoc tiep
+    yaw_enter: 15          # do lech ngang (so voi luc nhin thang) de tinh la da quay
+    yaw_center: 9          # trong khoang nay la "nhin thang"
+    pitch_enter: 10        # do lech doc de tinh la da ngang/cui
+    pitch_center: 8
+    hold_seconds: 0.7      # phai giu dung goc lien tuc chung nay
+    timeout_seconds: 240   # tong thoi gian toi da cua mot phien
 
 hrm:
   adapter: mock            # mock | erpnext

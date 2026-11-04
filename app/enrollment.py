@@ -118,7 +118,14 @@ def process_enrollment(frames: list[np.ndarray], code: str, name: str, ctx) -> d
         rest = sorted((c for c in cands if c not in selected), key=lambda c: c["q"].score, reverse=True)
         selected += rest[: min_n - len(selected)]
 
-    # Kiem tra trung voi nhan vien khac
+    return store_enrollment(selected, code, name, ctx, stats, n_good=len(cands) + len(outliers),
+                            n_outliers=len(outliers), bin_names=bins)
+
+
+def store_enrollment(selected: list, code: str, name: str, ctx, stats: dict, *, n_good: int,
+                     n_outliers: int, bin_names, guided: bool = False) -> dict:
+    """Kiem tra trung nhan vien khac, luu embedding + crop va ghi bao cao (dung chung cho upload va quay co huong dan)."""
+    cfg, db, engine = ctx.cfg, ctx.db, ctx.engine
     center = np.mean([c["emb"] for c in selected], axis=0)
     center /= np.linalg.norm(center) + 1e-9
     warnings = []
@@ -152,18 +159,18 @@ def process_enrollment(frames: list[np.ndarray], code: str, name: str, ctx) -> d
         db.add_embedding(emp_id, c["emb"], engine.model_version, c["q"].score, c["bin"], f"enroll/{code}/{fn}")
 
     report = {
-        "frames_total": stats["frames_total"], "frames_good": len(cands) + len(outliers),
+        "frames_total": stats["frames_total"], "frames_good": n_good,
         "frames_selected": len(selected), "no_face": stats["no_face"], "multi_face": stats["multi_face"],
-        "rejected": stats["rejected"], "outliers": len(outliers),
-        "bins": {b: sum(1 for c in selected if c["bin"] == b) for b in bins},
+        "rejected": stats["rejected"], "outliers": n_outliers,
+        "bins": {b: sum(1 for c in selected if c["bin"] == b) for b in bin_names},
         "min_pair_cosine": round(min((float(a["emb"] @ b["emb"]) for i, a in enumerate(selected)
                                       for b in selected[i + 1:]), default=1.0), 3),
-        "warnings": warnings, "model_version": engine.model_version,
+        "warnings": warnings, "model_version": engine.model_version, "guided": guided,
         "crops": [f"enroll/{code}/{i:02d}_{c['bin']}.jpg" for i, c in enumerate(selected)],
     }
-    if len(bins) < 3:
+    if len(set(bin_names)) < 3:
         report["warnings"].append("Ít góc nhìn (<3). Nên quay lại: nhìn thẳng, xoay trái/phải, ngẩng/cúi nhẹ.")
     db.add_enrollment(emp_id, report)
     report["employee_id"] = emp_id
-    log.info("Dang ky %s (%s): chon %d/%d frame", name, code, len(selected), len(frames))
+    log.info("Dang ky %s (%s): chon %d/%d frame", name, code, len(selected), stats["frames_total"])
     return report

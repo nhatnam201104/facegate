@@ -149,3 +149,29 @@ button:focus-visible,.btn:focus-visible,input:focus-visible,select:focus-visible
 .zonebar .msg{margin:0;flex-basis:100%}
 .zonebar .msg:empty{display:none}
 .srcnow .btn{margin-left:8px}
+
+/* ---- dang ky co huong dan kieu app ngan hang ---- */
+.guide{margin:4px 0 12px}
+.guideview{position:relative;aspect-ratio:4/3;min-height:260px}
+.guideview img.mirror{transform:scaleX(-1);height:100%;object-fit:cover}
+.oval{position:absolute;left:50%;top:50%;height:86%;aspect-ratio:100/130;transform:translate(-50%,-50%);pointer-events:none}
+.oval svg{width:100%;height:100%;overflow:visible}
+.oval path{fill:none;stroke-width:2.4;vector-effect:non-scaling-stroke}
+.oval .track{stroke:#fff8;stroke-dasharray:3 2}
+.oval .prog{stroke:var(--accent);stroke-width:4;stroke-linecap:round;stroke-dasharray:0 100;transition:stroke-dasharray .12s linear}
+.oval.ok .track{stroke:var(--accent);stroke-dasharray:none}
+.arrow{position:absolute;font-size:56px;line-height:1;font-weight:700;color:#fff;text-shadow:0 2px 10px #000;opacity:0;pointer-events:none}
+.arrow.on{opacity:.95;animation:nudge 1s ease-in-out infinite}
+#arrL{left:3%;top:50%;margin-top:-30px}#arrR{right:3%;top:50%;margin-top:-30px}
+#arrU{top:2%;left:50%;margin-left:-14px}#arrD{bottom:12%;left:50%;margin-left:-14px}
+@keyframes nudge{50%{transform:translate(var(--nx,0),var(--ny,0))}}
+#arrL{--nx:-8px}#arrR{--nx:8px}#arrU{--ny:-8px}#arrD{--ny:8px}
+.guidemsg{position:absolute;left:0;right:0;bottom:0;padding:10px 12px;text-align:center;background:linear-gradient(transparent,#000c);display:flex;flex-direction:column;gap:2px}
+.guidemsg b{font-size:17px}.guidemsg span{font-size:13px;color:#cfe0d8}
+.guideview.good .guidemsg span{color:var(--accent)}
+.grid9{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:10px}
+.grid9 div{display:flex;align-items:center;justify-content:center;height:34px;border-radius:6px;background:var(--bg);border:1px solid var(--line);color:var(--muted);font-size:12px;text-align:center;padding:0 4px;line-height:1.1}
+.grid9 div.cur{border-color:var(--warn);color:var(--text)}
+.grid9 div.done{background:#1c3b30;border-color:var(--accent);color:var(--accent)}
+#enrollCancel{margin-top:8px;background:none;border:1px solid var(--line);color:var(--muted);padding:8px 14px;border-radius:6px;cursor:pointer;font:inherit}
+.grid9 div.empty{background:none;border-color:transparent}

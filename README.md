@@ -28,7 +28,7 @@ Bản demo chạy trên một máy Windows, chỉ dùng CPU, không cần GPU ha
 |---|---|
 | Nhận diện nhân viên, hiện khung và tên gần thời gian thực | ✅ Đã có |
 | Báo "Unknown" khi không đủ tin cậy, không đoán tên | ✅ Đã có |
-| Đăng ký khuôn mặt bằng một video ngắn 6–10 giây, HR duyệt | ✅ Đã có |
+| Đăng ký khuôn mặt quay từ camera có hướng dẫn (đủ 5 góc, đạt góc mới sang bước tiếp), HR duyệt | ✅ Đã có |
 | Chấm công: check-in đầu tiên trong ngày, số phút đi muộn, vắng, xuất CSV | ✅ Đã có |
 | Chống giả mạo bằng ảnh in hoặc màn hình điện thoại | ✅ Đã có (bằng phần mềm, chỉ giảm rủi ro) |
 | Lịch sử mỗi lần xuất hiện kèm clip video, tải ZIP | ✅ Đã có (ngoài đề xuất ban đầu) |
@@ -44,7 +44,7 @@ Bản demo chạy trên một máy Windows, chỉ dùng CPU, không cần GPU ha
 ## Luồng nghiệp vụ
 
 ```
-Nhân viên quay video 6–10 giây  ─►  HR bấm "Duyệt"  ─►  Nhân viên đứng trước camera ~1 giây
+Nhân viên làm theo hướng dẫn 5 góc ─►  HR bấm "Duyệt"  ─►  Nhân viên đứng trước camera ~1 giây
    ─►  Hệ thống nhận diện + kiểm tra người thật
    ─►  Ghi check-in (lần đầu trong ngày) + số phút đi muộn  ─►  Gửi sang HRM
 ```

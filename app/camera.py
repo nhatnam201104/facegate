@@ -66,7 +66,6 @@ class Camera:
         self.idle_interval = 0.25
         self._lock = threading.Lock()
         self._stop = threading.Event()
-        self._recorders: list[list] = []
         self._thread = threading.Thread(target=self._run, daemon=True, name="camera")
 
     def start(self) -> "Camera":
@@ -153,8 +152,6 @@ class Camera:
                     self.frame = frame
                     self.frame_id += 1
                     self.frame_ts = time.time()
-                    for rec in self._recorders:
-                        rec.append(frame)
                 n += 1
                 if time.time() - t_last >= 1.0:
                     self.fps_in = n / (time.time() - t_last)
@@ -171,16 +168,3 @@ class Camera:
     def read(self) -> tuple[int, np.ndarray | None]:
         with self._lock:
             return self.frame_id, self.frame
-
-    def record(self, seconds: float, max_frames: int = 400) -> list[np.ndarray]:
-        """Thu cac frame trong `seconds` giay (dung cho dang ky tu camera)."""
-        buf: list = []
-        with self._lock:
-            self._recorders.append(buf)
-        try:
-            time.sleep(seconds)
-        finally:
-            with self._lock:
-                self._recorders.remove(buf)
-        step = max(1, len(buf) // max_frames)
-        return buf[::step]

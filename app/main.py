@@ -29,6 +29,7 @@ from .db import DB
 from .engines import create_engine
 from .enrollment import EnrollError, process_enrollment, read_video_frames
 from .gallery import Gallery
+from .guided import GuidedSession
 from .hrm import HRMWorker
 from .liveness import create_liveness
 from .pipeline import FULL_ZONE, Pipeline
@@ -278,19 +279,36 @@ async def enroll_video(code: str = Form(...), name: str = Form(...), file: Uploa
             path.unlink(missing_ok=True)
 
 
-@app.post("/api/enroll/camera")
-async def enroll_camera(code: str = Form(...), name: str = Form(...), seconds: float = Form(0)):
+@app.post("/api/enroll/guided/start")
+async def enroll_guided_start(code: str = Form(...), name: str = Form(...)):
+    """Bat dau phien dang ky co huong dan tu camera: 5 goc chu thap, dat dung goc moi sang buoc tiep."""
     _check(code, name)
-    secs = seconds or float(ctx.cfg["enrollment"]["camera_seconds"])
     if ctx.camera.kind == "file":
-        raise HTTPException(409, "Nguồn hiện tại là file video. Chuyển về webcam/RTSP ở tab Trực tiếp để quay đăng ký.")
+        raise HTTPException(409, "Nguồn hiện tại là file video. Chuyển về webcam/RTSP ở tab Trực tiếp để đăng ký.")
     if not ctx.camera.connected:
         raise HTTPException(503, "Camera chưa kết nối")
-    frames = await run_in_threadpool(ctx.camera.record, min(secs, 20.0))
-    fps = len(frames) / max(secs, 0.1)
-    step = max(1, int(round(fps / float(ctx.cfg["enrollment"]["sample_fps"]))))
-    frames = frames[::step]
-    return await run_in_threadpool(_finish, lambda: process_enrollment(frames, code, name.strip(), ctx))
+    old = getattr(ctx, "guided", None)
+    if old is not None and old.state == "running":
+        old.cancel()
+        old._thread.join(timeout=2.0)
+    ctx.guided = GuidedSession(ctx, code, name.strip()).start()
+    return ctx.guided.snapshot()
+
+
+@app.get("/api/enroll/guided/status")
+def enroll_guided_status():
+    g = getattr(ctx, "guided", None)
+    if g is None:
+        raise HTTPException(404, "Chưa có phiên đăng ký nào")
+    return g.snapshot()
+
+
+@app.post("/api/enroll/guided/cancel")
+def enroll_guided_cancel():
+    g = getattr(ctx, "guided", None)
+    if g is not None:
+        g.cancel()
+    return {"ok": True}
 
 
 # -------------------------------------------------------------- employees

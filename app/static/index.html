@@ -129,21 +129,29 @@
         <h3>Đăng ký khuôn mặt</h3>
         <label>Mã nhân viên <input name="code" required placeholder="VD: NV001" pattern="[A-Za-z0-9_.\-]{1,32}"></label>
         <label>Họ tên <input name="name" required placeholder="Nguyễn Văn A"></label>
-        <p class="hint">Quay 6–10 giây: nhìn thẳng → xoay trái/phải → ngẩng/cúi nhẹ. Đủ sáng, chỉ một người trong khung.</p>
+        <p class="hint" id="enrollHint">Quay từ camera: làm theo hướng dẫn trên màn hình, đủ <b>5 góc</b> (nhìn thẳng, quay phải, quay trái, ngẩng, cúi). Mỗi góc đạt mới sang góc tiếp theo. Đủ sáng, chỉ một người trong khung.</p>
         <div class="mode">
-          <label><input type="radio" name="mode" value="file" checked> Tải video lên</label>
-          <label><input type="radio" name="mode" value="camera"> Quay từ camera cổng</label>
+          <label><input type="radio" name="mode" value="camera" checked> Quay từ camera cổng (có hướng dẫn)</label>
+          <label><input type="radio" name="mode" value="file"> Tải video lên</label>
         </div>
-        <label id="fileRow">Video (MP4/WebM) <input type="file" name="file" accept="video/*">
+        <label id="fileRow" hidden>Video (MP4/WebM) <input type="file" name="file" accept="video/*">
           <small class="muted">Video chỉ dùng để đăng ký. Nhận diện trực tiếp vẫn chạy trên nguồn ở tab Trực tiếp.</small></label>
-        <div id="camRow" hidden>
-          <label>Số giây quay <input type="number" name="seconds" value="8" min="4" max="20"></label>
-          <div class="preview video">
-            <img id="enrollVideo" alt="Xem trước camera">
-            <span class="rec on" id="enrollRec" hidden>ĐANG QUAY <b id="enrollCount"></b></span>
+        <div id="camRow">
+          <div class="guide" id="guide">
+            <div class="guideview video">
+              <img id="enrollVideo" class="mirror" alt="Xem trước camera">
+              <div class="oval" id="guideOval">
+                <svg viewBox="0 0 100 130" preserveAspectRatio="none"><path class="track" d="M50 4A46 61 0 1 1 50 126A46 61 0 1 1 50 4" pathLength="100"/><path class="prog" id="guideProg" d="M50 4A46 61 0 1 1 50 126A46 61 0 1 1 50 4" pathLength="100"/></svg>
+              </div>
+              <span class="arrow" id="arrL" data-dir="left">‹</span><span class="arrow" id="arrR" data-dir="right">›</span>
+              <span class="arrow" id="arrU" data-dir="up">⌃</span><span class="arrow" id="arrD" data-dir="down">⌄</span>
+              <div class="guidemsg"><b id="guideStep"></b><span id="guideHint"></span></div>
+            </div>
+            <div class="grid9" id="grid9"></div>
           </div>
         </div>
-        <button type="submit" class="primary" id="enrollBtn">Xử lý đăng ký</button>
+        <button type="submit" class="primary" id="enrollBtn">Bắt đầu quay</button>
+        <button type="button" id="enrollCancel" hidden>Hủy</button>
         <div id="enrollMsg" class="msg"></div>
       </form>
       <div class="card" id="enrollResult"><h3>Kết quả</h3><p class="muted">Chưa có.</p></div>

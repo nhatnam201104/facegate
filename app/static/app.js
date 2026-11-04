@@ -180,6 +180,7 @@ connectWS();
 function applyEnrollMode() {
   const cam = $("input[name=mode]:checked").value === "camera";
   $("#fileRow").hidden = cam; $("#camRow").hidden = !cam;
+  $("#enrollBtn").textContent = cam ? "Bắt đầu quay" : "Xử lý đăng ký";
   updateEnrollPreview();
 }
 // chi mo luong preview khi dang o tab Dang ky + che do quay (tiet kiem ket noi)
@@ -190,34 +191,94 @@ function updateEnrollPreview() {
   if (!show && img.getAttribute("src")) img.removeAttribute("src");
 }
 document.querySelectorAll("input[name=mode]").forEach(r => r.onchange = applyEnrollMode);
-let countdown = null;
-function startCountdown(secs) {
-  const end = Date.now() + secs * 1000, tick = () => {
-    const left = Math.max(0, Math.ceil((end - Date.now()) / 1000));
-    $("#enrollCount").textContent = left ? `${left}s` : "· đang xử lý…";
-  };
-  $("#enrollRec").hidden = false; tick(); countdown = setInterval(tick, 250);
+
+// --- dang ky co huong dan kieu app ngan hang: 5 goc chu thap co dinh, dat dung goc moi sang buoc tiep
+// luoi 3x3 bo tri theo huong tren man hinh (preview lat guong): cot trai = nguoi dung quay sang trai (h > 0)
+function buildGrid(steps) {
+  const cells = Array(9).fill(null);
+  steps.forEach((st, i) => cells[(st.v === 0 ? 1 : st.v < 0 ? 0 : 2) * 3 + (st.h === 0 ? 1 : st.h > 0 ? 0 : 2)] = i);
+  $("#grid9").innerHTML = cells.map(i => i === null ? `<div class="empty"></div>` : `<div data-i="${i}">${i + 1}</div>`).join("");
 }
-function stopCountdown() { clearInterval(countdown); $("#enrollRec").hidden = true; }
+let guidedTimer = null, guidedLastStep = -1, guidedSteps = 0;
+function speak(text) {
+  if (!$("#soundOn").checked || !window.speechSynthesis) return;
+  try { speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(text); u.lang = "vi-VN"; speechSynthesis.speak(u); } catch { /* khong co giong doc */ }
+}
+function renderGuided(g) {
+  if (guidedSteps !== g.total) { buildGrid(g.steps); guidedSteps = g.total; }
+  document.querySelectorAll("#grid9 div[data-i]").forEach(el => {
+    const i = Number(el.dataset.i);
+    el.classList.toggle("done", g.steps[i].done);
+    el.classList.toggle("cur", g.state === "running" && i === g.step);
+  });
+  const running = g.state === "running";
+  $("#guideStep").textContent = running ? `${g.step + 1}/${g.total} · ${g.instruction}` : g.state === "done" ? "Đã đủ 5 góc" : "";
+  $("#guideHint").textContent = g.hint || "";
+  $("#guide .guideview").classList.toggle("good", g.ok);
+  $("#guideOval").classList.toggle("ok", g.ok);
+  $("#guideProg").style.strokeDasharray = `${running ? Math.round(g.hold * 100) : g.state === "done" ? 100 : 0} 100`;
+  const t = running ? g.target : {};
+  $("#arrL").classList.toggle("on", t.h === "left"); $("#arrR").classList.toggle("on", t.h === "right");
+  $("#arrU").classList.toggle("on", t.v === "up"); $("#arrD").classList.toggle("on", t.v === "down");
+  if (running && g.step !== guidedLastStep) speak(g.instruction);
+  guidedLastStep = g.step;
+}
+function endGuided(btn) {
+  clearInterval(guidedTimer); guidedTimer = null;
+  btn.disabled = false; $("#enrollCancel").hidden = true;
+  $("#guideOval").classList.remove("ok"); $("#guideProg").style.strokeDasharray = "0 100";
+  document.querySelectorAll(".arrow").forEach(a => a.classList.remove("on"));
+}
+async function pollGuided(code, btn) {
+  const msg = $("#enrollMsg");
+  try {
+    const g = await (await fetch("/api/enroll/guided/status")).json();
+    renderGuided(g);
+    if (g.state === "done") {
+      endGuided(btn); speak("Đăng ký hoàn tất");
+      msg.className = "msg ok"; msg.textContent = "Đã đủ 5 góc. Chờ HR duyệt ở tab Nhân viên.";
+      showReport(code, g.report);
+    } else if (g.state === "failed") {
+      endGuided(btn); msg.className = "msg err"; msg.textContent = g.error || "Đăng ký thất bại";
+    } else if (g.state === "cancelled") {
+      endGuided(btn); msg.className = "msg"; msg.textContent = "Đã hủy.";
+    }
+  } catch { /* mat ket noi tam thoi: thu lai o lan poll sau */ }
+}
+$("#enrollCancel").onclick = () => fetch("/api/enroll/guided/cancel", {method: "POST"});
+window.addEventListener("beforeunload", () => { if (guidedTimer) navigator.sendBeacon("/api/enroll/guided/cancel"); });
+async function startGuided(fd, btn) {
+  const msg = $("#enrollMsg");
+  fd.delete("file"); fd.delete("mode");
+  btn.disabled = true; msg.className = "msg"; msg.textContent = "Đứng trước camera và làm theo hướng dẫn trên màn hình";
+  guidedLastStep = -1; guidedSteps = 0;
+  try {
+    const r = await fetch("/api/enroll/guided/start", {method: "POST", body: fd});
+    const g = await r.json();
+    if (!r.ok) throw new Error(g.detail || r.statusText);
+    $("#enrollCancel").hidden = false;
+    renderGuided(g);
+    guidedTimer = setInterval(() => pollGuided(fd.get("code"), btn), 200);
+  } catch (e) { msg.className = "msg err"; msg.textContent = e.message; btn.disabled = false; }
+}
 $("#enrollForm").onsubmit = async ev => {
   ev.preventDefault();
   const f = ev.target, fd = new FormData(f), cam = fd.get("mode") === "camera";
   const msg = $("#enrollMsg"), btn = $("#enrollBtn");
-  if (!cam && !f.file.files.length) { msg.className = "msg err"; msg.textContent = "Chọn file video"; return; }
-  if (cam) fd.delete("file"); else fd.delete("seconds");
+  if (cam) return startGuided(fd, btn);
+  if (!f.file.files.length) { msg.className = "msg err"; msg.textContent = "Chọn file video"; return; }
   fd.delete("mode");
-  btn.disabled = true; msg.className = "msg";
-  msg.textContent = cam ? `Đang quay ${fd.get("seconds")} giây… nhìn vào camera và xoay đầu chậm` : "Đang xử lý video…";
-  if (cam) startCountdown(Number(fd.get("seconds")) || 8);
+  btn.disabled = true; msg.className = "msg"; msg.textContent = "Đang xử lý video…";
   try {
-    const r = await fetch(cam ? "/api/enroll/camera" : "/api/enroll", {method: "POST", body: fd});
+    const r = await fetch("/api/enroll", {method: "POST", body: fd});
     const data = await r.json();
     if (!r.ok) throw new Error(data.detail || r.statusText);
     msg.className = "msg ok"; msg.textContent = "Đã xử lý. Chờ HR duyệt ở tab Nhân viên.";
     showReport(fd.get("code"), data);
   } catch (e) { msg.className = "msg err"; msg.textContent = e.message; }
-  finally { btn.disabled = false; stopCountdown(); }
+  finally { btn.disabled = false; }
 };
+applyEnrollMode();
 function showReport(code, r) {
   const rej = Object.entries(r.rejected || {}).map(([k, v]) => `${REASON[k] || k}: ${v}`).join(", ") || "không";
   $("#enrollResult").innerHTML = `<h3>Kết quả · ${esc(code)}</h3>
