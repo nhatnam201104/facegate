@@ -1,0 +1,480 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FaceGate – So sánh camera IP (trade-off)</title>
+<style>
+:root{--ink:#17202a;--muted:#5d6b78;--line:#e3e8ee;--paper:#fbfaf7;--card:#fff;--accent:#0f7a5c;--accent-soft:#e3f3ec;
+  --warn:#9a5b00;--warn-soft:#fdf1dc;--bad:#a8322b;--bad-soft:#fbe6e4;--code:#f2f4f7;
+  --grid:#e1e0d9;--axis:#c3c2b7;
+  --s1:#2a78d6;--s2:#eb6834;--s3:#1baf7a;--s4:#eda100;
+  --good:#0f7a5c;--sans:"Segoe UI",system-ui,-apple-system,"Helvetica Neue",Arial,sans-serif;--mono:Consolas,"Cascadia Mono",Menlo,monospace;
+  color-scheme:light}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.6 var(--sans);-webkit-font-smoothing:antialiased}
+header.hero{background:#0e1f1a;color:#eef6f2;padding:52px 24px 40px;position:relative;overflow:hidden}
+header.hero::after{content:"";position:absolute;right:-120px;top:-120px;width:420px;height:420px;border-radius:50%;
+  background:radial-gradient(circle,rgba(46,196,144,.35),transparent 65%)}
+.hero-in,.wrap{max-width:1180px;margin:0 auto;position:relative;z-index:1}
+.wrap{padding:0 24px 64px}
+.kicker{display:inline-block;font-size:12px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;
+  color:#7fe0bd;border:1px solid #2c6b56;border-radius:999px;padding:3px 12px;margin-bottom:16px}
+header h1{margin:0;font-size:clamp(28px,4vw,44px);line-height:1.12;letter-spacing:-.02em;font-weight:800}
+header p{margin:12px 0 0;max-width:780px;color:#b9cfc6;font-size:17px}
+h2{font-size:26px;letter-spacing:-.01em;margin:48px 0 6px}
+h2 + .lead{margin-top:0}
+.lead{color:var(--muted);max-width:820px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:22px 24px;box-shadow:0 1px 2px rgba(16,24,40,.04)}
+.verdicts{display:grid;grid-template-columns:1.35fr 1fr 1fr;gap:16px;margin-top:-28px;position:relative;z-index:2}
+.verdict h3{margin:4px 0 6px;font-size:19px}
+.verdict .where{font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.verdict.main{border-top:4px solid var(--accent)}
+.verdict p{margin:6px 0 0;color:var(--muted);font-size:15px}
+.tag{display:inline-block;font-size:12px;font-weight:600;padding:1px 9px;border-radius:999px;background:var(--code);color:var(--ink);margin:2px 4px 2px 0}
+.tag.good{background:var(--accent-soft);color:var(--accent)}
+.tag.warn{background:var(--warn-soft);color:var(--warn)}
+.tag.bad{background:var(--bad-soft);color:var(--bad)}
+/* ---- controls */
+.controls{display:flex;flex-wrap:wrap;gap:12px 24px;align-items:center;margin:4px 0 18px}
+.controls label{font-size:14px;color:var(--muted)}
+input[type=range]{accent-color:var(--accent);width:240px;vertical-align:middle}
+.big{font-size:28px;font-weight:800;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:#fff}
+.seg button{font:inherit;font-size:14px;border:0;background:none;padding:7px 14px;cursor:pointer;color:var(--ink);border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button:hover{background:var(--code)}
+.seg button[aria-pressed=true]{background:var(--ink);color:#fff}
+.seg button:focus-visible,input:focus-visible{outline:2px solid var(--s1);outline-offset:2px}
+/* ---- bar chart (HTML) */
+.legend{display:flex;flex-wrap:wrap;gap:6px 18px;font-size:13px;color:var(--muted);margin-bottom:10px}
+.legend i{display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px}
+.chart{position:relative}
+.row{display:grid;grid-template-columns:230px 1fr 132px;align-items:center;gap:12px;min-height:34px}
+.row .name{font-size:14px;text-align:right;line-height:1.25}
+.row .name small{display:block;color:var(--muted);font-size:12px}
+.track{position:relative;height:22px}
+.bar{position:absolute;left:0;top:3px;height:16px;border-radius:0 4px 4px 0;transition:width .25s ease}
+.bar:hover{filter:brightness(.92)}
+.hit{position:absolute;inset:-6px 0;cursor:default}
+.val{font-size:13px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.val b{font-size:14px}
+.ref{position:absolute;top:0;bottom:0;border-left:1.5px dashed var(--axis);pointer-events:none}
+.ref span{position:absolute;top:-20px;left:4px;font-size:11px;color:var(--muted);white-space:nowrap}
+.axis{display:grid;grid-template-columns:230px 1fr 132px;gap:12px;font-size:11px;color:var(--muted);margin-top:4px}
+.ticks{position:relative;height:16px;border-top:1px solid var(--axis)}
+.ticks span{position:absolute;transform:translateX(-50%);top:2px;font-variant-numeric:tabular-nums}
+.plot{position:relative;padding-top:22px}
+.st{font-size:12px;font-weight:600}
+.st.good{color:var(--accent)} .st.warn{color:var(--warn)} .st.bad{color:var(--bad)}
+#tip{position:fixed;pointer-events:none;z-index:50;background:#0e1f1a;color:#eef6f2;font-size:13px;line-height:1.45;
+  padding:9px 12px;border-radius:9px;box-shadow:0 6px 20px rgba(0,0,0,.18);max-width:300px;opacity:0;transition:opacity .12s}
+#tip b{color:#fff}
+/* ---- tables */
+.tablewrap{overflow-x:auto;border:1px solid var(--line);border-radius:12px;background:#fff}
+table{border-collapse:collapse;width:100%;font-size:14px}
+th,td{padding:10px 12px;border-bottom:1px solid var(--line);vertical-align:top;text-align:left}
+thead th{background:#f6f7f5;font-size:13px;position:sticky;top:0}
+tbody tr:last-child td{border-bottom:0}
+td.k{color:var(--muted);font-weight:600;white-space:nowrap}
+.sw{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:6px;vertical-align:0}
+.dots{white-space:nowrap;letter-spacing:1px;font-size:13px}
+.dots .on{color:var(--ink)} .dots .off{color:#d4d7dc}
+.why{display:block;color:var(--muted);font-size:12.5px;line-height:1.4;margin-top:2px}
+.src{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.02em;padding:0 7px;border-radius:999px;margin-right:4px;vertical-align:1px;border:1px solid}
+.src-ds{color:#1c5cab;border-color:#9ec5f4;background:#eef5fd}
+.src-calc{color:var(--accent);border-color:#a9dcc6;background:var(--accent-soft)}
+.src-opin{color:#6b4aa0;border-color:#d4c4ee;background:#f5f0fc}
+.src-ref{color:var(--warn);border-color:#f1d9a8;background:var(--warn-soft)}
+/* ---- pros/cons */
+.pc{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+.pc .card{padding:18px}
+.pc h4{margin:0 0 2px;font-size:15px}
+.pc .price{font-size:13px;color:var(--muted);margin-bottom:8px}
+.pc ul{margin:6px 0 0;padding-left:18px;font-size:14px}
+.pc li{margin:3px 0}
+.plus li::marker{content:"+  ";color:var(--accent);font-weight:700}
+.minus li::marker{content:"–  ";color:var(--bad);font-weight:700}
+.note{background:var(--warn-soft);border:1px solid #f1d9a8;border-radius:12px;padding:14px 18px;font-size:14.5px;margin-top:18px}
+.muted{color:var(--muted)}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+code{font-family:var(--mono);font-size:.9em;background:var(--code);padding:1px 6px;border-radius:5px}
+.sources{font-size:13.5px;columns:2;column-gap:32px}
+.sources li{break-inside:avoid;margin:3px 0}
+a{color:#1c5cab}
+footer{color:var(--muted);font-size:13px;margin-top:40px}
+@media (max-width:980px){.verdicts,.pc,.two{grid-template-columns:1fr}.row,.axis{grid-template-columns:150px 1fr 110px}.sources{columns:1}}
+@media (prefers-reduced-motion:reduce){.bar{transition:none}}
+</style>
+</head>
+<body>
+<header class="hero">
+  <div class="hero-in">
+    <span class="kicker">FaceGate · Chọn phần cứng</span>
+    <h1>So sánh camera IP: đánh đổi giữa giá, tầm nhận diện và ảnh ban đêm</h1>
+    <p>4 ứng viên cấp nguồn 12 VDC riêng (router không có PoE), đánh giá theo nhu cầu thật của FaceGate:
+       nhận diện khuôn mặt ở cổng cho ~50 nhân viên, sau mở rộng giám sát kho/hàng hóa.</p>
+  </div>
+</header>
+
+<main class="wrap">
+
+<section class="verdicts" aria-label="Kết luận nhanh">
+  <article class="card verdict main">
+    <div class="where">Cổng chấm công (1,5–2,5 m)</div>
+    <h3>① Dahua HFW1439TL1-A-IL 3.6 mm<br><span style="font-weight:600;font-size:16px">② Hikvision 1043G2-LIU 4 mm</span></h3>
+    <p>Cùng góc nhìn ngang 78°, cùng WDR 120 dB, đều có đèn cho ảnh màu ban đêm.
+       Dahua xếp trên vì cảm biến 1/2.9" lớn hơn và rẻ hơn 100–265k. Chọn Hikvision nếu muốn đồng bộ với đầu ghi Hikvision
+       hoặc ưu tiên đèn trắng (màu ban đêm chuẩn hơn).</p>
+  </article>
+  <article class="card verdict">
+    <div class="where">Cổng xa ≥ 3,2 m</div>
+    <h3>Dahua HFW1439TL1-A-IL 6 mm<br><span style="font-weight:600;font-size:16px">③ hoặc Hikvision 2043G2-IU 6 mm</span></h3>
+    <p>Mô hình hình học: mặt 100 px tới ~4,49 m (Dahua) và ~4,41 m (Hikvision). Dahua rẻ hơn và có ảnh màu ban đêm,
+       nhưng bản 6 mm <b>chỉ nét từ 3,2 m trở ra</b> và cần hỏi cửa hàng có hàng không. Hikvision 2043 giá gần gấp đôi, ban đêm đen trắng.</p>
+  </article>
+  <article class="card verdict">
+    <div class="where">Kho / sảnh, hoặc ngoài trời có mái che</div>
+    <h3>Dahua HDW1439V-A-IL (dome)</h3>
+    <p>Rẻ nhất (913k), IP67 theo datasheet nên lắp ngoài trời được. Hiệu quả phụ thuộc vị trí:
+       nên gắn tường (không gắn trần để tránh góc chúc dốc), có mái che và vệ sinh vỏ cầu định kỳ.</p>
+  </article>
+</section>
+
+<!-- ============================================================ 1. Tầm nhận diện -->
+<h2 id="tam">1 · Kích thước khuôn mặt theo khoảng cách</h2>
+<p class="lead">FaceGate bỏ qua mặt nhỏ hơn <b>60 px</b> (<code>quality.min_face</code>) và nhận diện tốt nhất từ
+  <b>~100 px</b>. Kéo thanh trượt tới khoảng cách người đứng ở cổng để xem cấu hình nào còn đạt.
+  Tính theo góc nhìn ngang (HFOV) trong datasheet, mặt rộng 16 cm, người đứng giữa khung hình.
+  <b>Đây là mô hình hình học để so sánh, không phải cam kết nhận diện thực tế</b>: cần thử với camera thật,
+  ánh sáng thật và mô hình SFace của FaceGate trước khi chốt mua.</p>
+
+<div class="card">
+  <div class="controls">
+    <label for="dist">Khoảng cách tới camera</label>
+    <input id="dist" type="range" min="1" max="6" step="0.1" value="2.5" aria-describedby="distOut">
+    <span class="big" id="distOut">2,5 m</span>
+  </div>
+  <div class="legend" id="legend1"></div>
+  <div class="chart" id="reachChart" role="img" aria-label="Biểu đồ thanh: số điểm ảnh khuôn mặt theo từng cấu hình camera"></div>
+</div>
+
+<!-- ============================================================ 2. Trade-off có trọng số -->
+<h2 id="tradeoff">2 · Điểm tổng hợp theo ưu tiên của bạn</h2>
+<p class="lead">Chọn một kịch bản hoặc tự kéo trọng số. Điểm từng tiêu chí (1–5) và lý do nằm ở bảng bên dưới,
+  để bạn thấy rõ vì sao xếp hạng thay đổi.</p>
+<div class="legend" style="margin:0 0 14px;font-size:13.5px">
+  <span><span class="src src-ds">Datasheet</span> thông số của hãng</span>
+  <span><span class="src src-calc">Tính toán</span> suy ra từ datasheet bằng công thức</span>
+  <span><span class="src src-opin">Đánh giá</span> nhận định chủ quan theo nhu cầu FaceGate</span>
+  <span><span class="src src-ref">Tham khảo</span> giá cửa hàng / số liệu đại lý, chưa xác nhận</span>
+</div>
+
+<div class="card">
+  <div class="controls">
+    <div class="seg" role="group" aria-label="Kịch bản" id="presets"></div>
+  </div>
+  <div class="two">
+    <div id="weights"></div>
+    <div>
+      <div class="legend" id="legend2"></div>
+      <div class="chart" id="scoreChart" role="img" aria-label="Biểu đồ thanh: điểm tổng hợp có trọng số của 4 camera"></div>
+    </div>
+  </div>
+</div>
+
+<h3 style="margin:28px 0 10px">Điểm từng tiêu chí và lý do</h3>
+<div class="tablewrap"><table id="critTable"></table></div>
+
+<!-- ============================================================ 3. Thông số -->
+<h2 id="specs">3 · Bảng thông số (đối chiếu datasheet)</h2>
+<p class="lead">Đây cũng là bảng số liệu của hai biểu đồ trên. Mỗi dòng ghi rõ nguồn: datasheet, tính toán hay tham khảo.</p>
+<div class="tablewrap"><table id="specTable"></table></div>
+
+<!-- ============================================================ 4. Ưu nhược -->
+<h2 id="procon">4 · Ưu / nhược từng con</h2>
+<div class="pc" id="procon"></div>
+
+<div class="note">
+  <b>Vì sao không có EZVIZ C6N / H6C (420–590k)?</b> Camera trong nhà, quay quét (khung hình di chuyển làm hỏng tracker và vùng cửa),
+  chủ yếu Wi‑Fi, không có WDR thật, RTSP tắt mặc định và từng bị firmware gỡ mất. Chỉ hợp để thử nghiệm FaceGate trên bàn.
+</div>
+
+<!-- ============================================================ 5. Ghi chú -->
+<h2 id="notes">5 · Lưu ý khi mua và lắp</h2>
+<div class="two">
+  <div class="card">
+    <h3 style="margin-top:0">Khi mua</h3>
+    <ul>
+      <li>Hỏi đúng tiêu cự: <b>3.6 mm</b> (Dahua) hoặc <b>4 mm</b> (Hikvision 1043) cho cổng 1,5–2,5 m. Cửa hàng hay giao 2.8 mm mặc định.</li>
+      <li>Bản <b>6 mm</b> của Dahua HFW1439TL1 chỉ có trong datasheet mới (09/2024) và <b>chỉ nét từ 3,2 m</b>: hỏi cửa hàng có hàng không, và chỉ dùng khi người đứng xa hơn 3,2 m.</li>
+      <li><b>Thử RTSP trước khi mua số lượng</b>: mua 1 con, mở luồng chính bằng VLC hoặc OpenCV, chạy FaceGate thật ở cổng vài ngày.</li>
+      <li>Camera IP thường <b>không kèm adapter</b>: cần 12 V – 1 A, đầu tròn 5,5 mm (cả 4 con đều dưới 8 W).</li>
+      <li>Mua cùng hãng với đầu ghi (NVR) dự định dùng để cấu hình và ghi hình đồng bộ.</li>
+      <li><b>Giá trong file là giá tham khảo</b> (trang cửa hàng và ảnh cửa hàng tháng 11/2026), chưa phải báo giá xác nhận.</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h3 style="margin-top:0">Khi lắp cho FaceGate</h3>
+    <ul>
+      <li>Cao 1,6–1,8 m, chúc xuống &lt; 15°. Lắp cao/dốc hơn thì camera thấy đỉnh đầu nhiều hơn mặt.</li>
+      <li>Luồng chính H.264, 15 fps, tắt H.265+/Smart Codec. RTSP Hikvision <code>/Streaming/Channels/101</code>,
+          Dahua <code>/cam/realmonitor?channel=1&amp;subtype=0</code>.</li>
+      <li>Bật WDR, màn trập ~1/250 s để mặt không nhòe khi đi.</li>
+      <li>Đèn trắng/ấm: giảm độ sáng để không chói mắt nhân viên.</li>
+      <li>Dome ngoài trời: gắn tường dưới mái che, vệ sinh vỏ cầu định kỳ; giọt nước/bụi trên vỏ làm nhòe ảnh và phản xạ hồng ngoại.</li>
+    </ul>
+  </div>
+</div>
+
+<h2 id="src" style="font-size:20px">Nguồn</h2>
+<ul class="sources">
+  <li><a href="https://assets.hikvision.com/prd/normal/all/doc/sm000042445/DS-2CD1043G2-LIUF_Datasheet_20260409.pdf">Hikvision DS-2CD1043G2-LIU(F) datasheet</a></li>
+  <li><a href="https://www.hikvision.com/en/products/IP-Products/Network-Cameras/value-series/ds-2cd1043g2-liu-f-/">Hikvision DS-2CD1043G2-LIU(F) – trang sản phẩm (FOV)</a></li>
+  <li><a href="https://assets.hikvision.com/prd/public/all/doc/sm000058907/DS-2CD2043G2-IU_Datasheet_V5.5.113_20230303.pdf">Hikvision DS-2CD2043G2-I(U) datasheet</a></li>
+  <li><a href="https://www.hikvision.com/en/products/IP-Products/Network-Cameras/Pro-Series-EasyIP-/ds-2cd2043g2-i-u-/">Hikvision DS-2CD2043G2-I(U) – trang sản phẩm (FOV)</a></li>
+  <li><a href="https://www.a1securitycameras.com/hikvision-ds-2cd2043g2-iu-4mm-value-series-acusense-4mp-outdoor-ir-bullet-ip-security-camera-with-built-in-mic-4mm-fixed-lens-white.html">A1 Security Cameras – DS-2CD2043G2-IU (công suất)</a></li>
+  <li><a href="https://www.dahua.pro/wp-content/uploads/2026/02/DH-IPC-HDW1439V-A-IL_S0_datasheet_20240410.pdf">Dahua DH-IPC-HDW1439V-A-IL datasheet</a></li>
+  <li><a href="https://www.dahuasecurity.com/mena/products/All-Products/Network-Cameras/Entry-Series/4MP/IPC-HDW1439V-A-IL=S7">Dahua IPC-HDW1439V-A-IL – Dahua MENA</a></li>
+  <li><a href="https://www.ryans.com/dahua-dh-ipc-hdw1439v-a-il-2.8mm-4.0mp-fixed-eyeball-dome-ip-camera">Ryans – HDW1439V-A-IL (công suất)</a></li>
+  <li><a href="https://materialfile.dahuasecurity.com/uploads/soft/20250422/DH-IPC-HFW1439TL1-A-IL_S0_datasheet_20240907.pdf">Dahua DH-IPC-HFW1439TL1-A-IL datasheet 2024-09-07 (có bản 6 mm, khoảng lấy nét)</a></li>
+  <li><a href="https://www.dahuasecurity.com/bd/products/All-Products/Dedicated-Products/Project-Exclusive/Network-Cameras/DH-IPC-HFW1439TL1-A-IL">Dahua DH-IPC-HFW1439TL1-A-IL – Dahua Bangladesh</a></li>
+  <li><a href="https://manuals.plus/m/c70a8f22f8238495bf6502f97541405702f5533e17fbbdedd997d967441c74c0">Manuals+ – HFW1439TL1-A-IL datasheet</a></li>
+  <li><a href="https://www.vuathomall.com/camera-ngoai-troi/camera-ip-hikvision-ds-2cd1043g2-liu-4mp-den-kep-co-micro">Vua Thợ Mall – giá DS-2CD1043G2-LIU</a></li>
+  <li><a href="https://meta.vn/camera-ip-4mp-hikvision-ds-2cd1043g2-liu-p104202">META.vn – giá DS-2CD1043G2-LIU</a></li>
+  <li><a href="https://www.phucanh.vn/camera-ip-ngoai-troi-hikvision-ds-2cd1043g2-liu.html">Phúc Anh – giá DS-2CD1043G2-LIU</a></li>
+  <li><a href="https://ipcamtalk.com/threads/ezviz-disables-rtps-for-its-ip-cameras-here-is-the-fix.69927/">IPCamTalk – EZVIZ tắt RTSP qua firmware</a></li>
+</ul>
+
+<footer>FaceGate · Tài liệu nội bộ · Cập nhật 05/11/2026 (bản 2: bổ sung Dahua 6 mm, khoảng lấy nét, phân loại nguồn số liệu).
+  Giá Dahua và DS-2CD2043G2-IU là giá tham khảo theo ảnh cửa hàng (Viễn Thông Phương Dung, Hoàng Long Telecom, Vũ Hoàng Telecom),
+  chưa phải báo giá xác nhận.</footer>
+</main>
+
+<div id="tip" role="tooltip"></div>
+
+<script>
+// ------------------------------------------------------------------ du lieu (nguon: datasheet, xem muc Nguon)
+const FACE_M = 0.16, MIN_PX = 60, GOOD_PX = 100;
+const CAMS = [
+  {id:"liu", color:"var(--s1)", brand:"Hikvision", model:"DS-2CD1043G2-LIU", form:"Thân trụ",
+   price:[1230000,1390000], priceSrc:"Vua Thợ Mall / META / Phúc Anh",
+   width:2560, res:"2560×1440 (4MP)", sensor:'1/3"', aperture:"F1.6", wdr:"120 dB",
+   light:"Hybrid: hồng ngoại + LED trắng, 30 m (Smart: tự bật đèn trắng khi có người)",
+   power:"12 VDC 0,4 A, tối đa 5 W · PoE 802.3af", ip:"IP67", mic:"Có", ai:"Phân loại người/xe (điều khiển đèn)",
+   lenses:[{mm:2.8,hfov:98},{mm:4,hfov:78}],
+   pros:["Đèn trắng: ban đêm ảnh màu chuẩn, tốt cho nhận diện và chống giả mạo","Có ống 4 mm (78°) cho cổng 1,5–2,5 m","Giá hợp lý, dễ mua, bảo hành chính hãng 24 tháng"],
+   cons:["Cảm biến 1/3\" nhỏ: nhiễu hơn khi tối","Không có ống 6 mm cho cổng xa","Đèn trắng có thể chói mắt nếu để sáng tối đa"]},
+  {id:"dbul", color:"var(--s2)", brand:"Dahua", model:"DH-IPC-HFW1439TL1-A-IL", form:"Thân trụ",
+   price:[1125000,1125000], priceSrc:"Hoàng Long Telecom (ảnh chụp trang cửa hàng)",
+   width:2560, res:"2560×1440 (4MP)", sensor:'1/2.9"', aperture:"F1.6", wdr:"120 dB",
+   light:"Smart Dual Light: hồng ngoại + đèn ấm, 30 m",
+   power:"12 VDC tối đa 6,4 W · PoE 802.3af tối đa 7,7 W", ip:"IP67", mic:"Có", ai:"Phát hiện người (SMD)",
+   // cf = khoang lay net gan nhat (datasheet 2024-09-07); ban 6 mm chi co trong datasheet moi
+   lenses:[{mm:2.8,hfov:94,cf:1.1},{mm:3.6,hfov:78,cf:1.7},{mm:6,hfov:49,cf:3.2}],
+   pros:["Cảm biến 1/2.9\" lớn hơn Hikvision 1/3\"","Ống 3.6 mm góc 78°, tầm ngang bản 4 mm của Hikvision","Có cả ống 6 mm (49°) cho cổng xa, ban đêm vẫn ảnh màu","Rẻ hơn Hikvision 1043 khoảng 100–265k"],
+   cons:["Đèn ấm (vàng): ảnh màu ban đêm hơi ám vàng","Bản 6 mm chỉ nét từ 3,2 m; 3.6 mm từ 1,7 m","Bản 6 mm chỉ có trong datasheet mới, cần hỏi cửa hàng có hàng","Cần đầu ghi Dahua nếu muốn đồng bộ tính năng thông minh"]},
+  {id:"ddome", color:"var(--s3)", brand:"Dahua", model:"DH-IPC-HDW1439V-A-IL", form:"Dome (eyeball)",
+   price:[913000,913000], priceSrc:"Viễn Thông Phương Dung (ảnh chụp trang cửa hàng)",
+   width:2560, res:"2560×1440 (4MP)", sensor:'1/2.9"', aperture:"F1.6", wdr:"120 dB",
+   light:"Smart Dual Light: hồng ngoại + đèn ấm, 30 m",
+   power:"12 VDC tối đa 4,6 W · PoE tối đa 5,7 W (theo đại lý)", ip:"IP67", mic:"Có", ai:"Phát hiện người (SMD)",
+   lenses:[{mm:2.8,hfov:94},{mm:3.6,hfov:78}],
+   pros:["Rẻ nhất trong 4 con","IP67 theo datasheet: lắp ngoài trời được","Ống 2.8/3.6 mm có góc nhìn giống bản thân trụ","Gọn, hợp sảnh/kho trong nhà"],
+   cons:["Không có ống 6 mm","Ngoài trời: giọt nước/bụi trên vỏ cầu làm nhòe ảnh và phản xạ hồng ngoại → nên có mái che, vệ sinh định kỳ","Nếu gắn trần thì góc chúc dốc, mặt bị nhìn từ trên xuống → nên gắn tường"]},
+  {id:"h2043", color:"var(--s4)", brand:"Hikvision", model:"DS-2CD2043G2-IU", form:"Thân trụ",
+   price:[2289000,2289000], priceSrc:"Vũ Hoàng Telecom (ảnh chụp trang cửa hàng)",
+   width:2688, res:"2688×1520 (4MP)", sensor:'1/3"', aperture:"F1.6", wdr:"120 dB",
+   light:"Chỉ hồng ngoại, 40 m (ban đêm ảnh đen trắng)",
+   power:"12 VDC / PoE 802.3af, tối đa 7 W (theo đại lý)", ip:"IP67", mic:"Có", ai:"AcuSense: phân loại người/xe cho cảnh báo",
+   lenses:[{mm:2.8,hfov:103},{mm:4,hfov:84},{mm:6,hfov:52}],
+   pros:["Có ống 6 mm (52°): mặt 100 px tới ~4,41 m","Dòng Pro, AcuSense hữu ích cho cảnh báo xâm nhập ở kho","Độ phân giải ngang cao nhất (2688 px)"],
+   cons:["Giá gần gấp đôi","Ban đêm chỉ ảnh đen trắng: nhận diện và chống giả mạo kém hơn","Dahua HFW 6 mm đạt tầm tương đương (~4,49 m) với giá thấp hơn","AcuSense không cần cho FaceGate (FaceGate tự phát hiện mặt)"]},
+];
+const fmtVND = v => v.toLocaleString("vi-VN") + "đ";
+const fmtPrice = c => c.price[0] === c.price[1] ? fmtVND(c.price[0]) : `${fmtVND(c.price[0])} – ${fmtVND(c.price[1])}`;
+const facePx = (w, hfov, d) => w * FACE_M / (2 * d * Math.tan(hfov * Math.PI / 360));
+const distFor = (w, hfov, px) => w * FACE_M / (2 * px * Math.tan(hfov * Math.PI / 360));
+const fmtM = v => v.toLocaleString("vi-VN", {maximumFractionDigits: 1}) + " m";
+const fmtM2 = v => v.toLocaleString("vi-VN", {minimumFractionDigits: 2, maximumFractionDigits: 2}) + " m";
+const fmtMm = mm => String(mm).replace(".", ",");
+
+// ------------------------------------------------------------------ tooltip
+const tip = document.getElementById("tip");
+function bindTip(el, html) {
+  el.addEventListener("mousemove", e => {
+    tip.innerHTML = html(); tip.style.opacity = 1;
+    const x = Math.min(e.clientX + 14, innerWidth - tip.offsetWidth - 8);
+    tip.style.left = x + "px"; tip.style.top = (e.clientY + 14) + "px";
+  });
+  el.addEventListener("mouseleave", () => tip.style.opacity = 0);
+}
+function legend(el, items) {
+  el.innerHTML = items.map(c => `<span><i style="background:${c.color}"></i>${c.brand} ${c.model}</span>`).join("");
+}
+
+// ------------------------------------------------------------------ 1. bieu do tam nhan dien
+// Ong 2.8/3.6 mm cua hai con Dahua cung goc nhin -> gop 1 dong; ong 6 mm chi ban than tru HFW co.
+const REACH_ROWS = [];
+for (const c of CAMS) {
+  if (c.id === "ddome") continue;
+  for (const l of c.lenses) REACH_ROWS.push({cam: c, lens: l,
+    label: c.id !== "dbul" ? `${c.brand} ${c.model.replace("DS-2CD", "")}`
+         : l.mm === 6 ? "Dahua HFW1439TL1 (chỉ thân trụ)" : "Dahua HFW1439TL1 / HDW1439V"});
+}
+const outOfFocus = (l, d) => l.cf && d < l.cf;
+const X_MAX = 450;
+function renderReach() {
+  const d = +document.getElementById("dist").value;
+  document.getElementById("distOut").textContent = fmtM(d);
+  const pct = v => Math.min(100, v / X_MAX * 100);
+  let html = "";
+  for (const r of REACH_ROWS) {
+    const px = Math.round(facePx(r.cam.width, r.lens.hfov, d));   // nhan trang thai khop voi so hien thi
+    const blur = outOfFocus(r.lens, d);
+    const st = blur ? ["warn", "⚠ Chưa nét"]
+      : px >= GOOD_PX ? ["good", "✓ Tốt"] : px >= MIN_PX ? ["warn", "⚠ Tối thiểu"] : ["bad", "✕ Quá nhỏ"];
+    html += `<div class="row" data-k="${r.cam.id}-${r.lens.mm}">
+      <div class="name">${r.label}<small>ống ${fmtMm(r.lens.mm)} mm · ${r.lens.hfov}°${r.lens.cf ? ` · nét từ ${fmtM(r.lens.cf)}` : ""}</small></div>
+      <div class="track">
+        <div class="bar" style="width:${pct(px)}%;background:${r.cam.color};opacity:${blur ? .35 : 1}"></div>
+        <div class="ref" style="left:${pct(MIN_PX)}%"></div><div class="ref" style="left:${pct(GOOD_PX)}%"></div>
+        <div class="hit"></div>
+      </div>
+      <div class="val"><b>${Math.round(px)} px</b> <span class="st ${st[0]}">${st[1]}</span></div></div>`;
+  }
+  const chart = document.getElementById("reachChart");
+  chart.innerHTML = `<div class="plot">
+      <div class="row" style="min-height:0;position:absolute;top:0;left:0;right:0"><div></div>
+        <div class="track" style="height:18px"><div class="ref" style="left:${pct(MIN_PX)}%;border:0"><span style="top:0;left:auto;right:4px">tối thiểu 60 px</span></div>
+        <div class="ref" style="left:${pct(GOOD_PX)}%;border:0"><span style="top:0">100 px · tốt</span></div></div><div></div></div>
+      ${html}</div>
+    <div class="axis"><div></div><div class="ticks">${[0, 100, 200, 300, 400].map(v => `<span style="left:${v / X_MAX * 100}%">${v}</span>`).join("")}</div><div>px trên mặt</div></div>`;
+  chart.querySelectorAll(".row[data-k]").forEach((row, i) => {
+    const r = REACH_ROWS[i];
+    bindTip(row.querySelector(".hit"), () => {
+      const dd = +document.getElementById("dist").value;
+      return `<b>${r.cam.brand} ${r.cam.model}</b>${r.cam.id === "dbul" && r.lens.mm !== 6 ? " (và HDW1439V dome)" : ""}<br>
+        Ống ${fmtMm(r.lens.mm)} mm · HFOV ${r.lens.hfov}° · ${r.cam.width} px ngang<br>
+        Tại ${fmtM(dd)}: <b>${Math.round(facePx(r.cam.width, r.lens.hfov, dd))} px</b>${outOfFocus(r.lens, dd) ? ` · <b>chưa nét</b> (lấy nét gần nhất ${fmtM(r.lens.cf)})` : ""}<br>
+        Đạt 100 px tới <b>${fmtM2(distFor(r.cam.width, r.lens.hfov, GOOD_PX))}</b> · 60 px tới ${fmtM2(distFor(r.cam.width, r.lens.hfov, MIN_PX))}<br>
+        <span style="opacity:.75">Mô hình hình học, không phải cam kết nhận diện</span>`;
+    });
+  });
+}
+
+// ------------------------------------------------------------------ 2. diem trade-off
+const priceMid = c => (c.price[0] + c.price[1]) / 2;
+const bestReach = c => Math.max(...c.lenses.map(l => distFor(c.width, l.hfov, GOOD_PX)));
+const clamp = v => Math.max(1, Math.min(5, v));
+// Tieu chi "cong xa" cham theo ong dai nhat co the mua -> kich ban cong 1,5–2,5 m dat trong so thap cho no.
+const SRC_TAG = {ds:'<span class="src src-ds">Datasheet</span>', calc:'<span class="src src-calc">Tính toán</span>',
+  opin:'<span class="src src-opin">Đánh giá</span>', ref:'<span class="src src-ref">Tham khảo</span>'};
+const CRIT = [
+  {id:"price", name:"Giá", auto:true, src:["ref", "calc"],
+   score: c => clamp(5 - 4 * (priceMid(c) - 900000) / 1600000),
+   why: c => `${fmtPrice(c)} · quy đổi: 0,9 tr = 5 điểm, 2,5 tr = 1 điểm`},
+  {id:"reach", name:"Tùy chọn cổng xa", auto:true, src:["calc"],
+   score: c => clamp(2 + 3 * (bestReach(c) - 1.5) / (4.5 - 1.5)),
+   why: c => { const l = c.lenses.at(-1);
+     return `Ống dài nhất ${fmtMm(l.mm)} mm: mặt 100 px tới ${fmtM2(bestReach(c))}${l.cf ? ` (nét từ ${fmtM(l.cf)})` : ""}`; }},
+  {id:"night", name:"Ảnh màu ban đêm", src:["ds", "opin"],
+   s: {liu:5, dbul:4, ddome:4, h2043:2},
+   w: {liu:"Đèn trắng: màu chuẩn", dbul:"Đèn ấm: có màu, hơi ám vàng", ddome:"Đèn ấm: có màu, hơi ám vàng", h2043:"Chỉ hồng ngoại: đen trắng"}},
+  {id:"lowlight", name:"Ánh sáng yếu (cảm biến)", src:["ds", "opin"],
+   s: {liu:3, dbul:4, ddome:4, h2043:3},
+   w: {liu:'1/3", F1.6', dbul:'1/2.9" (lớn hơn), F1.6', ddome:'1/2.9" (lớn hơn), F1.6', h2043:'1/3", F1.6'}},
+  {id:"outdoor", name:"Lắp ngoài cổng", src:["ds", "opin"],
+   s: {liu:5, dbul:5, ddome:4, h2043:5},
+   w: {liu:"Thân trụ IP67, chỉnh góc dễ", dbul:"Thân trụ IP67, chỉnh góc dễ",
+       ddome:"IP67, lắp ngoài trời được; vỏ cầu cần mái che, vệ sinh định kỳ, nên gắn tường", h2043:"Thân trụ IP67, chỉnh góc dễ"}},
+];
+const scoreOf = (k, c) => k.auto ? k.score(c) : k.s[c.id];
+const whyOf = (k, c) => k.auto ? k.why(c) : k.w[c.id];
+const PRESETS = [
+  {name:"Cổng 1,5–2,5 m", w:{price:2, reach:1, night:3, lowlight:3, outdoor:5}},
+  {name:"Cổng xa ≥ 3,2 m", w:{price:1, reach:5, night:2, lowlight:3, outdoor:5}},
+  {name:"Kho trong nhà", w:{price:4, reach:2, night:4, lowlight:4, outdoor:0}},
+  {name:"Tiết kiệm", w:{price:5, reach:2, night:2, lowlight:2, outdoor:3}},
+];
+let weights = {...PRESETS[0].w};
+
+function renderPresets() {
+  const el = document.getElementById("presets");
+  el.innerHTML = PRESETS.map((p, i) => `<button type="button" data-i="${i}">${p.name}</button>`).join("");
+  el.querySelectorAll("button").forEach(b => b.onclick = () => { weights = {...PRESETS[+b.dataset.i].w}; renderWeights(); renderScores(); });
+}
+function renderWeights() {
+  const el = document.getElementById("weights");
+  el.innerHTML = CRIT.map(k => `<div class="controls" style="margin:0 0 8px">
+      <label for="w-${k.id}" style="width:170px;color:var(--ink)">${k.name}</label>
+      <input id="w-${k.id}" type="range" min="0" max="5" step="1" value="${weights[k.id]}" style="width:160px">
+      <span class="val" style="width:24px"><b>${weights[k.id]}</b></span></div>`).join("");
+  CRIT.forEach(k => document.getElementById(`w-${k.id}`).oninput = e => {
+    weights[k.id] = +e.target.value; e.target.nextElementSibling.innerHTML = `<b>${weights[k.id]}</b>`; renderScores();
+  });
+  document.querySelectorAll("#presets button").forEach(b =>
+    b.setAttribute("aria-pressed", JSON.stringify(PRESETS[+b.dataset.i].w) === JSON.stringify(weights)));
+}
+function renderScores() {
+  document.querySelectorAll("#presets button").forEach(b =>
+    b.setAttribute("aria-pressed", JSON.stringify(PRESETS[+b.dataset.i].w) === JSON.stringify(weights)));
+  const total = Object.values(weights).reduce((a, b) => a + b, 0) || 1;
+  const rows = CAMS.map(c => ({c, v: CRIT.reduce((s, k) => s + weights[k.id] * scoreOf(k, c), 0) / total}))
+    .sort((a, b) => b.v - a.v);
+  const top = rows[0].v;
+  const chart = document.getElementById("scoreChart");
+  chart.innerHTML = rows.map(r => `<div class="row" style="grid-template-columns:150px 1fr 64px">
+      <div class="name">${r.c.brand}<small>${r.c.model.replace("DH-IPC-", "").replace("DS-2CD", "")}</small></div>
+      <div class="track"><div class="bar" style="width:${r.v / 5 * 100}%;background:${r.c.color}"></div><div class="hit"></div></div>
+      <div class="val"><b>${r.v.toFixed(2).replace(".", ",")}</b>${top - r.v < 0.15 ? ' <span class="st good">✓</span>' : ""}</div></div>`).join("")
+    + `<p class="muted" style="font-size:13px;margin:10px 0 0">Thang 1–5. Dấu ✓: chênh dưới 0,15 điểm so với hạng nhất, coi như ngang nhau.</p>`;
+  chart.querySelectorAll(".row").forEach((row, i) => {
+    const c = rows[i].c;
+    bindTip(row.querySelector(".hit"), () => `<b>${c.brand} ${c.model}</b><br>` +
+      CRIT.map(k => `${k.name}: ${scoreOf(k, c).toFixed(1).replace(".", ",")} × ${weights[k.id]}`).join("<br>"));
+  });
+}
+function dots(v) {
+  const n = Math.round(v);
+  return `<span class="dots" aria-label="${v.toFixed(1)} trên 5">${"<span class='on'>●</span>".repeat(n)}${"<span class='off'>●</span>".repeat(5 - n)}</span> ${v.toFixed(1).replace(".", ",")}`;
+}
+function renderCritTable() {
+  const head = `<thead><tr><th>Tiêu chí</th>${CAMS.map(c => `<th><span class="sw" style="background:${c.color}"></span>${c.brand} ${c.model}</th>`).join("")}</tr></thead>`;
+  const body = CRIT.map(k => `<tr><td class="k">${k.name}<span class="why">${k.src.map(s => SRC_TAG[s]).join("")}</span></td>${
+    CAMS.map(c => `<td>${dots(scoreOf(k, c))}<span class="why">${whyOf(k, c)}</span></td>`).join("")}</tr>`).join("");
+  document.getElementById("critTable").innerHTML = head + `<tbody>${body}</tbody>`;
+}
+
+// ------------------------------------------------------------------ 3-4. bang thong so + uu nhuoc
+function renderSpecs() {
+  const F = [
+    ["Kiểu dáng", "ds", c => c.form],
+    ["Giá tham khảo", "ref", c => `${fmtPrice(c)}<span class="why">${c.priceSrc} · chưa phải báo giá xác nhận</span>`],
+    ["Độ phân giải", "ds", c => c.res], ["Cảm biến", "ds", c => `${c.sensor} · ${c.aperture}`], ["WDR", "ds", c => c.wdr],
+    ["Ống kính (HFOV)", "ds", c => c.lenses.map(l => `${fmtMm(l.mm)} mm (${l.hfov}°)`).join("<br>")],
+    ["Lấy nét gần nhất", "ds", c => c.lenses.some(l => l.cf)
+       ? c.lenses.map(l => `${fmtMm(l.mm)} mm: ${fmtM(l.cf)}`).join("<br>") : '<span class="muted">Không thấy trong datasheet đã đối chiếu</span>'],
+    ["Mặt 100 px tới", "calc", c => c.lenses.map(l => `${fmtMm(l.mm)} mm: ${fmtM2(distFor(c.width, l.hfov, GOOD_PX))}`).join("<br>")
+       + '<span class="why">Mô hình hình học, mặt rộng 16 cm</span>'],
+    ["Đèn ban đêm", "ds", c => c.light],
+    ["Nguồn", "ds", c => c.power + (c.power.includes("đại lý") ? '<span class="why">Số công suất lấy từ đại lý, chưa thấy trong datasheet</span>' : "")],
+    ["Chống nước", "ds", c => c.ip], ["Micro", "ds", c => c.mic], ["AI trên camera", "ds", c => c.ai],
+  ];
+  const head = `<thead><tr><th></th>${CAMS.map(c => `<th><span class="sw" style="background:${c.color}"></span>${c.brand}<br>${c.model}</th>`).join("")}</tr></thead>`;
+  document.getElementById("specTable").innerHTML = head + `<tbody>${F.map(([k, src, f]) =>
+    `<tr><td class="k">${k}<span class="why">${SRC_TAG[src]}</span></td>${CAMS.map(c => `<td>${f(c)}</td>`).join("")}</tr>`).join("")}</tbody>`;
+  document.getElementById("procon").innerHTML = CAMS.map(c => `<div class="card" style="border-top:4px solid ${c.color}">
+      <h4>${c.brand} ${c.model}</h4><div class="price">${c.form} · ${fmtPrice(c)} (tham khảo)</div>
+      <ul class="plus">${c.pros.map(p => `<li>${p}</li>`).join("")}</ul>
+      <ul class="minus">${c.cons.map(p => `<li>${p}</li>`).join("")}</ul></div>`).join("");
+}
+
+legend(document.getElementById("legend1"), CAMS.filter(c => c.id !== "ddome").map(c => c.id === "dbul" ? {...c, model: "HFW1439TL1 (2.8/3.6/6 mm) · HDW1439V (2.8/3.6 mm)"} : c));
+legend(document.getElementById("legend2"), CAMS);
+document.getElementById("dist").addEventListener("input", renderReach);
+renderReach(); renderPresets(); renderWeights(); renderScores(); renderCritTable(); renderSpecs();
+</script>
+</body>
+</html>
