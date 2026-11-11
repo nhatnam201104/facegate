@@ -26,14 +26,16 @@ from .attendance import Shift
 from .camera import Camera, can_read_video
 from .clips import ClipRecorder
 from .config import ROOT, load_config
+from .context_detector import create_context_detector
 from .db import DB
 from .engines import create_engine
-from .enrollment import EnrollError, process_enrollment, read_video_frames
+from .enrollment import EnrollError, backfill_legacy_embeddings, process_enrollment, read_video_frames
 from .gallery import Gallery
 from .guided import GuidedSession
 from .hrm import HRMWorker
 from .liveness import create_liveness
 from .pipeline import FULL_ZONE, Pipeline
+from .pose3d import PoseEstimator3D
 from .records import router as records_router
 from .state import bc, ctx
 
@@ -48,13 +50,26 @@ async def lifespan(app: FastAPI):
     ctx.cfg = cfg
     ctx.db = DB(cfg["_paths"]["db"])
     ctx.engine = create_engine(cfg)
+    rc = cfg["recognition"]
+    ctx.pose = PoseEstimator3D(
+        cfg["_paths"]["models"],
+        float(rc.get("frontal_max_yaw", 40.0)),
+        float(rc.get("pose_hysteresis", 5.0)),
+    )
+    ctx.context_detector = create_context_detector(cfg)
+    ctx.engine_lock = threading.Lock()
+    ctx.threshold = float(rc["thresholds"][ctx.engine.name]["frontal"])
+    backfill_legacy_embeddings(ctx)
     ctx.gallery = Gallery(ctx.db, ctx.engine.model_version)
     ctx.camera = Camera(cfg["camera"]["source"], cfg["camera"].get("loop_file", True)).start()
     ctx.hrm = HRMWorker(cfg, ctx.db, on_update=lambda i, s: bc({"type": "hrm", "id": i, "status": s}))
     ctx.shift = Shift.from_cfg(cfg)
     ctx.clips = ClipRecorder(cfg)
-    ctx.pipeline = Pipeline(cfg, ctx.db, ctx.engine, ctx.gallery, ctx.camera, ctx.hrm, bc,
-                            liveness=create_liveness(cfg), clips=ctx.clips).start()
+    ctx.pipeline = Pipeline(
+        cfg, ctx.db, ctx.engine, ctx.gallery, ctx.camera, ctx.hrm, bc,
+        liveness=create_liveness(cfg), clips=ctx.clips,
+        pose_estimator=ctx.pose, context_detector=ctx.context_detector,
+    ).start()
     zone = _load_settings().get("motion_zone")
     if zone:
         try:
@@ -320,8 +335,13 @@ async def enroll_video(code: str = Form(...), name: str = Form(...), file: Uploa
 
 
 @app.post("/api/enroll/guided/start")
-async def enroll_guided_start(code: str = Form(...), name: str = Form(...)):
-    """Bat dau phien dang ky co huong dan tu camera: 5 goc chu thap, dat dung goc moi sang buoc tiep."""
+async def enroll_guided_start(
+    code: str = Form(...),
+    name: str = Form(...),
+    profile_90: bool = Form(True),
+    supplement_only: bool = Form(False),
+):
+    """Bat dau phien dang ky co huong dan tu camera (7 buoc toi +-85 do hoac 2 buoc bo sung)."""
     _check(code, name)
     if ctx.camera.kind == "file":
         raise HTTPException(409, "Nguồn hiện tại là file video. Chuyển về webcam/RTSP ở tab Trực tiếp để đăng ký.")
@@ -331,7 +351,9 @@ async def enroll_guided_start(code: str = Form(...), name: str = Form(...)):
     if old is not None and old.state == "running":
         old.cancel()
         old._thread.join(timeout=2.0)
-    ctx.guided = GuidedSession(ctx, code, name.strip()).start()
+    ctx.guided = GuidedSession(
+        ctx, code, name.strip(), profile_90=profile_90, supplement_only=supplement_only
+    ).start()
     return ctx.guided.snapshot()
 
 
@@ -387,8 +409,15 @@ def employee_delete(emp_id: int):
 
 # ----------------------------------------------------------------- events
 @app.get("/api/events")
-def events(limit: int = 200):
-    return ctx.db.list_events(min(limit, 2000))
+def events(limit: int = 200, tier: str | None = None, pose_group: str | None = None):
+    rows = ctx.db.list_events(min(limit, 2000), tier=tier or None, pose_group=pose_group or None)
+    for r in rows:
+        if isinstance(r.get("liveness_detail"), str) and r["liveness_detail"]:
+            try:
+                r["liveness_detail"] = json.loads(r["liveness_detail"])
+            except ValueError:
+                pass
+    return rows
 
 
 LABELS = {"correct", "wrong", "unknown_employee", "unknown_stranger", "spoof_attack", "spoof_real", None}
@@ -407,24 +436,43 @@ def label(ev_id: int, value: str = Form("")):
 def metrics():
     evs = ctx.db.list_events(100000)
     known = [e for e in evs if e["kind"] == "checkin"]
+    known_frontal = [e for e in known if (e.get("pose_group") or "frontal") == "frontal"]
+    known_profile = [e for e in known if (e.get("pose_group") or "frontal") != "frontal"]
     unknown = [e for e in evs if e["kind"] == "unknown"]
     spoof = [e for e in evs if e["kind"] == "spoof"]
+    spoof_by_reason: dict[str, int] = {}
+    for s in spoof:
+        det = s.get("liveness_detail")
+        if isinstance(det, str) and det:
+            try:
+                det = json.loads(det)
+            except ValueError:
+                det = None
+        r_key = (det or {}).get("reason") if isinstance(det, dict) else None
+        r_key = r_key or "texture_spoof"
+        spoof_by_reason[r_key] = spoof_by_reason.get(r_key, 0) + 1
     spoof_lab = [e for e in spoof if e["label"] in ("spoof_attack", "spoof_real")]
     lab_known = [e for e in known if e["label"] in ("correct", "wrong")]
+    lab_profile = [e for e in known_profile if e["label"] in ("correct", "wrong")]
     wrong = sum(e["label"] == "wrong" for e in known)
+    wrong_prof = sum(e["label"] == "wrong" for e in known_profile)
     unk_emp = sum(e["label"] == "unknown_employee" for e in unknown)
     lab_unknown = [e for e in unknown if e["label"] in ("unknown_employee", "unknown_stranger")]
     lat = sorted(e["latency_ms"] for e in known if e["latency_ms"] is not None)
     attempts_emp = len([e for e in known if e["label"] == "correct"]) + unk_emp
     return {
-        "events_total": len(evs), "recognized": len(known), "unknown": len(unknown), "spoof": len(spoof),
+        "events_total": len(evs),
+        "recognized": len(known),
+        "recognized_frontal": len(known_frontal),
+        "recognized_profile": len(known_profile),
+        "unknown": len(unknown),
+        "spoof": len(spoof),
+        "spoof_by_reason": spoof_by_reason,
         "labeled": len(lab_known) + len(lab_unknown) + len(spoof_lab),
-        # Nguoi that bi chan nham la gia mao (trong cac canh bao gia mao da gan nhan)
         "spoof_false_rate": round(sum(e["label"] == "spoof_real" for e in spoof_lab) / len(spoof_lab), 4)
         if spoof_lab else None,
-        # Ty le nhan nham trong cac su kien da gan nhan (false accept)
         "false_accept_rate": round(wrong / len(lab_known), 4) if lab_known else None,
-        # Nhan vien that nhung he thong tra Unknown (false reject)
+        "false_accept_rate_profile": round(wrong_prof / len(lab_profile), 4) if lab_profile else None,
         "false_reject_rate": round(unk_emp / attempts_emp, 4) if attempts_emp else None,
         "unknown_rate": round(len(unknown) / (len(known) + len(unknown)), 4) if known or unknown else None,
         "latency_ms_p50": lat[len(lat) // 2] if lat else None,
@@ -437,7 +485,8 @@ def metrics():
 def events_csv():
     evs = ctx.db.list_events(100000)
     buf = io.StringIO()
-    cols = ["id", "ts", "time", "camera", "kind", "att_type", "code", "name", "score", "margin", "liveness",
+    cols = ["id", "ts", "time", "camera", "kind", "att_type", "code", "name", "score", "margin",
+            "pose_group", "yaw", "verification_tier", "liveness", "liveness_mode",
             "direction", "latency_ms", "frames", "model_version", "hrm_status", "label", "snapshot"]
     w = csv.DictWriter(buf, fieldnames=cols, extrasaction="ignore")
     w.writeheader()

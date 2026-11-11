@@ -9,31 +9,49 @@ camera:
   loop_file: true          # file video: phat lap lai de demo
 
 pipeline:
-  # opencv : YuNet + SFace (OpenCV Zoo, Apache-2.0)  -> mac dinh, an toan license
-  # onnx   : SCRFD-500M + ArcFace MobileFaceNet (InsightFace, CHI dung nghien cuu/benchmark)
-  backend: opencv
+  # edgeface : YuNet + 3DDFA_V2 + EdgeFace-XS (Apache-2.0/MIT/BSD-3) -> mac dinh, toi uu goc 90 do tren CPU
+  # opencv   : YuNet + 3DDFA_V2 + SFace (OpenCV Zoo, Apache-2.0)
+  # onnx     : SCRFD-500M + ArcFace MobileFaceNet (InsightFace, CHI dung nghien cuu/benchmark)
+  # adaface  : YuNet + 3DDFA_V2 + AdaFace-IR18 (CHI dung nghien cuu/benchmark)
+  backend: edgeface
   detect_fps: 5            # so lan detect moi giay (3-5 la du)
-  det_score: 0.6           # nguong tin cay cua detector
+  det_score: 0.55          # nguong tin cay cua detector (0.55 de bat tot mat nghieng 80-90 do)
   max_faces: 3             # PoC: toi da 3 mat cung luc
   stream_fps: 15           # fps video gui len trinh duyet
   stream_width: 960        # resize khung hinh hien thi
 
 quality:
   min_face: 60             # canh ngan nho nhat cua mat (pixel)
-  min_blur: 40             # phuong sai Laplacian toi thieu (cang cao cang net)
+  min_blur: 35             # phuong sai Laplacian toi thieu tren vung da nhin thay
   min_brightness: 45
   max_brightness: 225
-  max_yaw: 35              # do, quay ngang qua muc nay thi bo qua frame
+  max_yaw: 90              # do, ho tro nhan dien toi goc nghieng suon +-90 do
+  max_pitch: 35            # chan goc ngang/cui qua doc
+  max_roll: 35             # chan goc nghieng dau qua muc
 
 recognition:
-  thresholds:              # nguong cosine theo backend - can hieu chinh bang footage that
-    opencv: 0.42
-    onnx: 0.40
-  margin: 0.06             # top1 - top2 (2 nguoi khac nhau) phai >= margin
-  min_good_frames: 2       # so frame dat chat luong toi thieu truoc khi chot ten
+  frontal_max_yaw: 40      # |yaw| <= 40 do: ngan frontal; > 40 do: left_profile / right_profile
+  pose_hysteresis: 5       # vung tre +-5 do quanh bien 40 do de khong nhay ngan lien tuc
+  thresholds:              # nguong cosine theo backend & nhom goc (nhanh profile chat hon)
+    edgeface:
+      frontal: 0.40
+      profile: 0.46
+    opencv:
+      frontal: 0.42
+      profile: 0.48
+    onnx:
+      frontal: 0.40
+      profile: 0.46
+    adaface:
+      frontal: 0.40
+      profile: 0.46
+  margin: 0.06             # top1 - top2 toi thieu cho ngan frontal
+  profile_margin: 0.08     # top1 - top2 chat hon cho ngan profile (40-90 do)
+  min_good_frames: 2       # so frame frontal toi thieu de chot Best-shot
+  min_profile_frames: 4    # so frame profile toi thieu khi khong co frame frontal
   max_track_embeddings: 10
   track_max_age: 2.0       # giay: giu track (an khung) de noi lai khi mat bi che / quay di
-  split_cosine: 0.25       # frame moi khac khuon mat cua track duoi muc nay -> tach track (tranh tron 2 nguoi)
+  split_cosine: 0.25       # chi so sanh trong cung mot pose_group (tranh cat track khi xoay dau)
 
 events:
   # Moi nhan vien chi check-in 1 lan/ngay; cac lan sau chi hien "Da cham cong luc ..."
@@ -45,12 +63,28 @@ events:
   log_unknown: true        # luu su kien Unknown de danh gia (khong gui HRM)
 
 
-liveness:                  # chong gia mao bang anh/man hinh (MiniFASNet, passive)
+liveness:                  # chong gia mao 4 lop dinh tuyen theo goc nhin
   enabled: true
+  # Nhanh A (|yaw| <= 40 do): MiniFASNet V2+V1SE
   threshold: 0.70          # TB xac suat "nguoi that" >= muc nay moi duoc cham cong
   spoof_below: 0.35        # TB duoi muc nay = gia mao: canh bao, khong cham cong
   min_frames: 4            # so frame tot toi thieu truoc khi ket luan
   window: 8                # lay trung binh tren N frame gan nhat cua track
+  # Nhanh B (40 < |yaw| <= 90 do, va bo tro nhanh A): khong phu thuoc goc mat
+  context:
+    enabled: true
+    person_conf: 0.45      # YOLOX-Nano: nguong tin cay phat hien co the nguoi
+    medium_conf: 0.35      # nguong phat hien dien thoai / tablet / man hinh / khung anh
+    require_body_coupling: true
+    face_body_ratio: [0.12, 0.65]
+  parallax:
+    enabled: true
+    min_frames: 6          # can >= 6 frame di chuyen de kiem dinh thi sai 3D
+    min_travel_ratio: 0.08 # dich chuyen ngang toi thieu = 8% chieu rong khung hinh
+    min_depth_score: 0.55  # vuot sai so chieu phang 2D (loai anh phang)
+  moire:
+    enabled: true
+    max_screen_score: 0.65 # chan van luoi pixel man hinh phat video quay san
 
 attendance:
   shift_start: "08:00"
@@ -81,17 +115,21 @@ power:                     # che do cho: tranh nhan dien lien tuc 24/7 khi khong
 enrollment:
   sample_fps: 10           # tach frame tu video dang ky
   min_frames: 5
-  max_frames: 15
+  max_frames: 21           # chua du mau chinh dien + nghieng sau 2 ben
   per_bin: 3               # toi da so frame cho moi o goc nhin
   dedup_cosine: 0.95       # 2 frame giong nhau hon muc nay thi bo bot 1
+  outlier_min_cosine: 0.42 # kiem tra nhat quan rieng trong tung pose_group
   keep_video: false        # mac dinh xoa video goc sau khi xu ly
-  guided:                  # dang ky quay tu camera: 5 goc chu thap co dinh, dat dung goc moi sang buoc tiep
-    yaw_enter: 15          # do lech ngang (so voi luc nhin thang) de tinh la da quay
+  guided:                  # dang ky quay tu camera: 7 goc (5 chu thap + 2 nghieng suon ~80 do)
+    enable_profile_90: true
+    yaw_enter: 15          # do lech ngang (so voi luc nhin thang) cho goc ban nghieng
     yaw_center: 9          # trong khoang nay la "nhin thang"
+    profile_yaw_min: 65    # do lech ngang toi thieu cho 2 buoc nghieng suon sau
+    profile_yaw_max: 88
     pitch_enter: 10        # do lech doc de tinh la da ngang/cui
     pitch_center: 8
     hold_seconds: 0.7      # phai giu dung goc lien tuc chung nay
-    timeout_seconds: 240   # tong thoi gian toi da cua mot phien
+    timeout_seconds: 300   # tong thoi gian toi da cua mot phien
 
 hrm:
   adapter: mock            # mock | erpnext

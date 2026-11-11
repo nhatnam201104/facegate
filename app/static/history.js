@@ -5,13 +5,21 @@ let histRows = [];
 
 function histQuery() {
   const f = $("#histForm");
-  return new URLSearchParams({date_from: f.date_from.value, date_to: f.date_to.value,
-                              code: f.code.value, kind: f.kind.value}).toString();
+  return new URLSearchParams({
+    date_from: f.date_from.value,
+    date_to: f.date_to.value,
+    code: f.code.value,
+    kind: f.kind.value,
+    tier: f.tier ? f.tier.value : "",
+  }).toString();
 }
 
 function histTitle(a) {
   if (a.kind === "employee") return `${esc(a.name)} <span class="muted">${esc(a.code)}</span>`;
-  if (a.kind === "spoof") return `⚠ Giả mạo${a.code ? ` <span class="muted">giống ${esc(a.name)}</span>` : ""}`;
+  if (a.kind === "spoof") {
+    const rTxt = SPOOF_REASON_VI[a.spoof_reason] ? ` · ${SPOOF_REASON_VI[a.spoof_reason]}` : "";
+    return `⚠ Giả mạo${a.code ? ` <span class="muted">giống ${esc(a.name)}${esc(rTxt)}</span>` : `<span class="muted">${esc(rTxt)}</span>`}`;
+  }
   return "Người lạ";
 }
 
@@ -34,7 +42,8 @@ async function loadHistory() {
       <div class="meta">
         <b>${histTitle(a)}</b>
         <span>${new Date(a.start_ts * 1000).toLocaleString("vi-VN")}</span>
-        <span class="muted">${KIND_VI[a.kind]} · score ${Number(a.score ?? 0).toFixed(2)}${a.liveness != null ? ` · thật ${Number(a.liveness).toFixed(2)}` : ""}</span>
+        <span class="muted">${KIND_VI[a.kind]} · score ${Number(a.score ?? 0).toFixed(2)}${a.min_abs_yaw != null ? ` · góc ~${Math.round(a.min_abs_yaw)}°` : ""}${a.liveness != null ? ` · thật ${Number(a.liveness).toFixed(2)}` : ""}</span>
+        ${a.verification_tier === "profile_verified" ? `<span class="pill warn" style="align-self:flex-start">Góc nghiêng · Cần đối soát</span>` : ""}
         ${a.clip_ok ? `<a class="btn" href="${file(a.clip)}" download>Tải clip</a>` : ""}
       </div>
     </article>`).join("") : `<p class="muted">Không có lần xuất hiện nào trong khoảng đã chọn.</p>`;
@@ -58,6 +67,7 @@ function openHistory(code, day) {
   const f = $("#histForm");
   f.date_from.value = f.date_to.value = day;
   f.code.value = code; f.kind.value = "";
+  if (f.tier) f.tier.value = "";
   document.querySelector('nav button[data-tab="history"]').click();
 }
 
@@ -66,6 +76,7 @@ function openHistory(code, day) {
   f.date_from.value = f.date_to.value = isoDay(new Date());
   f.onsubmit = ev => { ev.preventDefault(); loadHistory(); };
   f.code.onchange = f.kind.onchange = loadHistory;
+  if (f.tier) f.tier.onchange = loadHistory;
   $("#histZip").onclick = () => { location.href = `/api/appearances.zip?${histQuery()}`; };
   let t = null;
   tabHooks.history = loadHistory;

@@ -26,11 +26,11 @@ Bản demo chạy trên **Linux** (Ubuntu/Debian…) hoặc **Windows**, chỉ d
 
 | Hạng mục | Trạng thái |
 |---|---|
-| Nhận diện nhân viên, hiện khung và tên gần thời gian thực | ✅ Đã có |
-| Báo "Unknown" khi không đủ tin cậy, không đoán tên | ✅ Đã có |
-| Đăng ký khuôn mặt quay từ camera có hướng dẫn (đủ 5 góc, đạt góc mới sang bước tiếp), HR duyệt | ✅ Đã có |
-| Chấm công: check-in đầu tiên trong ngày, số phút đi muộn, vắng, xuất CSV | ✅ Đã có |
-| Chống giả mạo bằng ảnh in hoặc màn hình điện thoại | ✅ Đã có (bằng phần mềm, chỉ giảm rủi ro) |
+| Nhận diện nhân viên tới góc nghiêng **±90°** (Best-shot ưu tiên góc thẳng + khớp Profile-to-Profile) | ✅ Đã có |
+| Báo "Unknown" khi không đủ tin cậy, không đoán tên (ngưỡng riêng cho chính diện & góc nghiêng) | ✅ Đã có |
+| Đăng ký khuôn mặt quay từ camera có hướng dẫn (**7 góc** tới ±80° + bổ sung góc 90° cho nhân viên cũ), HR duyệt | ✅ Đã có |
+| Chấm công: check-in đầu tiên trong ngày, số phút đi muộn, vắng, phân tầng mức xác thực, xuất CSV | ✅ Đã có |
+| Chống giả mạo **4 lớp** (MiniFASNet + phát hiện màn hình/cơ thể YOLOX-Nano + thị sai 3D + vân Moiré) | ✅ Đã có (bằng phần mềm, phân tầng kèm clip đối soát) |
 | Lịch sử mỗi lần xuất hiện kèm clip video, tải ZIP | ✅ Đã có (ngoài đề xuất ban đầu) |
 | Chế độ chờ khi không có người, để giảm tải CPU | ✅ Đã có (ngoài đề xuất ban đầu) |
 | Tích hợp HRM | 🟡 Bản giả lập đã chạy. Bản ERPNext đã viết nhưng chưa thử với ERP thật |

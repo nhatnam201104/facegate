@@ -38,11 +38,13 @@ async function loadAttendance() {
     const [label, cls] = ATT_STATUS[r.status] || [r.status, ""];
     const day = new Date(r.date + "T00:00:00").toLocaleDateString("vi-VN", {weekday: "short", day: "2-digit", month: "2-digit"});
     const noShow = !r.check_in;
+    const [tLabel, tCls] = noShow ? ["—", ""] : (TIER_BADGE[r.verification_tier || "verified"] || ["Chính diện", "ok"]);
+    const tierPill = noShow ? "—" : `<span class="pill ${tCls}">${tLabel}</span>`;
     const hist = noShow ? "" : `<button class="btn" onclick="openHistory('${esc(r.code)}','${r.date}')">Xem clip</button>`;
     return `<tr class="${noShow ? "absent" : ""}"><td>${day}</td><td>${esc(r.code)}</td><td>${esc(r.name)}</td>
       <td><b>${fmtHM(r.check_in)}</b></td><td class="${r.late_min ? "warn" : ""}">${r.late_min ? `${r.late_min} phút` : "—"}</td>
-      <td><span class="pill ${cls}">${label}</span></td><td>${hist}</td></tr>`;
-  }).join("") : `<tr><td colspan="7" class="muted">Không có dữ liệu chấm công trong khoảng này.</td></tr>`;
+      <td><span class="pill ${cls}">${label}</span></td><td>${tierPill}</td><td>${hist}</td></tr>`;
+  }).join("") : `<tr><td colspan="8" class="muted">Không có dữ liệu chấm công trong khoảng này.</td></tr>`;
 }
 
 (() => {

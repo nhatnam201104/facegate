@@ -102,7 +102,7 @@
     <div class="card">
       <h3>Chi tiết theo ngày</h3>
       <table><thead><tr><th>Ngày</th><th>Mã</th><th>Họ tên</th><th>Giờ check-in</th><th>Đi muộn</th>
-        <th>Trạng thái</th><th></th></tr></thead><tbody id="attBody"></tbody></table>
+        <th>Trạng thái</th><th>Mức xác thực</th><th></th></tr></thead><tbody id="attBody"></tbody></table>
     </div>
   </section>
 
@@ -115,6 +115,11 @@
       <label>Loại <select name="kind">
         <option value="">Tất cả</option><option value="employee">Nhân viên</option>
         <option value="unknown">Người lạ</option><option value="spoof">Giả mạo</option></select></label>
+      <label>Mức xác thực <select name="tier">
+        <option value="">Tất cả</option>
+        <option value="verified">Chính diện (Verified)</option>
+        <option value="profile_verified">Góc nghiêng 90° (Cần đối soát clip)</option>
+        <option value="rejected_spoof">Chặn giả mạo</option></select></label>
       <button type="submit" class="primary">Lọc</button>
       <button type="button" class="btn" id="histZip">Tải tất cả clip (ZIP)</button>
       <span class="muted" id="histCount"></span>
@@ -126,13 +131,17 @@
   <section id="tab-enroll" class="tab">
     <div class="cols">
       <form id="enrollForm" class="card">
-        <h3>Đăng ký khuôn mặt</h3>
+        <h3>Đăng ký khuôn mặt (Hỗ trợ tới ±90°)</h3>
         <label>Mã nhân viên <input name="code" required placeholder="VD: NV001" pattern="[A-Za-z0-9_.\-]{1,32}"></label>
         <label>Họ tên <input name="name" required placeholder="Nguyễn Văn A"></label>
-        <p class="hint" id="enrollHint">Quay từ camera: làm theo hướng dẫn trên màn hình, đủ <b>5 góc</b> (nhìn thẳng, quay phải, quay trái, ngẩng, cúi). Mỗi góc đạt mới sang góc tiếp theo. Đủ sáng, chỉ một người trong khung.</p>
+        <p class="hint" id="enrollHint">Quay từ camera: làm theo hướng dẫn <b>7 góc</b> (nhìn thẳng, quay nhẹ phải/trái, ngẩng, cúi + <b>2 góc nghiêng sườn ~80°</b> để đi ngang cổng không cần nhìn ống kính). Đủ sáng, chỉ một người trong khung.</p>
         <div class="mode">
           <label><input type="radio" name="mode" value="camera" checked> Quay từ camera cổng (có hướng dẫn)</label>
           <label><input type="radio" name="mode" value="file"> Tải video lên</label>
+        </div>
+        <div class="mode" id="profileOpts">
+          <label><input type="checkbox" name="profile_90" value="true" checked> Đăng ký đủ góc nghiêng 90° (7 bước)</label>
+          <label><input type="checkbox" name="supplement_only" id="supChk" value="true"> Chỉ quay bổ sung 2 góc 90°</label>
         </div>
         <label id="fileRow" hidden>Video (MP4/WebM) <input type="file" name="file" accept="video/*">
           <small class="muted">Video chỉ dùng để đăng ký. Nhận diện trực tiếp vẫn chạy trên nguồn ở tab Trực tiếp.</small></label>
@@ -172,8 +181,14 @@
     <div class="metrics" id="metrics"></div>
     <div class="card">
       <h3>Sự kiện <small class="muted">— gán nhãn để tính false accept / false reject</small>
+        <select id="evTierFilter" aria-label="Lọc mức xác thực" style="margin-left:auto;padding:5px 8px;background:var(--bg);border:1px solid var(--line);border-radius:6px;color:var(--text)">
+          <option value="">Tất cả mức xác thực</option>
+          <option value="verified">Chính diện (Verified)</option>
+          <option value="profile_verified">Góc nghiêng 90° (Profile)</option>
+          <option value="rejected_spoof">Giả mạo bị chặn</option>
+        </select>
         <a class="btn" href="/api/events.csv">Xuất CSV</a> <button class="btn" id="reloadEvents">Tải lại</button></h3>
-      <table><thead><tr><th>Ảnh</th><th>Thời gian</th><th>Kết quả</th><th>Score</th><th>Người thật</th><th>Vào/ra</th><th>Trễ</th><th>HRM</th><th>Nhãn</th></tr></thead>
+      <table><thead><tr><th>Ảnh</th><th>Thời gian</th><th>Kết quả</th><th>Góc / Mức xác thực</th><th>Score</th><th>Người thật</th><th>Trễ</th><th>HRM</th><th>Nhãn</th></tr></thead>
         <tbody id="evBody"></tbody></table>
     </div>
   </section>

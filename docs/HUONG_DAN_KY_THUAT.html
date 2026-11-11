@@ -85,14 +85,15 @@ footer{max-width:1180px;margin:0 auto;padding:0 24px 40px;color:var(--muted);fon
 
 <article>
 
-<p>Bản demo chạy <strong>cục bộ trên Windows, chỉ dùng CPU</strong>, theo các phương án kỹ thuật đã đề xuất:</p>
-<pre><code>Webcam / file video / RTSP ──► Reader thread (giữ frame mới nhất)
-        ► Detect 3–5 FPS (YuNet hoặc SCRFD) ► IoU tracker ► Quality filter
-        ► Align + Embedding (SFace hoặc ArcFace) ► Gom embedding theo track
-        ► So khớp open-set (ngưỡng + margin top-2, xác minh lại liên tục)
-        ► Chống giả mạo MiniFASNet (ảnh in / màn hình điện thoại) ► Rule chấm công (check-in/out, dedup)
-        ► SQLite + snapshot + clip mỗi lần xuất hiện ► HRM adapter (mock | ERPNext) qua outbox + retry
-        ► FastAPI: MJPEG video + WebSocket + REST  ►  Giao diện web
+<p>Bản demo chạy <strong>cục bộ trên Linux hoặc Windows, chỉ dùng CPU</strong>, hỗ trợ nhận diện tới <strong>góc nghiêng ±90°</strong> kèm chống giả mạo 4 lớp:</p>
+<pre><code>Webcam / file video / RTSP ──► Reader thread (V4L2 trên Linux / MSMF trên Windows, giữ frame mới nhất)
+        ► Detect 3–5 FPS (YuNet + YOLOX-Nano quét cơ thể &amp; màn hình điện thoại)
+        ► Ước lượng tư thế &amp; 68 điểm mốc 3D (3DDFA_V2, tới ±90°) ► Pose-Bucketed Tracker (3 ngăn góc)
+        ► Căn chỉnh 3 khung (Frontal / Left / Right Profile) + Embedding (EdgeFace-XS hoặc SFace)
+        ► Ưu tiên Best-shot (≤40° trước, 40°–90° khớp cùng phía nghiêng với ngưỡng chặt hơn)
+        ► Chống giả mạo 4 lớp: MiniFASNet (≤40°) | Vật chứa + Đầu-Thân + Thị sai 3D + Vân Moiré (&gt;40°)
+        ► Rule chấm công + Phân tầng xác thực (verified / profile_verified) ► SQLite + snapshot + clip
+        ► HRM adapter (mock | ERPNext) ► FastAPI (MJPEG + WebSocket + REST) ► Giao diện web
 </code></pre>
 <h2 id="1-yeu-cau">1. Yêu cầu</h2>
 <ul>
@@ -174,30 +175,33 @@ footer{max-width:1180px;margin:0 auto;padding:0 24px 40px;color:var(--muted);fon
 <li><strong>Xóa nhân viên</strong> ở tab <em>Nhân viên</em>: camera ngừng nhận diện người đó ngay, kể cả khi họ đang đứng trước camera. Dữ liệu khuôn mặt bị xóa; lịch sử chấm công và clip vẫn giữ (lọc được với nhãn <em>đã xóa</em>).</li>
 <li>Ở chế độ <code>hrm.adapter: mock</code>, mỗi check-in được ghi vào <code>data/hrm_mock.jsonl</code> đúng định dạng Employee Checkin.</li>
 </ol>
-<h2 id="5-benchmark-backend">5. Benchmark backend</h2>
-<pre><code class="language-bat">.venv\Scripts\python scripts\benchmark.py data\footage.mp4
+<h2 id="5-benchmark-backend">5. Benchmark backend &amp; góc nghiêng 90°</h2>
+<pre><code class="language-bash">.venv/bin/python scripts/benchmark.py data/footage.mp4 --profile-eval
 </code></pre>
-<p>Lệnh này in thời gian detect, thời gian embed và số mặt đạt chất lượng của từng backend trên cùng một video. Kết hợp số liệu này với nhãn ở tab <em>Sự kiện</em> để chọn model.</p>
+<p>Lệnh này in chi tiết độ trễ từng tầng (<code>YuNet</code>, <code>YOLOX-Nano</code>, <code>3DDFA_V2</code>, <code>EdgeFace-XS/SFace</code>, <code>MiniFASNet</code>) và phân bố tỷ lệ đạt chất lượng theo 3 dải góc <code>0°–40°</code>, <code>40°–65°</code>, <code>65°–90°</code>.</p>
 <h2 id="6-cau-truc">6. Cấu trúc</h2>
 <pre><code>app/
-  engines.py     backend nhận diện (OpenCVEngine: YuNet+SFace, OnnxEngine: SCRFD+ArcFace)
-  quality.py     đánh giá kích thước, độ mờ, ánh sáng, góc mặt (heuristic)
-  tracker.py     bám mặt: IoU trên vị trí dự đoán theo vận tốc, dự phòng theo khoảng cách tâm; tách track khi khuôn mặt không khớp, gộp khi cùng nhân viên
-  gallery.py     gallery trong RAM, so khớp ngưỡng + margin top-2
-  pipeline.py    vòng xử lý chính, rule chấm công, ghi lịch sử, chế độ chờ, vẽ khung
-  camera.py      đọc webcam / file / RTSP trong thread riêng, tự kết nối lại
-  liveness.py    chống giả mạo MiniFASNet (gộp V2 + V1SE)
-  attendance.py  giờ vào ca, check-in mỗi ngày, đi muộn/vắng, bảng công
-  clips.py       ghi clip WebM mỗi lần xuất hiện (thread riêng, pre/post-roll, tự xóa clip cũ)
-  records.py     API bảng công + lịch sử + tải ZIP
-  enrollment.py  đăng ký từ video: lọc → chia góc → bỏ trùng → kiểm tra trùng người
-  hrm.py         adapter HRM (mock, ERPNext) + outbox/retry
-  db.py          SQLite (khi lên server sẽ chuyển sang PostgreSQL + pgvector)
-  main.py        FastAPI: REST, WebSocket, MJPEG, đổi nguồn video, vùng cửa
-  state.py       trạng thái dùng chung giữa các router
-  static/        giao diện web (app.js, attendance.js, history.js, zone.js)
-scripts/         tải model, benchmark
-data/            DB, snapshot, ảnh đăng ký, clips/, settings.json (tự tạo khi chạy, không push)
+  pose3d.py            ước lượng tư thế 3D (yaw, pitch, roll) + 68 điểm mốc 3D tới ±90° (3DDFA_V2 ONNX)
+  context_detector.py  phát hiện cơ thể người &amp; màn hình điện thoại/tablet quanh mặt (YOLOX-Nano ONNX)
+  engines.py           căn chỉnh 3 khung tư thế + backend nhận diện (EdgeFaceEngine, OpenCVEngine, OnnxEngine, AdaFaceEngine)
+  quality.py           đánh giá độ nét/ánh sáng trên vùng da nhìn thấy (visible ROI), lọc pitch/roll/che khuất
+  tracker.py           Pose-Bucketed Tracker: tách 3 ngăn embedding, liên kết person_bbox, ưu tiên Best-shot
+  gallery.py           3 ma trận con theo pose_group, ngưỡng riêng cho profile, theo dõi độ phủ góc 90°
+  pipeline.py          vòng xử lý chính, nâng hạng Best-shot, phân tầng verified / profile_verified, chế độ chờ
+  camera.py            đọc webcam (V4L2/MSMF) / file / RTSP trong thread riêng, tự kết nối lại
+  liveness.py          điều phối chống giả mạo 4 lớp: MiniFASNet (≤40°) + Vật chứa/Cơ thể + Thị sai 3D + Moiré (&gt;40°)
+  attendance.py        giờ vào ca, check-in mỗi ngày, đi muộn/vắng, kèm mức xác thực trên bảng công
+  clips.py             ghi clip WebM/MP4 mỗi lần xuất hiện (thread riêng, pre/post-roll, tự xóa clip cũ)
+  records.py           API bảng công + lọc lịch sử theo mức xác thực + tải ZIP
+  enrollment.py        đăng ký đa góc: lọc outlier theo từng pose_group + tự động backfill model_version mới
+  guided.py            đăng ký có hướng dẫn 7 bước (tới ±80°) &amp; chế độ quay bổ sung 2 góc nghiêng
+  hrm.py               adapter HRM (mock, ERPNext) + outbox/retry
+  db.py                SQLite WAL + tự động migrate schema không mất dữ liệu cũ
+  main.py              FastAPI: REST, WebSocket, MJPEG, đổi nguồn video, vùng cửa, metrics theo góc
+  state.py             trạng thái dùng chung giữa các router
+  static/              giao diện web (app.js, attendance.js, history.js, zone.js, style.css)
+scripts/               tải model (download_models.py), đo kiểm hiệu năng &amp; góc nhìn (benchmark.py)
+data/                  DB, snapshot, ảnh đăng ký, clips/, settings.json (tự tạo khi chạy, không push)
 </code></pre>
 <h2 id="7-luu-y-quan-trong">7. Lưu ý quan trọng</h2>
 <ul>

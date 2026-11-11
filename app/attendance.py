@@ -104,12 +104,17 @@ def timesheet(db, date_from: str | None, date_to: str | None, shift: Shift, code
                 else:
                     continue
                 rows.append({"date": d.isoformat(), "code": c, "name": names.get(c, c), "status": st,
-                             "check_in": None, "late_min": 0})
+                             "check_in": None, "late_min": 0, "verification_tier": None, "pose_group": None})
                 continue
-            t_in = evs[0]["ts"]   # lan check-in dau tien trong ngay
+            first_ev = evs[0]
+            t_in = first_ev["ts"]   # lan check-in dau tien trong ngay
             late = late_minutes(t_in, shift)
-            rows.append({"date": d.isoformat(), "code": c, "name": names.get(c, c),
-                         "status": "late" if late else "ok", "check_in": t_in, "late_min": late})
+            rows.append({
+                "date": d.isoformat(), "code": c, "name": names.get(c, c),
+                "status": "late" if late else "ok", "check_in": t_in, "late_min": late,
+                "verification_tier": first_ev.get("verification_tier") or "verified",
+                "pose_group": first_ev.get("pose_group") or "frontal",
+            })
         d -= timedelta(days=1)
 
     return {"from": d0.isoformat(), "to": d1.isoformat(), "shift": shift.as_dict(),

@@ -4,7 +4,24 @@ const fmtTime = ts => new Date(ts * 1000).toLocaleString("vi-VN");
 const fmtHM = ts => ts ? new Date(ts * 1000).toLocaleTimeString("vi-VN", {hour: "2-digit", minute: "2-digit"}) : "—";
 const isoDay = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 const file = p => p ? `/files/${p}` : "";
-const REASON = {small:"mặt nhỏ", blur:"mờ", light:"ánh sáng", yaw:"quay ngang", cut:"bị cắt"};
+const REASON = {
+  small:"mặt nhỏ", blur:"mờ", light:"ánh sáng", yaw:"quay quá góc",
+  pitch:"ngẩng/cúi quá mức", roll:"nghiêng đầu", occluded:"bị che khuất", cut:"bị cắt"
+};
+const SPOOF_REASON_VI = {
+  screen_detected: "Phát hiện màn hình điện thoại / máy tính bảng",
+  multi_face_single_body: "Hai khuôn mặt trên cùng một cơ thể",
+  unattached_face: "Khuôn mặt không gắn kết với cơ thể người",
+  planar_no_parallax: "Ảnh phẳng 2D thiếu thị sai chuyển động 3D",
+  moire_pattern: "Phát hiện vân lưới màn hình phát video",
+  texture_spoof: "Khuôn mặt từ ảnh in / màn hình"
+};
+const TIER_BADGE = {
+  verified: ["Chính diện", "ok"],
+  profile_verified: ["Góc nghiêng · Có clip", "warn"],
+  rejected_spoof: ["Chặn giả mạo", "bad"],
+  unverified: ["Chưa xác thực", ""]
+};
 const isActive = tab => $("#tab-" + tab).classList.contains("active");
 
 // ---------- tabs (attendance.js / history.js dang ky them vao tabHooks)
@@ -117,11 +134,14 @@ function addFeed(e, isNew) {
   if (ul.querySelector(".muted")) ul.innerHTML = "";
   const li = document.createElement("li");
   li.className = `${isNew ? "new " : ""}k-${e.kind || "checkin"}`;
-  const tag = e.kind === "checkin" ? `<span class="tag ${e.att_type}">${ATT[e.att_type] || "Ghi nhận"}</span>` : "";
+  const tag = e.kind === "checkin"
+    ? `<span class="tag ${e.verification_tier === "profile_verified" ? "prof" : e.att_type}">${e.verification_tier === "profile_verified" ? "Check-in · Nghiêng" : (ATT[e.att_type] || "Ghi nhận")}</span>`
+    : "";
   const live = e.liveness != null ? ` · thật ${Number(e.liveness).toFixed(2)}` : "";
+  const yawTxt = e.yaw != null ? ` · góc ${Math.round(Math.abs(e.yaw))}°` : "";
   li.innerHTML = `${e.snapshot ? `<img src="${file(e.snapshot)}" alt="">` : ""}
     <div><b>${feedTitle(e)}</b> ${tag}
-    <span class="t">${fmtTime(e.ts)} · score ${Number(e.score).toFixed(2)}${live}</span></div>`;
+    <span class="t">${fmtTime(e.ts)} · score ${Number(e.score).toFixed(2)}${yawTxt}${live}</span></div>`;
   ul.prepend(li);
   while (ul.children.length > 30) ul.lastChild.remove();
 }
@@ -148,13 +168,15 @@ function showGreet(e, g) {
   const box = $("#greet");
   let cls, kind, name = e.name, sub;
   if (e.kind === "spoof") {
+    const rCode = e.liveness_detail?.reason || e.spoof_reason || "";
     cls = "spoof"; kind = "Phát hiện giả mạo"; name = "Không chấm công";
-    sub = "Khuôn mặt từ ảnh/màn hình — yêu cầu người thật đứng trước camera";
+    sub = SPOOF_REASON_VI[rCode] || "Khuôn mặt từ ảnh/màn hình — yêu cầu người thật đứng trước camera";
   } else if (e.kind === "dup") {
     cls = "dup"; kind = "Đã chấm công hôm nay"; sub = `Check-in lúc ${fmtHM(e.ts)}`;
   } else {
+    const prof = e.verification_tier === "profile_verified";
     cls = g && g.status === "late" ? "warn" : "ok";
-    kind = `Check-in · ${fmtHM(e.ts)}`;
+    kind = `Check-in · ${fmtHM(e.ts)}${prof ? " · Góc nghiêng (đã lưu clip)" : ""}`;
     sub = g ? GREET_SUB[g.status](g) : "";
     name = `Xin chào, ${e.name}`;
   }
@@ -179,7 +201,7 @@ connectWS();
 // ---------- enrollment
 function applyEnrollMode() {
   const cam = $("input[name=mode]:checked").value === "camera";
-  $("#fileRow").hidden = cam; $("#camRow").hidden = !cam;
+  $("#fileRow").hidden = cam; $("#camRow").hidden = !cam; $("#profileOpts").hidden = !cam;
   $("#enrollBtn").textContent = cam ? "Bắt đầu quay" : "Xử lý đăng ký";
   updateEnrollPreview();
 }
@@ -195,9 +217,9 @@ document.querySelectorAll("input[name=mode]").forEach(r => r.onchange = applyEnr
 // --- dang ky co huong dan kieu app ngan hang: 5 goc chu thap co dinh, dat dung goc moi sang buoc tiep
 // luoi 3x3 bo tri theo huong tren man hinh (preview lat guong): cot trai = nguoi dung quay sang trai (h > 0)
 function buildGrid(steps) {
-  const cells = Array(9).fill(null);
-  steps.forEach((st, i) => cells[(st.v === 0 ? 1 : st.v < 0 ? 0 : 2) * 3 + (st.h === 0 ? 1 : st.h > 0 ? 0 : 2)] = i);
-  $("#grid9").innerHTML = cells.map(i => i === null ? `<div class="empty"></div>` : `<div data-i="${i}">${i + 1}</div>`).join("");
+  const box = $("#grid9");
+  box.style.gridTemplateColumns = `repeat(${Math.min(steps.length, 4)}, 1fr)`;
+  box.innerHTML = steps.map((st, i) => `<div data-i="${i}" title="${esc(st.text)}">${i + 1}. ${st.pose_group === "frontal" ? "Thẳng/Nhẹ" : "Nghiêng 80°"}</div>`).join("");
 }
 let guidedTimer = null, guidedLastStep = -1, guidedSteps = 0;
 function speak(text) {
@@ -212,13 +234,15 @@ function renderGuided(g) {
     el.classList.toggle("cur", g.state === "running" && i === g.step);
   });
   const running = g.state === "running";
-  $("#guideStep").textContent = running ? `${g.step + 1}/${g.total} · ${g.instruction}` : g.state === "done" ? "Đã đủ 5 góc" : "";
-  $("#guideHint").textContent = g.hint || "";
+  const yawInfo = running && g.current_pose ? ` (góc hiện tại: ${Math.round(Math.abs(g.current_pose.yaw))}°)` : "";
+  $("#guideStep").textContent = running ? `${g.step + 1}/${g.total} · ${g.instruction}` : g.state === "done" ? `Đã hoàn tất ${g.total} bước` : "";
+  $("#guideHint").textContent = (g.hint || "") + yawInfo;
   $("#guide .guideview").classList.toggle("good", g.ok);
   $("#guideOval").classList.toggle("ok", g.ok);
   $("#guideProg").style.strokeDasharray = `${running ? Math.round(g.hold * 100) : g.state === "done" ? 100 : 0} 100`;
   const t = running ? g.target : {};
-  $("#arrL").classList.toggle("on", t.h === "left"); $("#arrR").classList.toggle("on", t.h === "right");
+  $("#arrL").classList.toggle("on", t.h === "left" || t.h === "left_deep");
+  $("#arrR").classList.toggle("on", t.h === "right" || t.h === "right_deep");
   $("#arrU").classList.toggle("on", t.v === "up"); $("#arrD").classList.toggle("on", t.v === "down");
   if (running && g.step !== guidedLastStep) speak(g.instruction);
   guidedLastStep = g.step;
@@ -236,7 +260,7 @@ async function pollGuided(code, btn) {
     renderGuided(g);
     if (g.state === "done") {
       endGuided(btn); speak("Đăng ký hoàn tất");
-      msg.className = "msg ok"; msg.textContent = "Đã đủ 5 góc. Chờ HR duyệt ở tab Nhân viên.";
+      msg.className = "msg ok"; msg.textContent = `Đã hoàn tất ${g.total} bước đăng ký. Kiểm tra ở tab Nhân viên.`;
       showReport(code, g.report);
     } else if (g.state === "failed") {
       endGuided(btn); msg.className = "msg err"; msg.textContent = g.error || "Đăng ký thất bại";
@@ -250,6 +274,8 @@ window.addEventListener("beforeunload", () => { if (guidedTimer) navigator.sendB
 async function startGuided(fd, btn) {
   const msg = $("#enrollMsg");
   fd.delete("file"); fd.delete("mode");
+  if (!fd.has("profile_90")) fd.set("profile_90", "false");
+  if (!fd.has("supplement_only")) fd.set("supplement_only", "false");
   btn.disabled = true; msg.className = "msg"; msg.textContent = "Đứng trước camera và làm theo hướng dẫn trên màn hình";
   guidedLastStep = -1; guidedSteps = 0;
   try {
@@ -291,18 +317,34 @@ function showReport(code, r) {
 
 // ---------- employees
 const STATUS = {pending: "Chờ duyệt", active: "Đang hoạt động", disabled: "Đã khóa"};
+function jumpSupplement(code, name) {
+  const f = $("#enrollForm");
+  f.code.value = code; f.name.value = name;
+  $("input[name=mode][value=camera]").checked = true;
+  f.profile_90.checked = true;
+  $("#supChk").checked = true;
+  applyEnrollMode();
+  document.querySelector('nav button[data-tab="enroll"]').click();
+}
 async function loadEmployees() {
   const rows = await (await fetch("/api/employees")).json();
-  $("#empBody").innerHTML = rows.length ? rows.map(e => `<tr>
+  $("#empBody").innerHTML = rows.length ? rows.map(e => {
+    const cov = e.pose_coverage || {};
+    const badge90 = cov.ready_90
+      ? `<span class="pill ok" title="Thẳng: ${cov.frontal} · Trái: ${cov.left_profile} · Phải: ${cov.right_profile}">Đủ góc 90°</span>`
+      : `<span class="pill warn" title="Mới có góc chính diện — nên bổ sung 2 góc nghiêng sườn">Chỉ ≤40°</span>`;
+    return `<tr>
     <td>${e.thumb ? `<img src="${file(e.thumb)}" data-zoom>` : ""}</td>
     <td>${esc(e.code)}</td><td>${esc(e.name)}</td>
     <td><span class="pill ${e.status}">${STATUS[e.status] || e.status}</span></td>
-    <td>${e.n_emb}</td>
+    <td>${e.n_emb} mẫu · ${badge90}</td>
     <td class="warn">${(e.report?.warnings || []).map(esc).join("<br>")}${e.n_emb === 0 ? "Không có embedding cho model hiện tại — cần đăng ký lại" : ""}</td>
     <td><div class="acts">
       ${e.status !== "active" ? `<button onclick="empAct(${e.id},'approve')">Duyệt</button>` : ""}
+      ${!cov.ready_90 ? `<button onclick="jumpSupplement('${esc(e.code)}','${esc(e.name)}')">+ Bổ sung góc 90°</button>` : ""}
       ${e.status === "active" ? `<button onclick="empAct(${e.id},'disable')">Khóa</button>` : ""}
-      <button onclick="empDel(${e.id},'${esc(e.code)}')">Xóa</button></div></td></tr>`).join("")
+      <button onclick="empDel(${e.id},'${esc(e.code)}')">Xóa</button></div></td></tr>`;
+  }).join("")
     : `<tr><td colspan="7" class="muted">Chưa có nhân viên. Sang tab Đăng ký.</td></tr>`;
 }
 async function empAct(id, a) { await fetch(`/api/employees/${id}/${a}`, {method: "POST"}); loadEmployees(); }
@@ -317,31 +359,49 @@ const LABELS_UNK = [["unknown_employee", "Là NV"], ["unknown_stranger", "Ngư�
 const LABELS_SPOOF = [["spoof_attack", "Đúng giả mạo"], ["spoof_real", "Người thật"]];
 const LABELS_BY_KIND = {checkin: LABELS_KNOWN, unknown: LABELS_UNK, spoof: LABELS_SPOOF};
 async function loadEvents() {
-  const [evs, m] = await Promise.all([fetch("/api/events?limit=300").then(r => r.json()), fetch("/api/metrics").then(r => r.json())]);
+  const tierSel = $("#evTierFilter");
+  const tierParam = tierSel && tierSel.value ? `&tier=${encodeURIComponent(tierSel.value)}` : "";
+  const [evs, m] = await Promise.all([
+    fetch(`/api/events?limit=300${tierParam}`).then(r => r.json()),
+    fetch("/api/metrics").then(r => r.json()),
+  ]);
   const pct = v => v == null ? "—" : (v * 100).toFixed(1) + "%";
   $("#metrics").innerHTML = [
-    ["Tổng sự kiện", m.events_total], ["Nhận diện", m.recognized], ["Unknown", m.unknown], ["Giả mạo", m.spoof],
-    ["Đã gán nhãn", m.labeled], ["False accept", pct(m.false_accept_rate)], ["False reject", pct(m.false_reject_rate)],
+    ["Tổng sự kiện", m.events_total],
+    ["Nhận diện (Thẳng / Nghiêng)", `${m.recognized} (${m.recognized_frontal ?? m.recognized} / ${m.recognized_profile ?? 0})`],
+    ["Unknown", m.unknown],
+    ["Giả mạo bị chặn", m.spoof],
+    ["Đã gán nhãn", m.labeled],
+    ["FAR (Tổng / Nghiêng)", `${pct(m.false_accept_rate)} / ${pct(m.false_accept_rate_profile)}`],
+    ["False reject", pct(m.false_reject_rate)],
     ["Chặn nhầm người thật", pct(m.spoof_false_rate)],
-    ["Unknown rate", pct(m.unknown_rate)], ["Latency p50 / p90", m.latency_ms_p50 == null ? "—" : `${Math.round(m.latency_ms_p50)} / ${Math.round(m.latency_ms_p90)} ms`],
+    ["Unknown rate", pct(m.unknown_rate)],
+    ["Latency p50 / p90", m.latency_ms_p50 == null ? "—" : `${Math.round(m.latency_ms_p50)} / ${Math.round(m.latency_ms_p90)} ms`],
   ].map(([k, v]) => `<div class="metric"><b>${v}</b><span>${k}</span></div>`).join("");
   $("#evBody").innerHTML = evs.length ? evs.map(e => {
     const opts = LABELS_BY_KIND[e.kind] || LABELS_UNK, known = e.kind === "checkin";
+    const rCode = e.liveness_detail?.reason || "";
+    const spoofSub = rCode && SPOOF_REASON_VI[rCode] ? `<br><small class="muted">${esc(SPOOF_REASON_VI[rCode])}</small>` : "";
     const who = known ? `<b>${esc(e.name)}</b> <span class="muted">${esc(e.code)}</span>`
-      : e.kind === "spoof" ? `<span class="bad">⚠ Giả mạo</span>${e.code ? ` <span class="muted">giống ${esc(e.name)}</span>` : ""}`
+      : e.kind === "spoof" ? `<span class="bad">⚠ Giả mạo</span>${e.code ? ` <span class="muted">giống ${esc(e.name)}</span>` : ""}${spoofSub}`
       : `<span class="bad">Unknown</span>`;
+    const [tLbl, tCls] = TIER_BADGE[e.verification_tier || (known ? "verified" : "unverified")] || ["—", ""];
+    const yawStr = e.yaw != null ? `${Math.round(e.yaw)}°` : "—";
+    const poseCell = `<span class="pill ${tCls}">${tLbl}</span> <span class="muted">${yawStr}</span>`;
     return `<tr><td>${e.snapshot ? `<img src="${file(e.snapshot)}" data-zoom alt="">` : ""}</td>
       <td>${fmtTime(e.ts)}</td>
       <td>${who}</td>
+      <td>${poseCell}</td>
       <td>${Number(e.score).toFixed(3)}${known ? ` <span class="muted">Δ${Number(e.margin).toFixed(2)}</span>` : ""}</td>
       <td>${e.liveness != null ? Number(e.liveness).toFixed(2) : "—"}</td>
-      <td>${known ? ATT[e.att_type] || "—" : "—"}</td><td>${known ? Math.round(e.latency_ms) + " ms" : "—"}</td>
+      <td>${known ? Math.round(e.latency_ms) + " ms" : "—"}</td>
       <td><span class="pill ${e.hrm_status}" title="${esc(e.hrm_response)}">${e.hrm_status}</span></td>
       <td><div class="acts">${opts.map(([v, t]) => `<button class="${e.label === v ? "sel" : ""}" onclick="setLabel(${e.id},'${e.label === v ? "" : v}')">${t}</button>`).join("")}</div></td></tr>`;
   }).join("") : `<tr><td colspan="9" class="muted">Chưa có sự kiện.</td></tr>`;
 }
 async function setLabel(id, v) { const fd = new FormData(); fd.append("value", v); await fetch(`/api/events/${id}/label`, {method: "POST", body: fd}); loadEvents(); }
 $("#reloadEvents").onclick = loadEvents;
+if ($("#evTierFilter")) $("#evTierFilter").onchange = loadEvents;
 
 // ---------- zoom
 document.addEventListener("click", e => {

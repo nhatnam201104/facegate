@@ -14,11 +14,13 @@ class Quality:
     size: float
     blur: float
     brightness: float
-    yaw: float          # do (xap xi), am = quay sang trai-anh
-    pitch: float        # xap xi, duong = cui
+    yaw: float          # do, am = quay sang trai-anh (nguoi quay phai)
+    pitch: float        # duong = cui
     ok: bool
     reason: str
     score: float        # 0..1, dung lam trong so
+    roll: float = 0.0
+    pose_group: str = "frontal"
 
     def as_dict(self) -> dict:
         return {k: (round(v, 2) if isinstance(v, float) else v) for k, v in self.__dict__.items()}
@@ -35,7 +37,24 @@ def estimate_pose(kps: np.ndarray) -> tuple[float, float]:
     return yaw, pitch
 
 
-def assess(img: np.ndarray, face: Face, qcfg: dict) -> Quality:
+def _visible_skin_roi(crop: np.ndarray, yaw: float) -> np.ndarray:
+    """Ở góc nghiêng sâu (>40°), nửa phía trước mũi trong bbox thường là nền tường/cửa chói sáng.
+    Chỉ cắt phần sườn mặt thực sự nhìn thấy để tính độ nét và độ sáng chính xác.
+    """
+    ch, cw = crop.shape[:2]
+    if ch < 8 or cw < 8 or abs(yaw) <= 35.0:
+        return crop
+    # yaw < 0: mũi lệch sang trái ảnh -> sườn má nhìn thấy nằm ở nửa PHẢI của bbox
+    if yaw < 0:
+        x0, x1 = int(cw * 0.25), cw
+    else:
+        x0, x1 = 0, int(cw * 0.75)
+    y0, y1 = int(ch * 0.12), int(ch * 0.92)
+    sub = crop[y0:y1, x0:x1]
+    return sub if sub.size > 0 else crop
+
+
+def assess(img: np.ndarray, face: Face, qcfg: dict, pose=None) -> Quality:
     h, w = img.shape[:2]
     x1, y1, x2, y2 = face.bbox.astype(int)
     x1, y1 = max(0, x1), max(0, y1)
@@ -44,23 +63,49 @@ def assess(img: np.ndarray, face: Face, qcfg: dict) -> Quality:
     crop = img[y1:y2, x1:x2]
     if crop.size == 0:
         return Quality(size, 0, 0, 0, 0, False, "out_of_frame", 0.0)
-    gray = cv2.cvtColor(cv2.resize(crop, (112, 112)), cv2.COLOR_BGR2GRAY)
+
+    if pose is not None:
+        yaw, pitch, roll = float(pose.yaw), float(pose.pitch), float(pose.roll)
+        pose_group = pose.pose_group
+        visibility = float(getattr(pose, "visibility", 1.0))
+    else:
+        yaw, pitch = estimate_pose(face.kps)
+        le, re = face.kps[0], face.kps[1]
+        roll = float(np.degrees(np.arctan2(float(re[1] - le[1]), max(1.0, float(re[0] - le[0])))))
+        pose_group = "left_profile" if yaw < -40.0 else ("right_profile" if yaw > 40.0 else "frontal")
+        visibility = 1.0
+
+    vis_crop = _visible_skin_roi(crop, yaw)
+    gray = cv2.cvtColor(cv2.resize(vis_crop, (112, 112)), cv2.COLOR_BGR2GRAY)
     blur = float(cv2.Laplacian(gray, cv2.CV_64F).var())
     bright = float(gray.mean())
-    yaw, pitch = estimate_pose(face.kps)
+
+    max_yaw = float(qcfg.get("max_yaw", 90))
+    max_pitch = float(qcfg.get("max_pitch", 35))
+    max_roll = float(qcfg.get("max_roll", 35))
 
     reason = ""
     if size < qcfg["min_face"]:
         reason = "small"
+    elif visibility < 0.18:
+        reason = "occluded"
     elif blur < qcfg["min_blur"]:
         reason = "blur"
     elif not (qcfg["min_brightness"] <= bright <= qcfg["max_brightness"]):
         reason = "light"
-    elif abs(yaw) > qcfg["max_yaw"]:
+    elif abs(yaw) > max_yaw:
         reason = "yaw"
+    elif abs(pitch) > max_pitch:
+        reason = "pitch"
+    elif abs(roll) > max_roll:
+        reason = "roll"
     edge = x1 <= 1 or y1 <= 1 or x2 >= w - 1 or y2 >= h - 1
     if not reason and edge:
         reason = "cut"
-    score = (min(size / 120, 1.0) * min(blur / 150, 1.0)
-             * max(0.0, 1 - abs(yaw) / 60) * min(face.score, 1.0))
-    return Quality(size, blur, bright, yaw, pitch, reason == "", reason or "ok", float(score))
+
+    # Trọng số chất lượng không triệt tiêu ở góc 60°..90° (giữ >= 0.35 ở 90° cho ngăn profile)
+    pose_weight = max(0.35, 1.0 - abs(yaw) / 140.0)
+    score = (min(size / 120.0, 1.0) * min(blur / 140.0, 1.0)
+             * pose_weight * min(float(face.score), 1.0))
+    return Quality(size, blur, bright, yaw, pitch, reason == "", reason or "ok",
+                   float(score), roll=roll, pose_group=pose_group)

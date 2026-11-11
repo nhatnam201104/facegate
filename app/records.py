@@ -18,8 +18,15 @@ from .state import ctx
 router = APIRouter()
 
 KINDS = {"employee", "unknown", "spoof"}
+TIERS = {"verified", "profile_verified", "rejected_spoof", "unverified"}
 MAX_ZIP_CLIPS = 200
 STATUS_VI = {"ok": "Đúng giờ", "late": "Đi muộn", "absent": "Vắng", "not_arrived": "Chưa đến"}
+TIER_VI = {
+    "verified": "Chính diện",
+    "profile_verified": "Góc nghiêng (có clip)",
+    "rejected_spoof": "Chặn giả mạo",
+    "unverified": "Chưa xác thực",
+}
 
 
 def _range(date_from: str | None, date_to: str | None) -> tuple[float, float]:
@@ -65,10 +72,19 @@ def attendance(date_from: str | None = None, date_to: str | None = None, code: s
 @router.get("/api/attendance.csv")
 def attendance_csv(date_from: str | None = None, date_to: str | None = None, code: str | None = None):
     ts = _timesheet(date_from, date_to, code)
-    rows = [{**r, "in": _fmt(r["check_in"]), "status_vi": STATUS_VI.get(r["status"], r["status"])}
-            for r in ts["rows"]]
-    cols = [("date", "Ngày"), ("code", "Mã NV"), ("name", "Họ tên"), ("in", "Giờ check-in"),
-            ("late_min", "Phút đi muộn"), ("status_vi", "Trạng thái")]
+    rows = [
+        {
+            **r,
+            "in": _fmt(r["check_in"]),
+            "status_vi": STATUS_VI.get(r["status"], r["status"]),
+            "tier_vi": TIER_VI.get(r.get("verification_tier") or "", "—") if r["check_in"] else "",
+        }
+        for r in ts["rows"]
+    ]
+    cols = [
+        ("date", "Ngày"), ("code", "Mã NV"), ("name", "Họ tên"), ("in", "Giờ check-in"),
+        ("late_min", "Phút đi muộn"), ("status_vi", "Trạng thái"), ("tier_vi", "Mức xác thực"),
+    ]
     return _csv_response(rows, cols, f"cham_cong_{ts['from']}_{ts['to']}.csv")
 
 
@@ -88,11 +104,13 @@ def people():
     return sorted(out, key=lambda p: (p["deleted"], p["name"] or ""))
 
 
-def _appearances(date_from, date_to, code, kind, limit) -> list[dict]:
+def _appearances(date_from, date_to, code, kind, limit, tier: str | None = None) -> list[dict]:
     if kind and kind not in KINDS:
         raise HTTPException(400, "kind phải là employee | unknown | spoof")
+    if tier and tier not in TIERS:
+        raise HTTPException(400, "tier không hợp lệ")
     t0, t1 = _range(date_from, date_to)
-    rows = ctx.db.list_appearances(t0, t1, code or None, kind or None, min(max(limit, 1), 2000))
+    rows = ctx.db.list_appearances(t0, t1, code or None, kind or None, min(max(limit, 1), 2000), tier=tier or None)
     data = ctx.cfg["_paths"]["data"]
     for r in rows:
         r["duration"] = round(r["end_ts"] - r["start_ts"], 1)
@@ -102,14 +120,14 @@ def _appearances(date_from, date_to, code, kind, limit) -> list[dict]:
 
 @router.get("/api/appearances")
 def appearances(date_from: str | None = None, date_to: str | None = None, code: str | None = None,
-                kind: str | None = None, limit: int = 300):
-    return _appearances(date_from, date_to, code, kind, limit)
+                kind: str | None = None, tier: str | None = None, limit: int = 300):
+    return _appearances(date_from, date_to, code, kind, limit, tier=tier)
 
 
 @router.get("/api/appearances.zip")
 def appearances_zip(date_from: str | None = None, date_to: str | None = None, code: str | None = None,
-                    kind: str | None = None):
-    rows = [r for r in _appearances(date_from, date_to, code, kind, MAX_ZIP_CLIPS) if r["clip_ok"]]
+                    kind: str | None = None, tier: str | None = None):
+    rows = [r for r in _appearances(date_from, date_to, code, kind, MAX_ZIP_CLIPS, tier=tier) if r["clip_ok"]]
     if not rows:
         raise HTTPException(404, "Không có clip nào trong khoảng đã chọn")
     data: Path = ctx.cfg["_paths"]["data"]
@@ -117,7 +135,7 @@ def appearances_zip(date_from: str | None = None, date_to: str | None = None, co
     tmp.close()
     index = io.StringIO()
     w = csv.writer(index)
-    w.writerow(["file", "bat_dau", "ket_thuc", "giay", "loai", "ma", "ho_ten", "score", "nguoi_that"])
+    w.writerow(["file", "bat_dau", "ket_thuc", "giay", "loai", "muc_xac_thuc", "nhom_goc", "ma", "ho_ten", "score", "nguoi_that"])
     with zipfile.ZipFile(tmp.name, "w", zipfile.ZIP_STORED) as z:   # video da nen san
         for r in rows:
             src = data / r["clip"]
@@ -125,8 +143,9 @@ def appearances_zip(date_from: str | None = None, date_to: str | None = None, co
             arc = f"{_fmt(r['start_ts'], '%Y%m%d_%H%M%S')}_{who}_{r['id']}{src.suffix}"
             z.write(src, arc)
             w.writerow([arc, _fmt(r["start_ts"], "%Y-%m-%d %H:%M:%S"), _fmt(r["end_ts"], "%Y-%m-%d %H:%M:%S"),
-                        r["duration"], r["kind"], r["code"] or "", r["name"] or "", r["score"], r["liveness"]])
+                        r["duration"], r["kind"], r.get("verification_tier") or "", r.get("pose_group") or "",
+                        r["code"] or "", r["name"] or "", r["score"], r["liveness"]])
         z.writestr("danh_sach.csv", "﻿" + index.getvalue())
-    name = f"lich_su_{code or kind or 'tat_ca'}_{date_from or date.today()}.zip"
+    name = f"lich_su_{tier or code or kind or 'tat_ca'}_{date_from or date.today()}.zip"
     return FileResponse(tmp.name, media_type="application/zip", filename=name,
                         background=BackgroundTask(lambda: Path(tmp.name).unlink(missing_ok=True)))

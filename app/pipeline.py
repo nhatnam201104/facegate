@@ -15,6 +15,7 @@ import numpy as np
 from .attendance import Shift, day_range, greeting
 from .draw import GRAY, GREEN, ORANGE, RED, draw_overlay
 from .engines import Face
+from .pose3d import PoseEstimator3D
 from .quality import assess
 from .tracker import IoUTracker, Track
 
@@ -65,16 +66,31 @@ def crop_with_margin(img: np.ndarray, bbox: np.ndarray, m: float = 0.25) -> np.n
 
 
 class Pipeline:
-    def __init__(self, cfg, db, engine, gallery, camera, hrm, broadcast, liveness=None, clips=None):
+    def __init__(self, cfg, db, engine, gallery, camera, hrm, broadcast,
+                 liveness=None, clips=None, pose_estimator=None, context_detector=None):
         self.cfg, self.db, self.engine, self.gallery = cfg, db, engine, gallery
         self.camera, self.hrm, self.broadcast = camera, hrm, broadcast
         self.liveness, self.clips = liveness, clips
+        self.context_detector = context_detector
         rc = cfg["recognition"]
-        self.threshold = float(rc["thresholds"][engine.name])
+        thr_cfg = rc["thresholds"].get(engine.name, {"frontal": 0.42, "profile": 0.48})
+        if isinstance(thr_cfg, dict):
+            self.threshold = float(thr_cfg["frontal"])
+            self.profile_threshold = float(thr_cfg.get("profile", round(self.threshold + 0.06, 2)))
+        else:
+            self.threshold = float(thr_cfg)
+            self.profile_threshold = round(self.threshold + 0.06, 2)
         self.margin = float(rc["margin"])
+        self.profile_margin = float(rc.get("profile_margin", max(self.margin + 0.02, 0.08)))
         self.min_good = int(rc["min_good_frames"])
+        self.min_profile = int(rc.get("min_profile_frames", 4))
         self.max_embs = int(rc["max_track_embeddings"])
         self.split_cos = float(rc.get("split_cosine", 0.25))
+        self.frontal_max_yaw = float(rc.get("frontal_max_yaw", 40.0))
+        self.pose_hysteresis = float(rc.get("pose_hysteresis", 5.0))
+        self.pose_estimator = pose_estimator or PoseEstimator3D(
+            cfg["_paths"]["models"], self.frontal_max_yaw, self.pose_hysteresis
+        )
         self.tracker = IoUTracker(max_age=float(rc["track_max_age"]))
         lc = cfg.get("liveness", {})
         self.live_thr = float(lc.get("threshold", 0.7))
@@ -274,12 +290,18 @@ class Pipeline:
         t0 = time.time()
         self._recheck_gallery()
         faces = self._detect(frame)
-        matched, expired = self.tracker.update(faces, now)
+        ctx_scene = None
+        person_boxes = None
+        if self.context_detector is not None and (faces or self.tracker.tracks):
+            ctx_scene = self.context_detector.detect(frame)
+            person_boxes = ctx_scene.persons
+        matched, expired = self.tracker.update(faces, now, person_boxes=person_boxes)
+        active_faces = [f for _, f in matched]
         for t, f in matched:
             if t.id not in self.tracker.tracks:   # da bi gop vao track khac trong vong nay
                 continue
             self._start_clip(t)
-            self._update_track(t, f, frame, now)
+            self._update_track(t, f, frame, now, ctx_scene=ctx_scene, all_faces=active_faces)
         for t in expired:
             self._on_track_end(t)
         self.det_ms = (time.time() - t0) * 1000
@@ -299,38 +321,46 @@ class Pipeline:
         if t.clip_sid is None and self.clips is not None and self.clips.enabled:
             t.clip_sid = self.clips.start()
 
-    def _update_track(self, t: Track, f: Face, frame: np.ndarray, now: float) -> None:
-        q = assess(frame, f, self.qcfg)
+    def _update_track(self, t: Track, f: Face, frame: np.ndarray, now: float,
+                      ctx_scene=None, all_faces: list[Face] | None = None) -> None:
+        with self.engine_lock:
+            pose = self.pose_estimator.estimate(frame, f, prev_group=t.pose_group if t.hits > 1 else None)
+        q = assess(frame, f, self.qcfg, pose=pose)
         t.last_reason = q.reason
+        t.pose_group = pose.pose_group
+        t.last_yaw = pose.yaw
+        t.pose_history.append((now, pose.yaw, pose.pitch, pose.roll, t.center, pose.landmarks3d))
+
         if q.ok:
             with self.engine_lock:
-                emb = self.engine.embed_aligned(self.engine.align(frame, f))
-            if len(t.embs) >= 2 and float(emb @ t.agg_embedding()) < self.split_cos:
-                # tracker noi nham nguoi khac vao track nay -> tach, khong tron embedding 2 nguoi
-                log.info("Track %d: khuon mat moi khong khop (cos %.2f) -> tach track",
-                         t.id, float(emb @ t.agg_embedding()))
+                aligned = self.engine.align(frame, f, pose=pose, pose_group=pose.pose_group)
+                emb = self.engine.embed_aligned(aligned)
+            if t.should_split(emb, pose.pose_group, self.split_cos):
+                log.info("Track %d: khuon mat moi khong khop trong ngan %s -> tach track", t.id, pose.pose_group)
                 self._on_track_end(t)
                 t = self.tracker.split(t, f, now)
+                t.pose_history.append((now, pose.yaw, pose.pitch, pose.roll, t.center, pose.landmarks3d))
                 self._start_clip(t)
-            t.embs.append((emb, max(q.score, 0.05)))
-            t.embs = t.embs[-self.max_embs:]
-            t.good_frames += 1
-            if q.score > t.best_quality:
+            t.add_embedding(emb, q.score, pose.pose_group, yaw=pose.yaw, max_embs=self.max_embs)
+            if q.score > t.best_quality or (pose.pose_group == "frontal" and t.matched_group != "frontal"):
                 t.best_quality = q.score
                 t.best_crop = crop_with_margin(frame, f.bbox)
             if self.liveness is not None and not t.spoof:
-                t.live.append(self.liveness.real_prob(frame, f.bbox))
-                t.live = t.live[-self.live_win:]
-            if t.good_frames >= self.min_good:
-                t = self._identify(t, now)
+                self._update_liveness_sample(t, f, frame, pose, ctx_scene, all_faces)
+            cand_grp, cand_vec = t.select_best_bucket(self.min_good, self.min_profile)
+            if cand_grp is not None and cand_vec is not None:
+                t = self._identify(t, now, cand_grp, cand_vec)
         elif t.best_crop is None:
             t.best_crop = crop_with_margin(frame, f.bbox)
+            if self.liveness is not None and not t.spoof and ctx_scene is not None:
+                self._update_liveness_sample(t, f, frame, pose, ctx_scene, all_faces, quality_ok=False)
 
-        state = self._live_state(t)
+        state = self._live_state(t, frame.shape)
         if state == "spoof" and not t.spoof:
             t.spoof = True
-            log.warning("Track %d: nghi gia mao (live %.2f, giong %s) -> khong cham cong",
-                        t.id, t.live_mean, t.claimed[1] if t.claimed else "?")
+            t.verification_tier = "rejected_spoof"
+            log.warning("Track %d: nghi gia mao (ly do=%s, live=%s, giong %s) -> khong cham cong",
+                        t.id, t.spoof_reason or "spoof", t.live_mean, t.claimed[1] if t.claimed else "?")
             self._emit(t, None, kind="spoof")
         if t.spoof:
             return
@@ -352,47 +382,89 @@ class Pipeline:
         elif t.employee_id is not None and live and not t.event_done:
             self._emit(t, None)
 
-    def _identify(self, t: Track, now: float) -> Track:
-        """Chot danh tinh, va xac minh lai lien tuc sau khi da chot. Tra ve track de xu ly tiep
-        (co the la track cu cua cung nguoi neu vua gop)."""
-        m = self.gallery.match(t.agg_embedding(), self.threshold, self.margin)
+    def _update_liveness_sample(self, t: Track, f: Face, frame: np.ndarray, pose,
+                                ctx_scene=None, all_faces: list[Face] | None = None,
+                                quality_ok: bool = True) -> None:
+        if hasattr(self.liveness, "observe"):
+            self.liveness.observe(t, f, frame, pose, ctx_scene=ctx_scene,
+                                  all_faces=all_faces, quality_ok=quality_ok)
+        elif quality_ok and abs(pose.yaw) <= self.frontal_max_yaw:
+            t.live.append(self.liveness.real_prob(frame, f.bbox))
+            t.live = t.live[-self.live_win:]
+
+    def _identify(self, t: Track, now: float, pose_group: str, vec: np.ndarray) -> Track:
+        """Chot danh tinh uu tien Best-shot ('frontal' truoc, 'profile' sau), tu dong nang hang neu quay thang."""
+        m = self.gallery.match(
+            vec,
+            self.threshold,
+            self.margin,
+            pose_group=pose_group,
+            profile_threshold=self.profile_threshold,
+            profile_margin=self.profile_margin,
+        )
         t.best_score = max(t.best_score, m.score)
-        if m.employee_id is not None and m.score >= self.threshold:
+        eff_thr = self.threshold if pose_group == "frontal" else self.profile_threshold
+        if m.employee_id is not None and m.score >= eff_thr:
             t.claimed = (m.employee_id, m.code, m.name)
+
         if t.employee_id is None:
             if m.accepted:
                 t.employee_id, t.code, t.name = m.employee_id, m.code, m.name
+                t.matched_group = pose_group
+                t.verification_tier = "verified" if pose_group == "frontal" else "profile_verified"
                 t.score, t.margin, t.confirmed_at = m.score, m.margin, now
-                log.info("Nhan dien %s (%s) score=%.3f margin=%.3f", m.name, m.code, m.score, m.margin)
+                log.info("Nhan dien %s (%s) [%s] score=%.3f margin=%.3f",
+                         m.name, m.code, pose_group, m.score, m.margin)
                 return self._merge_same_person(t)
-        elif m.employee_id != t.employee_id or m.score < self.threshold - VERIFY_SLACK:
-            log.info("Track %d: khong con khop %s (top=%s score=%.3f) -> xac minh lai",
-                     t.id, t.code, m.code, m.score)
-            t.reset_identity()
-            t.event_done = False
+        elif m.employee_id != t.employee_id:
+            if m.accepted:
+                log.info("Track %d: doi danh tinh tu %s sang %s (%s score=%.3f) -> xac minh lai",
+                         t.id, t.code, m.code, pose_group, m.score)
+                t.reset_identity()
+                t.event_done = False
+            elif pose_group == t.matched_group and m.score < eff_thr - VERIFY_SLACK:
+                log.info("Track %d: khong con khop %s trong ngan %s (score=%.3f) -> xac minh lai",
+                         t.id, t.code, pose_group, m.score)
+                t.reset_identity()
+                t.event_done = False
         else:
-            t.score, t.margin = m.score, m.margin
+            # Cùng nhân viên: nâng hạng từ profile_verified lên verified nếu người đó vừa quay về frontal
+            if pose_group == "frontal" and m.accepted:
+                t.matched_group = "frontal"
+                t.verification_tier = "verified"
+                t.score, t.margin = m.score, m.margin
+            elif pose_group == t.matched_group:
+                if m.score < eff_thr - VERIFY_SLACK:
+                    t.reset_identity()
+                    t.event_done = False
+                else:
+                    t.score, t.margin = m.score, m.margin
         return t
 
     def _merge_same_person(self, t: Track) -> Track:
-        """Track moi vua nhan ra nhan vien X trong khi track cu cua X dang cho noi lai (mat mat < max_age):
-        gop vao track cu -> 1 lan xuat hien, 1 clip. Chi gop track cu KHONG thay trong vong nay
-        (2 mat cung luc giong X, vd nguoi that + anh dien thoai, thi khong gop)."""
         for o in self.tracker.tracks.values():
             if (o is not t and o.employee_id == t.employee_id and o.last_seen < t.last_seen
                     and not o.spoof and not t.spoof):
                 log.info("Track %d: cung %s voi track %d vua mat -> gop", t.id, t.code, o.id)
                 if self.clips is not None:
-                    self.clips.stop(t.clip_sid, keep=False)   # clip cua o van dang ghi ca doan nay
-                self.tracker.absorb(o, t)
-                o.embs, o.live = o.embs[-self.max_embs:], o.live[-self.live_win:]
+                    self.clips.stop(t.clip_sid, keep=False)
+                self.tracker.absorb(o, t, max_embs=self.max_embs)
+                o.live = o.live[-self.live_win:]
+                if t.verification_tier == "verified":
+                    o.matched_group = "frontal"
+                    o.verification_tier = "verified"
                 return o
         return t
 
-    def _live_state(self, t: Track) -> str:
+    def _live_state(self, t: Track, frame_shape=None) -> str:
         """off -> coi nhu nguoi that | checking | live | spoof."""
         if self.liveness is None:
+            if t.employee_id is not None and t.verification_tier is None:
+                t.verification_tier = "verified" if t.matched_group == "frontal" else "profile_verified"
+            t.liveness_mode = "disabled"
             return "live"
+        if hasattr(self.liveness, "evaluate_track"):
+            return self.liveness.evaluate_track(t, frame_shape=frame_shape)
         if t.spoof:
             return "spoof"
         if len(t.live) < self.live_min:
@@ -437,13 +509,24 @@ class Pipeline:
             who = t.claimed
         else:
             who = (None, None, None)
+        import json as _json
+
+        grp = t.matched_group if kind == "employee" else t.pose_group
+        min_yaw = round(t.min_abs_yaw, 1) if t.min_abs_yaw < 900 else round(abs(t.last_yaw), 1)
+        tier = (
+            "rejected_spoof" if kind == "spoof"
+            else (t.verification_tier or ("verified" if grp == "frontal" else "profile_verified")) if kind == "employee"
+            else "unverified"
+        )
         app_id = self.db.add_appearance(
             kind=kind, employee_id=who[0], code=who[1], name=who[2],
             start_ts=t.first_seen, end_ts=t.last_seen,
             score=round(t.score if kind == "employee" else max(t.best_score, 0.0), 4),
             liveness=round(t.live_mean, 4) if t.live_mean is not None else None,
             snapshot=t.snapshot or self._save_snapshot(t), event_id=t.event_id,
-            camera=self.cfg["camera"]["name"])
+            camera=self.cfg["camera"]["name"],
+            pose_group=grp, min_abs_yaw=min_yaw,
+            verification_tier=tier, spoof_reason=t.spoof_reason)
         if self.clips is not None and self.clips.enabled:
             self.clips.stop(t.clip_sid, keep=True, on_done=lambda rel, a=app_id: self._clip_done(a, rel))
         self.broadcast({"type": "appearance", "id": app_id})
@@ -486,17 +569,31 @@ class Pipeline:
             eid, code, name, score = None, claimed[1], claimed[2] or "Không xác định", max(t.best_score, 0.0)
         else:
             eid, code, name, score = None, None, "Unknown", t.best_score
+        import json as _json
+
+        grp = t.matched_group if kind == "checkin" else t.pose_group
+        mean_yaw = round(t.group_mean_yaw(grp), 1)
+        if kind == "checkin":
+            tier = t.verification_tier or ("verified" if grp == "frontal" else "profile_verified")
+        elif kind == "spoof":
+            tier = "rejected_spoof"
+        else:
+            tier = "unverified"
+        detail_str = _json.dumps(t.liveness_detail, ensure_ascii=False) if t.liveness_detail else None
         latency = ((t.confirmed_at or now) - t.first_seen) * 1000
         ev = dict(ts=now, camera=self.cfg["camera"]["name"], employee_id=eid, code=code, name=name,
                   score=round(score, 4), margin=round(t.margin, 4), direction=direction,
                   latency_ms=round(latency, 1), frames=t.good_frames,
                   snapshot=t.snapshot or self._save_snapshot(t), model_version=self.engine.model_version,
                   hrm_status="pending" if kind == "checkin" else "skipped", kind=kind, att_type=att,
-                  liveness=round(t.live_mean, 4) if t.live_mean is not None else None)
+                  liveness=round(t.live_mean, 4) if t.live_mean is not None else None,
+                  pose_group=grp, yaw=mean_yaw, verification_tier=tier,
+                  liveness_mode=t.liveness_mode, liveness_detail=detail_str)
         ev["id"] = self.db.add_event(**ev)
         if t.event_id is None or kind == "checkin":
             t.event_id = ev["id"]
-        msg = {"type": "event", "event": ev}
+        ev_out = {**ev, "liveness_detail": t.liveness_detail or None}
+        msg = {"type": "event", "event": ev_out}
         if kind == "checkin":
             self.hrm.notify()
             msg["greet"] = greeting(now, self.shift)
@@ -513,13 +610,17 @@ class Pipeline:
                 continue
             lm = t.live_mean
             ltxt = f" · thật {lm:.2f}" if self.liveness is not None and lm is not None else ""
-            state = self._live_state(t)
+            state = self._live_state(t, frame.shape)
             if t.spoof:
-                color, label = RED, f"GIẢ MẠO - không chấm công{ltxt}"
+                r_vi = _SPOOF_VI.get(t.spoof_reason or "", "")
+                suffix = f" ({r_vi})" if r_vi else ""
+                color, label = RED, f"GIẢ MẠO{suffix} - không chấm công{ltxt}"
             elif t.employee_id is not None and state == "live":
-                color, label = GREEN, f"{t.name} · {t.score:.2f}{ltxt}"
+                ptag = " · nghiêng" if t.verification_tier == "profile_verified" else ""
+                color, label = GREEN, f"{t.name} · {t.score:.2f}{ptag}{ltxt}"
             elif t.employee_id is not None:
-                color, label = ORANGE, f"{t.name} · kiểm tra người thật...{ltxt}"
+                wait_msg = "kiểm tra chuyển động 3D..." if t.matched_group != "frontal" else "kiểm tra người thật..."
+                color, label = ORANGE, f"{t.name} · {wait_msg}{ltxt}"
             elif t.good_frames >= self.min_good:
                 color, label = RED, f"Unknown{ltxt}"
             elif t.last_reason not in ("ok", ""):
@@ -533,7 +634,7 @@ class Pipeline:
             line = [(int(p[0] * vw), int(p[1] * vh)) for p in self.ecfg["line"]]
         hud = (f"{self.engine.name} | detect {self.det_fps:.1f} FPS {self.det_ms:.0f} ms | "
                f"cam {self.camera.fps_in:.0f} FPS | NV: {self.gallery.size}"
-               f"{' | chống giả mạo' if self.liveness is not None else ''}")
+               f"{' | chống giả mạo 4 lớp' if self.liveness is not None else ''}")
         view = draw_overlay(view, boxes, hud, line)
         if self.clips is not None:
             self.clips.push(view, now)
@@ -541,18 +642,54 @@ class Pipeline:
 
     def status(self) -> dict:
         cam = self._next_camera or self.camera
-        return {"backend": self.engine.name, "model_version": self.engine.model_version,
-                "source": cam.describe(),
-                "camera_connected": cam.connected, "camera_fps": round(cam.fps_in, 1),
-                "detect_fps": round(self.det_fps, 1), "detect_ms": round(self.det_ms, 1),
-                "gallery": self.gallery.size, "tracks": len(self.tracker.tracks),
-                "threshold": self.threshold, "margin": self.margin,
-                "liveness": self.liveness is not None, "live_threshold": self.live_thr,
-                "sleeping": self.sleeping, "sleep_since": self.sleep_since,
-                "idle_seconds": self.idle_secs if self.sleep_enabled else None,
-                "motion_zone": self.motion_zone, "wakes_rejected": self.wakes_rejected,
-                "clips": bool(self.clips is not None and self.clips.enabled),
-                "direction": self.ecfg.get("direction"), "hrm": self.hrm.kind}
+        modes = getattr(self.liveness, "active_modes", ["texture_fas"]) if self.liveness is not None else []
+        return {
+            "backend": self.engine.name,
+            "model_version": self.engine.model_version,
+            "max_supported_yaw": int(self.qcfg.get("max_yaw", 90)),
+            "source": cam.describe(),
+            "camera_connected": cam.connected,
+            "camera_fps": round(cam.fps_in, 1),
+            "detect_fps": round(self.det_fps, 1),
+            "detect_ms": round(self.det_ms, 1),
+            "gallery": self.gallery.size,
+            "gallery_profile_ready": getattr(self.gallery, "profile_ready_count", 0),
+            "tracks": len(self.tracker.tracks),
+            "threshold": self.threshold,
+            "profile_threshold": self.profile_threshold,
+            "margin": self.margin,
+            "profile_margin": self.profile_margin,
+            "liveness": self.liveness is not None,
+            "live_threshold": self.live_thr,
+            "liveness_modes": modes,
+            "sleeping": self.sleeping,
+            "sleep_since": self.sleep_since,
+            "idle_seconds": self.idle_secs if self.sleep_enabled else None,
+            "motion_zone": self.motion_zone,
+            "wakes_rejected": self.wakes_rejected,
+            "clips": bool(self.clips is not None and self.clips.enabled),
+            "direction": self.ecfg.get("direction"),
+            "hrm": self.hrm.kind,
+        }
 
 
-_REASON = {"small": "mặt nhỏ", "blur": "mờ", "light": "ánh sáng", "yaw": "quay ngang", "cut": "bị cắt"}
+_SPOOF_VI = {
+    "screen_detected": "màn hình/khung ảnh",
+    "multi_face_single_body": "2 mặt trên 1 người",
+    "unattached_face": "không gắn cơ thể",
+    "planar_no_parallax": "ảnh phẳng không 3D",
+    "moire_pattern": "vân màn hình",
+    "texture_spoof": "ảnh/màn hình",
+}
+
+
+_REASON = {
+    "small": "mặt nhỏ",
+    "blur": "mờ",
+    "light": "ánh sáng",
+    "yaw": "quay quá góc",
+    "pitch": "ngẩng/cúi quá mức",
+    "roll": "nghiêng đầu",
+    "occluded": "bị che khuất",
+    "cut": "bị cắt",
+}

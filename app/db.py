@@ -77,11 +77,29 @@ CREATE INDEX IF NOT EXISTS ix_app_ts ON appearances(start_ts);
 CREATE INDEX IF NOT EXISTS ix_app_code ON appearances(code);
 """
 
-# Cot them sau phien ban dau (DB cu duoc nang cap khi khoi dong)
+# Cot them sau phien ban dau (DB cu duoc nang cap tu dong khi khoi dong)
+EMBEDDING_COLUMNS = {
+    "pose_group": "TEXT NOT NULL DEFAULT 'frontal'",  # frontal | left_profile | right_profile
+    "yaw": "REAL",
+    "pitch": "REAL",
+}
+
 EVENT_COLUMNS = {
-    "kind": "TEXT",              # checkin | unknown | spoof
-    "att_type": "TEXT",          # in (du lieu cu co the co out)
-    "liveness": "REAL",          # xac suat nguoi that trung binh cua track
+    "kind": "TEXT",                  # checkin | unknown | spoof
+    "att_type": "TEXT",              # in (du lieu cu co the co out)
+    "liveness": "REAL",              # xac suat nguoi that / diem tong hop
+    "pose_group": "TEXT",            # frontal | left_profile | right_profile
+    "yaw": "REAL",                   # goc yaw trung binh cua ngan dung de chot
+    "verification_tier": "TEXT",     # verified | profile_verified | rejected_spoof | unverified
+    "liveness_mode": "TEXT",         # texture_fas | context_parallax | hybrid | disabled
+    "liveness_detail": "TEXT",       # JSON chi tiet ket qua tung lop chong gia mao
+}
+
+APPEARANCE_COLUMNS = {
+    "pose_group": "TEXT",
+    "min_abs_yaw": "REAL",
+    "verification_tier": "TEXT",
+    "spoof_reason": "TEXT",
 }
 
 
@@ -96,12 +114,35 @@ class DB:
         self._migrate()
 
     def _migrate(self) -> None:
-        have = {r["name"] for r in self.q("PRAGMA table_info(events)")}
+        have_emb = {r["name"] for r in self.q("PRAGMA table_info(embeddings)")}
+        for col, typ in EMBEDDING_COLUMNS.items():
+            if col not in have_emb:
+                self.x(f"ALTER TABLE embeddings ADD COLUMN {col} {typ}")
+        self.x("UPDATE embeddings SET pose_group='frontal' WHERE pose_group IS NULL OR pose_group=''")
+        self.x("CREATE INDEX IF NOT EXISTS ix_emb_model_pose ON embeddings(model_version, pose_group)")
+
+        have_ev = {r["name"] for r in self.q("PRAGMA table_info(events)")}
         for col, typ in EVENT_COLUMNS.items():
-            if col not in have:
+            if col not in have_ev:
                 self.x(f"ALTER TABLE events ADD COLUMN {col} {typ}")
         self.x("""UPDATE events SET kind = CASE WHEN employee_id IS NULL THEN 'unknown' ELSE 'checkin' END
                   WHERE kind IS NULL""")
+        self.x("""UPDATE events SET
+                    pose_group = COALESCE(pose_group, 'frontal'),
+                    verification_tier = COALESCE(verification_tier,
+                        CASE
+                            WHEN kind='checkin' THEN 'verified'
+                            WHEN kind='spoof' THEN 'rejected_spoof'
+                            ELSE 'unverified'
+                        END),
+                    liveness_mode = COALESCE(liveness_mode,
+                        CASE WHEN liveness IS NOT NULL THEN 'texture_fas' ELSE 'disabled' END)""")
+
+        have_app = {r["name"] for r in self.q("PRAGMA table_info(appearances)")}
+        for col, typ in APPEARANCE_COLUMNS.items():
+            if col not in have_app:
+                self.x(f"ALTER TABLE appearances ADD COLUMN {col} {typ}")
+        self.x("UPDATE appearances SET pose_group = COALESCE(pose_group, 'frontal')")
 
     def q(self, sql: str, args: tuple = ()) -> list[dict]:
         with self.lock:
@@ -123,12 +164,27 @@ class DB:
                       (code, name, "pending", time.time()))
 
     def list_employees(self, model_version: str) -> list[dict]:
-        return self.q("""
+        rows = self.q("""
             SELECT e.*,
               (SELECT COUNT(*) FROM embeddings m WHERE m.employee_id=e.id AND m.model_version=?) AS n_emb,
+              (SELECT COUNT(*) FROM embeddings m WHERE m.employee_id=e.id AND m.model_version=? AND m.pose_group='frontal') AS n_frontal,
+              (SELECT COUNT(*) FROM embeddings m WHERE m.employee_id=e.id AND m.model_version=? AND m.pose_group='left_profile') AS n_left_profile,
+              (SELECT COUNT(*) FROM embeddings m WHERE m.employee_id=e.id AND m.model_version=? AND m.pose_group='right_profile') AS n_right_profile,
               (SELECT crop_path FROM embeddings m WHERE m.employee_id=e.id ORDER BY quality DESC LIMIT 1) AS thumb,
               (SELECT report FROM enrollments n WHERE n.employee_id=e.id ORDER BY id DESC LIMIT 1) AS report
-            FROM employees e ORDER BY e.created_at DESC""", (model_version,))
+            FROM employees e ORDER BY e.created_at DESC""",
+            (model_version, model_version, model_version, model_version))
+        for r in rows:
+            nf = int(r.pop("n_frontal", 0) or 0)
+            nl = int(r.pop("n_left_profile", 0) or 0)
+            nr = int(r.pop("n_right_profile", 0) or 0)
+            r["pose_coverage"] = {
+                "frontal": nf,
+                "left_profile": nl,
+                "right_profile": nr,
+                "ready_90": bool(nf > 0 and nl > 0 and nr > 0),
+            }
+        return rows
 
     def set_status(self, emp_id: int, status: str) -> None:
         self.x("UPDATE employees SET status=?, approved_at=? WHERE id=?",
@@ -141,22 +197,34 @@ class DB:
 
     # --- embeddings ---
     def add_embedding(self, emp_id: int, vec: np.ndarray, model_version: str, quality: float,
-                      pose_bin: str, crop_path: str | None, source: str = "enroll") -> None:
+                      pose_bin: str, crop_path: str | None, source: str = "enroll",
+                      pose_group: str = "frontal", yaw: float | None = None,
+                      pitch: float | None = None) -> None:
         v = vec.astype(np.float32)
-        self.x("""INSERT INTO embeddings(employee_id,vec,dim,model_version,quality,pose_bin,source,crop_path,created_at)
-                  VALUES(?,?,?,?,?,?,?,?,?)""",
-               (emp_id, v.tobytes(), v.size, model_version, quality, pose_bin, source, crop_path, time.time()))
+        self.x("""INSERT INTO embeddings(
+                    employee_id,vec,dim,model_version,quality,pose_bin,pose_group,yaw,pitch,source,crop_path,created_at
+                  ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+               (emp_id, v.tobytes(), v.size, model_version, quality, pose_bin,
+                pose_group, yaw, pitch, source, crop_path, time.time()))
 
-    def clear_embeddings(self, emp_id: int, model_version: str) -> None:
-        self.x("DELETE FROM embeddings WHERE employee_id=? AND model_version=?", (emp_id, model_version))
+    def clear_embeddings(self, emp_id: int, model_version: str,
+                         pose_groups: tuple[str, ...] | None = None) -> None:
+        if pose_groups:
+            ph = ",".join("?" * len(pose_groups))
+            self.x(f"DELETE FROM embeddings WHERE employee_id=? AND model_version=? AND pose_group IN ({ph})",
+                   (emp_id, model_version, *pose_groups))
+        else:
+            self.x("DELETE FROM embeddings WHERE employee_id=? AND model_version=?", (emp_id, model_version))
 
     def load_gallery(self, model_version: str, statuses: tuple = ("active",)) -> list[dict]:
         ph = ",".join("?" * len(statuses))
-        rows = self.q(f"""SELECT m.vec, m.dim, e.id AS employee_id, e.code, e.name, e.status
+        rows = self.q(f"""SELECT m.vec, m.dim, m.pose_group, m.pose_bin, m.yaw, m.pitch,
+                                 e.id AS employee_id, e.code, e.name, e.status
                           FROM embeddings m JOIN employees e ON e.id=m.employee_id
                           WHERE m.model_version=? AND e.status IN ({ph})""", (model_version, *statuses))
         for r in rows:
             r["vec"] = np.frombuffer(r["vec"], dtype=np.float32, count=r["dim"])
+            r["pose_group"] = r.get("pose_group") or "frontal"
         return rows
 
     def add_enrollment(self, emp_id: int, report: dict) -> None:
@@ -168,8 +236,16 @@ class DB:
         cols = ",".join(kw)
         return self.x(f"INSERT INTO events({cols}) VALUES({','.join('?' * len(kw))})", tuple(kw.values()))
 
-    def list_events(self, limit: int = 200) -> list[dict]:
-        return self.q("SELECT * FROM events ORDER BY ts DESC LIMIT ?", (limit,))
+    def list_events(self, limit: int = 200, tier: str | None = None,
+                    pose_group: str | None = None) -> list[dict]:
+        sql, args = "SELECT * FROM events WHERE 1=1", []
+        if tier:
+            sql += " AND verification_tier=?"
+            args.append(tier)
+        if pose_group:
+            sql += " AND pose_group=?"
+            args.append(pose_group)
+        return self.q(sql + " ORDER BY ts DESC LIMIT ?", (*args, limit))
 
     def first_checkin_between(self, emp_id: int, t0: float, t1: float) -> float | None:
         r = self.q("SELECT MIN(ts) AS t FROM events WHERE employee_id=? AND kind='checkin' AND ts>=? AND ts<?",
@@ -196,7 +272,7 @@ class DB:
         self.x("UPDATE appearances SET clip=?, clip_ready=? WHERE id=?", (rel_path, 1 if rel_path else 0, app_id))
 
     def list_appearances(self, t0: float, t1: float, code: str | None = None, kind: str | None = None,
-                         limit: int = 500) -> list[dict]:
+                         limit: int = 500, tier: str | None = None) -> list[dict]:
         sql, args = "SELECT * FROM appearances WHERE start_ts>=? AND start_ts<?", [t0, t1]
         if code:
             sql += " AND code=?"
@@ -204,6 +280,9 @@ class DB:
         if kind:
             sql += " AND kind=?"
             args.append(kind)
+        if tier:
+            sql += " AND verification_tier=?"
+            args.append(tier)
         return self.q(sql + " ORDER BY start_ts DESC LIMIT ?", (*args, limit))
 
     def people_seen(self) -> list[dict]:
