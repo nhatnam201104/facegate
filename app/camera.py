@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import sys
 import threading
 import time
 from pathlib import Path
@@ -13,16 +14,28 @@ import numpy as np
 
 log = logging.getLogger("camera")
 os.environ.setdefault("OPENCV_FFMPEG_CAPTURE_OPTIONS", "rtsp_transport;tcp")
-os.environ.setdefault("OPENCV_VIDEOIO_MSMF_ENABLE_HW_TRANSFORMS", "0")  # MSMF mo webcam nhanh hon
+if os.name == "nt":
+    os.environ.setdefault("OPENCV_VIDEOIO_MSMF_ENABLE_HW_TRANSFORMS", "0")  # MSMF mo webcam nhanh hon
 
-# Webcam tren Windows: MSMF ~30 FPS o 720p, DSHOW chi ~10 FPS -> uu tien MSMF, DSHOW du phong
-WEBCAM_BACKENDS = [("MSMF", cv2.CAP_MSMF), ("DSHOW", cv2.CAP_DSHOW)] if os.name == "nt" else [("ANY", cv2.CAP_ANY)]
+# Windows: MSMF ~30 FPS o 720p, DSHOW du phong; Linux: uu tien V4L2 truc tiep (tranh GStreamer treo)
+if os.name == "nt":
+    WEBCAM_BACKENDS = [("MSMF", cv2.CAP_MSMF), ("DSHOW", cv2.CAP_DSHOW)]
+elif sys.platform.startswith("linux") and hasattr(cv2, "CAP_V4L2"):
+    WEBCAM_BACKENDS = [("V4L2", cv2.CAP_V4L2), ("ANY", cv2.CAP_ANY)]
+else:
+    WEBCAM_BACKENDS = [("ANY", cv2.CAP_ANY)]
+V4L_DEV_RE = re.compile(r"^/dev/video\d+$")
+MJPG_FOURCC = cv2.VideoWriter_fourcc(*"MJPG")
 BLACK_LEVEL = 8      # pixel sang nhat (sau khi lay mau thua) duoi muc nay = frame den
 BLACK_SECS = 4.0     # den lien tuc qua thoi gian nay -> driver bi ket, mo lai thiet bi
 
 
 def is_black(frame: np.ndarray) -> bool:
     return int(frame[::16, ::16].max()) < BLACK_LEVEL
+
+
+def is_webcam_source(src) -> bool:
+    return isinstance(src, int) or (isinstance(src, str) and bool(V4L_DEV_RE.match(src)))
 
 
 def _parse_source(src):
@@ -45,9 +58,15 @@ def can_read_video(path: str) -> bool:
 class Camera:
     def __init__(self, source, loop_file: bool = True, label: str | None = None):
         self.source = _parse_source(source)
-        self.is_file = isinstance(self.source, str) and not self.source.lower().startswith(("rtsp", "http"))
-        if isinstance(self.source, int):
-            self.kind, default_label = "webcam", f"Webcam {self.source}"
+        is_webcam = is_webcam_source(self.source)
+        self.is_file = (
+            not is_webcam
+            and isinstance(self.source, str)
+            and not self.source.lower().startswith(("rtsp", "http"))
+        )
+        if is_webcam:
+            self.kind = "webcam"
+            default_label = f"Webcam {self.source}" if isinstance(self.source, int) else self.source
         elif self.is_file:
             self.kind, default_label = "file", Path(self.source).name
         else:  # an mat khau trong URL RTSP
@@ -84,7 +103,7 @@ class Camera:
         return {"kind": self.kind, "label": self.label, "connected": self.connected, "black": self.black}
 
     def _open(self):
-        if not isinstance(self.source, int):
+        if self.kind != "webcam":
             cap = cv2.VideoCapture(self.source)
             cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
             return cap
@@ -94,6 +113,8 @@ class Camera:
             name, api = WEBCAM_BACKENDS[(self._backend_idx + i) % n]
             cap = cv2.VideoCapture(self.source, api)
             if cap.isOpened():
+                if name == "V4L2":
+                    cap.set(cv2.CAP_PROP_FOURCC, MJPG_FOURCC)  # USB 2.0 dat ~30 FPS o 720p thay vi YUYV 10 FPS
                 cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
                 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
                 cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)

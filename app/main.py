@@ -251,9 +251,13 @@ def get_source():
 async def set_source(kind: str = Form(...), value: str = Form(""), file: UploadFile | None = File(None)):
     label = None
     if kind == "webcam":
-        if not value.strip().isdigit() or int(value) > 9:
-            raise HTTPException(400, "Chỉ số webcam phải là số 0–9")
-        source = int(value)
+        v = value.strip()
+        if v.isdigit() and int(v) <= 9:
+            source = int(v)
+        elif re.match(r"^/dev/video\d{1,2}$", v):
+            source = v
+        else:
+            raise HTTPException(400, "Chỉ số webcam phải là số 0–9 hoặc /dev/videoN")
     elif kind == "rtsp":
         source = value.strip()
         if not source.lower().startswith(("rtsp://", "http://", "https://")):

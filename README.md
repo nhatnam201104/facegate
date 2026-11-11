@@ -2,7 +2,7 @@
 
 **FaceGate** là bản demo (PoC) cho phần HRM của dự án *camera nhận diện nhân viên và hàng hóa*. Camera ở cổng nhận ra nhân viên, kiểm tra đó là người thật (không phải ảnh hay màn hình điện thoại), rồi ghi giờ check-in và số phút đi muộn. Sau đó hệ thống gửi sự kiện sang HRM.
 
-Bản demo chạy trên một máy Windows, chỉ dùng CPU, không cần GPU hay server. Nguồn video có thể là webcam laptop, file video quay sẵn hoặc camera IP (RTSP).
+Bản demo chạy trên **Linux** (Ubuntu/Debian…) hoặc **Windows**, chỉ dùng CPU, không cần GPU riêng. Nguồn video có thể là webcam (`/dev/video0` hoặc chỉ số `0`), file video quay sẵn hoặc camera IP (RTSP).
 
 > Cập nhật: 04/11/2026 · Giai đoạn: PoC, **chưa dùng cho vận hành thật**
 
@@ -60,15 +60,26 @@ Giao diện web có 6 tab: **Trực tiếp** (màn hình máy chấm công), **C
 
 ## Xem demo trong 5 phút
 
-Cần một máy Windows 10/11 đã cài Python 3.10 trở lên và có webcam.
+Cần máy **Linux** (Ubuntu/Debian…) hoặc **Windows 10/11** đã cài Python 3.10 trở lên (hoặc `uv`) và có webcam / file video.
 
+### Trên Linux
+```bash
+chmod +x setup.sh run.sh
+./setup.sh      # chỉ chạy lần đầu: tạo .venv, cài thư viện headless và tải model ONNX
+./run.sh        # khởi động server tại http://127.0.0.1:8090 (NO_BROWSER=1 ./run.sh nếu chạy headless)
+```
+> Nếu dùng webcam USB/laptop trên Linux mà báo không mở được `/dev/video0`, hãy thêm user vào nhóm `video`: `sudo usermod -aG video $USER` rồi đăng nhập lại. Nếu chạy trên Linux server cần truy cập từ máy khác trong mạng nội bộ, đổi `server.host: 0.0.0.0` trong `config.yaml`.
+
+### Trên Windows
 1. Double-click **`setup.bat`** (chỉ chạy lần đầu, mất vài phút để cài thư viện và tải model).
 2. Double-click **`run.bat`**. Trình duyệt sẽ tự mở http://127.0.0.1:8090.
-3. Vào tab **Đăng ký**, nhập mã và tên, chọn *Quay từ camera cổng* rồi xoay mặt nhẹ theo hướng dẫn.
-4. Vào tab **Nhân viên** và bấm **Duyệt**.
-5. Quay lại tab **Trực tiếp** và đứng trước camera. Màn hình sẽ hiện thẻ *"Xin chào… · Check-in HH:MM · Đúng giờ / Đi muộn N phút"*.
-6. Thử giơ ảnh của chính mình trên điện thoại trước camera. Khung sẽ chuyển sang đỏ và báo **GIẢ MẠO**.
-7. Xem kết quả ở tab **Chấm công** và tab **Lịch sử**.
+
+### Thao tác trên giao diện web
+1. Vào tab **Đăng ký**, nhập mã và tên, chọn *Quay từ camera cổng* rồi xoay mặt nhẹ theo hướng dẫn (hoặc tải video ngắn lên).
+2. Vào tab **Nhân viên** và bấm **Duyệt**.
+3. Quay lại tab **Trực tiếp** và đứng trước camera. Màn hình sẽ hiện thẻ *"Xin chào… · Check-in HH:MM · Đúng giờ / Đi muộn N phút"*.
+4. Thử giơ ảnh của chính mình trên điện thoại trước camera. Khung sẽ chuyển sang đỏ và báo **GIẢ MẠO**.
+5. Xem kết quả ở tab **Chấm công** và tab **Lịch sử**.
 
 Ý nghĩa màu khung: **xanh lá** là đã nhận diện và là người thật · **cam** là đang xác minh · **đỏ** là người lạ hoặc giả mạo · **xám** là ảnh kém chất lượng (mờ, mặt nhỏ, quay ngang).
 

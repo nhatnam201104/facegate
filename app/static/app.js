@@ -88,7 +88,7 @@ function showStatus(s) {
 $("#srcForm").kind.onchange = e => {
   const k = e.target.value;
   $("#srcValue").hidden = k === "file"; $("#srcFile").hidden = k !== "file";
-  $("#srcValue").placeholder = k === "rtsp" ? "rtsp://user:pass@192.168.1.64:554/Streaming/Channels/102" : "0";
+  $("#srcValue").placeholder = k === "rtsp" ? "rtsp://user:pass@192.168.1.64:554/Streaming/Channels/102" : "0 hoặc /dev/video0";
   $("#srcValue").value = k === "webcam" ? "0" : "";
 };
 $("#srcForm").onsubmit = async ev => {

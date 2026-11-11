@@ -1,8 +1,8 @@
 # ==== FaceGate demo - cau hinh ====
-# Sua file nay roi chay lai run.bat
+# Sua file nay roi chay lai ./run.sh (Linux) hoac run.bat (Windows)
 
 camera:
-  # 0 = webcam laptop | duong dan file video (vd: data/test.mp4) | RTSP:
+  # 0 (hoac /dev/video0 tren Linux) = webcam | duong dan file video (vd: data/test.mp4) | RTSP:
   # rtsp://user:pass@192.168.1.64:554/Streaming/Channels/102   (102 = substream Hikvision)
   source: 0
   name: gate-1
@@ -105,5 +105,5 @@ storage:
   data_dir: data
 
 server:
-  host: 127.0.0.1
+  host: 127.0.0.1          # doi thanh 0.0.0.0 neu chay tren Linux server va mo tu may khac trong LAN
   port: 8090

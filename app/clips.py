@@ -22,8 +22,8 @@ import numpy as np
 
 log = logging.getLogger("clips")
 
-# WebM/VP8 phat duoc truc tiep tren trinh duyet; mp4/avc1 du phong (Windows Media Foundation)
-FORMATS = (("webm", "VP80"), ("mp4", "avc1"))
+# WebM/VP8,VP9 phat truc tiep tren trinh duyet (Linux/Windows); mp4 du phong
+FORMATS = (("webm", "VP80"), ("webm", "VP90"), ("mp4", "avc1"), ("mp4", "mp4v"))
 QUEUE_MAX = 900
 CLEANUP_EVERY = 3600.0
 
