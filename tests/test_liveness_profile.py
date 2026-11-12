@@ -224,3 +224,48 @@ def test_pipeline_emits_spoof_event_once_and_render_does_not_mutate_track(tmp_pa
     pipe._process(frame, 100.25)
     assert len(db.list_events(50, tier="rejected_spoof")) == 1
     assert len([m for m in emitted_msgs if m.get("type") == "event" and m["event"]["kind"] == "spoof"]) == 1
+
+
+def test_moire_keeps_true_zeros_and_uses_median_against_single_outlier():
+    from app.context_detector import ContextScene
+    from app.liveness import create_liveness
+
+    cfg = load_config()
+    liv = create_liveness(cfg)
+    assert liv is not None
+    frame_shape = (480, 640, 3)
+
+    def _build_profile_track(tid: int, moire_scores: list[float | None]) -> Track:
+        tr = Track(tid, np.array([120.0, 90.0, 200.0, 190.0], np.float32), 100.0, 100.0)
+        tr.matched_group = "left_profile"
+        for i, m_sc in enumerate(moire_scores):
+            cx = 140.0 + i * 16.0
+            cy = 140.0
+            fb = np.array([cx - 40, cy - 50, cx + 40, cy + 50], np.float32)
+            tr.bbox = fb
+            pts3d = _make_3d_pts(-78.0 - (i % 5) * 1.8, cx, cy, flat=False)
+            tr.pose_history.append((100.0 + i * 0.15, -80.0, 1.0, 0.0, (cx, cy), pts3d))
+            tr.context_history.append({
+                "yaw": -80.0,
+                "medium_clean": True,
+                "body_coupled": True,
+                "spoof_reason": None,
+                "moire_score": m_sc,
+            })
+        return tr
+
+    # 15 frame sạch (0.0) kèm 1 frame nhiễu (0.70) ở cuối -> không được báo spoof nhầm ở Nhánh B
+    t_clean_with_spike = _build_profile_track(10, [0.0] * 15 + [0.70])
+    st_spike = liv.evaluate_track(t_clean_with_spike, frame_shape=frame_shape)
+    assert st_spike == "live", f"1 frame nhiễu Moiré 0.70 giữa 15 frame 0.0 không được báo spoof: {st_spike}"
+    assert not t_clean_with_spike.spoof
+
+    # Khi mới có < 4 mẫu Moiré hợp lệ (các frame đầu quality_ok=False trả None) dù điểm cao -> giữ checking, chưa kết luận spoof
+    t_insufficient = _build_profile_track(11, [None, None, None, 0.82, 0.84, 0.85])
+    st_insuf = liv.evaluate_track(t_insufficient, frame_shape=frame_shape)
+    assert st_insuf == "checking", f"Chưa đủ 4 mẫu Moiré không được đánh spoof sớm: {st_insuf}"
+
+    # 6 frame liên tiếp >= 0.80 -> bắt đúng spoof moire_pattern
+    t_screen = _build_profile_track(12, [0.81, 0.83, 0.85, 0.82, 0.84, 0.86])
+    st_scr = liv.evaluate_track(t_screen, frame_shape=frame_shape)
+    assert st_scr == "spoof" and t_screen.spoof_reason == "moire_pattern"

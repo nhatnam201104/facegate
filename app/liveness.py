@@ -133,7 +133,7 @@ class Liveness:
                           min(w, int(face.bbox[2])), min(h, int(face.bbox[3])))
         crop = frame[y1:y2, x1:x2]
         vis_roi = _visible_skin_roi(crop, pose.yaw) if crop.size else crop
-        m_score = moire_screen_score(vis_roi) if (self.moire_enabled and quality_ok and vis_roi.size) else 0.0
+        m_score = moire_screen_score(vis_roi) if (self.moire_enabled and quality_ok and vis_roi.size) else None
 
         ctx_info = {"medium_clean": True, "body_coupled": True, "spoof_reason": None, "medium_label": None}
         if self.ctx_enabled and ctx_scene is not None:
@@ -172,17 +172,19 @@ class Liveness:
         if dual_hits >= 2:
             return self._mark_spoof(track, "multi_face_single_body", 0.08, "context_parallax", body_coupled=False)
 
-        moire_vals = [h["moire_score"] for h in hist if h["moire_score"] > 0]
-        moire_mean = float(np.mean(moire_vals[-6:])) if moire_vals else 0.0
-        moire_ok = (not self.moire_enabled) or (moire_mean <= self.max_screen_score)
-        if self.moire_enabled and len(moire_vals) >= 4 and moire_mean > self.max_screen_score + 0.08:
-            return self._mark_spoof(track, "moire_pattern", round(1.0 - moire_mean, 4), "context_parallax",
+        moire_vals = [h["moire_score"] for h in hist if h.get("moire_score") is not None]
+        moire_med = float(np.median(moire_vals[-6:])) if moire_vals else 0.0
+        moire_ready = (not self.moire_enabled) or (len(moire_vals) >= 4)
+        moire_ok = (not self.moire_enabled) or (moire_ready and moire_med <= self.max_screen_score)
+        if self.moire_enabled and len(moire_vals) >= 4 and moire_med > self.max_screen_score + 0.08:
+            return self._mark_spoof(track, "moire_pattern", round(1.0 - moire_med, 4), "context_parallax",
                                     moire_ok=False)
 
         # 2. Nhánh A (Ưu tiên Best-shot chính diện nếu có đủ mẫu MiniFASNet hoặc đang chốt ở frontal)
         if len(track.live) >= self.min_frames:
             fas_mean = float(np.mean(track.live))
             body_ok = (not hist) or (sum(1 for h in hist[-4:] if h["body_coupled"]) >= max(1, len(hist[-4:]) // 2))
+            moire_a_ok = (not self.moire_enabled) or (not moire_ready and moire_med <= self.max_screen_score) or moire_ok
             track.liveness_mode = "hybrid" if hist else "texture_fas"
             track.liveness_score = round(fas_mean, 4)
             track.liveness_detail = {
@@ -190,12 +192,12 @@ class Liveness:
                 "medium_clean": True,
                 "body_coupled": body_ok,
                 "parallax_ok": None,
-                "moire_ok": moire_ok,
+                "moire_ok": moire_a_ok,
                 "reason": None,
             }
             if fas_mean < self.spoof_below:
                 return self._mark_spoof(track, "texture_spoof", fas_mean, track.liveness_mode, fas=fas_mean)
-            if fas_mean >= self.fas_thr and body_ok and moire_ok:
+            if fas_mean >= self.fas_thr and body_ok and moire_a_ok:
                 if track.employee_id is not None:
                     track.verification_tier = "verified"
                 return "live"
@@ -241,12 +243,15 @@ class Liveness:
             return self._mark_spoof(track, "planar_no_parallax", par_score, "context_parallax",
                                     parallax_ok=False, parallax_score=par_score)
 
+        if self.moire_enabled and not moire_ready:
+            return "checking"
+
         if not moire_ok:
-            return self._mark_spoof(track, "moire_pattern", round(1.0 - moire_mean, 4), "context_parallax",
+            return self._mark_spoof(track, "moire_pattern", round(1.0 - moire_med, 4), "context_parallax",
                                     moire_ok=False)
 
         if par_ok and body_ok and moire_ok:
-            comp_score = round(float(0.65 * par_score + 0.35 * (1.0 - moire_mean)), 4)
+            comp_score = round(float(0.65 * par_score + 0.35 * (1.0 - moire_med)), 4)
             track.liveness_score = comp_score
             track.liveness_detail = {
                 "fas": None,
