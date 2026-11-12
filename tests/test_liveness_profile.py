@@ -335,3 +335,131 @@ def test_normal_objects_near_face_or_tv_behind_person_do_not_trigger_permanent_s
         })
     assert liv.evaluate_track(t2) == "spoof"
     assert t2.spoof_reason == "screen_detected"
+
+
+def test_phone_held_over_own_face_detected_and_intermittent_screen_holds_checking():
+    from app.context_detector import ContextScene, evaluate_face_context
+    from app.liveness import create_liveness
+
+    # 1. Kẻ gian cầm điện thoại/tablet che ngay trước mặt mình (khớp anatomical_head_match với thân người cầm)
+    person_box = np.array([150.0, 90.0, 370.0, 470.0], np.float32)
+    phone_over_face = np.array([185.0, 95.0, 325.0, 255.0], np.float32)
+    face_on_phone = np.array([215.0, 115.0, 295.0, 215.0], np.float32)
+    res_over = evaluate_face_context(
+        face_on_phone,
+        ContextScene(persons=[person_box], mediums=[(phone_over_face, "cell phone", 0.92)]),
+        [face_on_phone],
+    )
+    assert res_over["spoof_reason"] == "screen_detected"
+    assert res_over["medium_clean"] is False
+
+    # 2. Khi màn hình chập chờn ở 2 frame sát cuối (chưa đủ 3/5 để khóa spoof vĩnh viễn nhưng đang nghi ngờ sát thời điểm hiện tại) -> giữ 'checking', không duyệt 'live' ngay
+    cfg = load_config()
+    liv = create_liveness(cfg)
+    t_flicker = Track(40, face_on_phone, 10.0, 10.0)
+    t_flicker.matched_group = "frontal"
+    t_flicker.live = [0.85, 0.86, 0.88, 0.87]
+    for r in [None, None, "screen_detected", None, "screen_detected"]:
+        t_flicker.context_history.append({
+            "yaw": 0.0,
+            "medium_clean": r != "screen_detected",
+            "medium_nearby": r == "screen_detected",
+            "body_coupled": r is None,
+            "spoof_reason": r,
+            "moire_score": 0.05,
+        })
+    assert liv.evaluate_track(t_flicker) == "checking"
+    assert not t_flicker.spoof
+
+
+def test_matched_group_and_liveness_branch_alignment_blocks_frontal_spoof_leak_and_wrong_tier_upgrade(tmp_path):
+    from types import SimpleNamespace
+
+    from app.context_detector import ContextScene
+    from app.db import DB
+    from app.gallery import Gallery
+    from app.liveness import create_liveness
+    from app.pipeline import Pipeline
+
+    cfg = load_config()
+    cfg["_paths"] = {**cfg["_paths"], "snapshots": tmp_path / "snaps"}
+    db = DB(tmp_path / "branch_align.db")
+    mv = "ef_align_v1"
+    u = lambda v: np.array(v, np.float32) / np.linalg.norm(v)
+    ea = db.create_employee("NVA", "Emp A")
+    db.set_status(ea, "active")
+    a_f, a_l = u([1.0, 0.0, 0.0, 0.0]), u([0.0, 1.0, 0.0, 0.0])
+    db.add_embedding(ea, a_f, mv, 0.9, "thang-giua", None, pose_group="frontal", yaw=0.0)
+    db.add_embedding(ea, a_l, mv, 0.9, "nghieng-sau-trai", None, pose_group="left_profile", yaw=-80.0)
+
+    liv = create_liveness(cfg)
+    st = {"emb": a_f, "yaw": 0.0, "grp": "frontal", "cx": 120.0, "fas": 0.12}
+    liv.real_prob = lambda img, bbox: st["fas"]
+
+    class Eng:
+        name = "edgeface"
+        model_version = mv
+
+        def detect(self, img):
+            cx = st["cx"]
+            fb = np.array([cx - 40, 90.0, cx + 40, 190.0], np.float32)
+            kps = np.array([[cx - 18, 125], [cx + 18, 125], [cx, 148], [cx - 14, 168], [cx + 14, 168]], np.float32)
+            return [Face(fb, 0.95, kps)]
+
+        def align(self, img, f, pose=None, pose_group=None):
+            return np.zeros((112, 112, 3), np.uint8)
+
+        def embed_aligned(self, aligned):
+            return st["emb"]
+
+    class Pose:
+        def estimate(self, frame, f, prev_group=None):
+            pts3d = _make_3d_pts(st["yaw"], st["cx"], 140.0, flat=False)
+            return PoseResult(st["yaw"], 0.0, 0.0, st["grp"], pts3d, pts3d[:5, :2], 0.85)
+
+    class CtxDet:
+        def detect(self, frame):
+            cx = st["cx"]
+            return ContextScene(persons=[np.array([cx - 95, 75.0, cx + 95, 460.0], np.float32)], mediums=[])
+
+    pipe = Pipeline(
+        cfg, db, Eng(), Gallery(db, mv),
+        SimpleNamespace(read=lambda: (0, None), idle=False, fps_in=15.0),
+        SimpleNamespace(notify=lambda: None), lambda m: None,
+        liveness=liv, clips=None, pose_estimator=Pose(), context_detector=CtxDet(),
+    )
+    frame = cv2.GaussianBlur(np.random.default_rng(5).integers(70, 190, (480, 640, 3), dtype=np.uint8), (3, 3), 0.7)
+
+    # Case 1: 2 frame ảnh giả chính diện (FAS = 0.12 < spoof_below) rồi nghiêng >40° 6 frame -> tuyệt đối không được lọt checkin
+    for i in range(2):
+        st.update(emb=a_f, yaw=0.0, grp="frontal", cx=120.0 + i * 20.0, fas=0.12)
+        pipe._process(frame, 10.0 + i * 0.2)
+    for i in range(6):
+        st.update(emb=a_l, yaw=-75.0 - i * 2.0, grp="left_profile", cx=160.0 + i * 20.0, fas=0.12)
+        pipe._process(frame, 10.4 + i * 0.2)
+    checkins = [e for e in db.list_events(10) if e["kind"] == "checkin"]
+    assert not checkins, f"Ảnh giả chính diện FAS=0.12 không được lọt checkin qua Nhánh B: {checkins}"
+
+    # Case 2: Track chốt danh tính ở left_profile, sau đó có 4 frame frontal điểm khớp 0.37 (chưa được _identify chấp nhận nâng lên frontal) -> không được gán sai verification_tier='verified'
+    pipe.tracker.tracks.clear()
+    db2 = DB(tmp_path / "branch_align2.db")
+    ea2 = db2.create_employee("NVA", "Emp A")
+    db2.set_status(ea2, "active")
+    db2.add_embedding(ea2, a_f, mv, 0.9, "thang-giua", None, pose_group="frontal", yaw=0.0)
+    db2.add_embedding(ea2, a_l, mv, 0.9, "nghieng-sau-trai", None, pose_group="left_profile", yaw=-80.0)
+    pipe2 = Pipeline(
+        cfg, db2, Eng(), Gallery(db2, mv),
+        SimpleNamespace(read=lambda: (0, None), idle=False, fps_in=15.0),
+        SimpleNamespace(notify=lambda: None), lambda m: None,
+        liveness=liv, clips=None, pose_estimator=Pose(), context_detector=CtxDet(),
+    )
+    for i in range(4):
+        st.update(emb=a_l, yaw=-80.0, grp="left_profile", cx=200.0, fas=0.92)
+        pipe2._process(frame, 20.0 + i * 0.2)
+    weak_front = u([0.37, 0.0, float(np.sqrt(1.0 - 0.37 ** 2)), 0.0])
+    for i in range(4):
+        st.update(emb=weak_front, yaw=0.0, grp="frontal", cx=200.0, fas=0.92)
+        pipe2._process(frame, 21.0 + i * 0.2)
+    for e in db2.list_events(10):
+        if e["kind"] == "checkin" and e["pose_group"] != "frontal":
+            assert e["verification_tier"] == "profile_verified"

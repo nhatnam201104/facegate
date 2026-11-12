@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FaceGate SpecKit Plan · Nhận diện 90° & Chống giả mạo đa lớp</title>
+<style>
+  :root {
+    --bg: #0f172a;
+    --panel: #1e293b;
+    --panel-alt: #162033;
+    --border: #334155;
+    --text: #f1f5f9;
+    --muted: #94a3b8;
+    --accent: #38bdf8;
+    --ok: #22c55e;
+    --warn: #f59e0b;
+    --danger: #ef4444;
+    --purple: #a78bfa;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, Ubuntu, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+  }
+  header {
+    background: linear-gradient(135deg, #0f172a 0%, #1e293b 60%, #0c4a6e 100%);
+    border-bottom: 1px solid var(--border);
+    padding: 28px 24px;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 0 20px; }
+  .badges { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+  .badge {
+    font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: 999px;
+    background: rgba(56, 189, 248, 0.14); color: var(--accent); border: 1px solid rgba(56, 189, 248, 0.35);
+  }
+  .badge.ok { background: rgba(34, 197, 94, 0.15); color: #4ade80; border-color: rgba(34, 197, 94, 0.35); }
+  .badge.warn { background: rgba(245, 158, 11, 0.15); color: #fbbf24; border-color: rgba(245, 158, 11, 0.35); }
+  h1 { margin: 4px 0 8px; font-size: 26px; }
+  h2 { font-size: 19px; margin: 0 0 14px; color: #e2e8f0; display: flex; align-items: center; gap: 8px; }
+  h3 { font-size: 15px; margin: 14px 0 6px; color: var(--accent); }
+  p.lead { margin: 0; color: #cbd5e1; max-width: 920px; }
+  main { padding: 24px 0 56px; }
+  .grid { display: grid; gap: 18px; margin-bottom: 20px; }
+  .cols-4 { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+  .cols-2 { grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 18px 20px;
+  }
+  .kpi b { display: block; font-size: 24px; color: var(--accent); }
+  .kpi span { font-size: 13px; color: var(--muted); }
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; background: var(--panel-alt); }
+  code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 12.5px; background: rgba(15, 23, 42, 0.65); padding: 2px 6px; border-radius: 5px; color: #7dd3fc;
+  }
+  .diagram-box {
+    background: #0b1220; border: 1px solid var(--border); border-radius: 10px; padding: 16px; overflow-x: auto;
+  }
+  .tag-new { color: #4ade80; font-weight: 600; }
+  .tag-mod { color: #fbbf24; font-weight: 600; }
+  .phase-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 14px; }
+  .phase { background: var(--panel-alt); border: 1px solid var(--border); border-radius: 10px; padding: 14px; }
+  .phase b { color: var(--accent); display: block; margin-bottom: 6px; }
+  .phase ul { margin: 0; padding-left: 18px; font-size: 13.5px; color: #cbd5e1; }
+  .check-row { display: flex; align-items: flex-start; gap: 10px; padding: 8px 0; border-bottom: 1px dashed var(--border); font-size: 14px; }
+  .check-row:last-child { border-bottom: 0; }
+  .sign-box {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin-top: 14px;
+  }
+  .sign-box input, .sign-box select {
+    width: 100%; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border);
+    background: #0b1220; color: var(--text); font-size: 13.5px;
+  }
+  .btn {
+    margin-top: 12px; background: #0284c7; color: #fff; border: 0; border-radius: 8px;
+    padding: 9px 16px; font-weight: 600; cursor: pointer;
+  }
+  .btn:hover { background: #0369a1; }
+  .saved-note { margin-left: 10px; font-size: 13px; color: #4ade80; }
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <div class="badges">
+      <span class="badge">SpecKit Plan · 001-profile-90-antispoof</span>
+      <span class="badge ok">Constitution Gate: 5/5 PASS</span>
+      <span class="badge">1 Camera RGB · CPU-Only (Linux & Windows)</span>
+      <span class="badge warn">Apache-2.0 / MIT / BSD-3 Commercial Safe</span>
+    </div>
+    <h1>Kế hoạch Cải tiến Góc Nhận diện lên đến ±90° & Chống giả mạo Đa lớp</h1>
+    <p class="lead">
+      Mở rộng khả năng chấm công của <code>facegate</code> từ chính diện (±35°) lên góc nghiêng sườn hoàn toàn (±90°) bằng tổ hợp <b>Best-Shot Pose-Bucketed Tracking</b>, <b>3DDFA_V2 3D Landmarks</b>, <b>Căn chỉnh 3 khung (Frontal / Left / Right Profile)</b> và <b>Chống giả mạo 4 lớp định tuyến theo tư thế</b>.
+    </p>
+  </div>
+</header>
+
+<main class="wrap">
+  <section class="grid cols-4">
+    <div class="card kpi"><b>±90° Yaw</b><span>Dải góc ngang hỗ trợ (3 khung căn chỉnh độc lập)</span></div>
+    <div class="card kpi"><b>~65–76 ms</b><span>Độ trễ CPU ước tính / vòng detect (mục tiêu &lt; 200 ms)</span></div>
+    <div class="card kpi"><b>4 Lớp FAS</b><span>MiniFASNet + Vật chứa/Cơ thể + Thị sai 3D + Moiré FFT</span></div>
+    <div class="card kpi"><b>100% Tương thích</b><span>Nhân viên 5 góc cũ hoạt động ngay không cần đăng ký lại</span></div>
+  </section>
+
+  <section class="card" style="margin-bottom:18px">
+    <h2>1. Sơ đồ Luồng Kiến trúc Nhận diện & Định tuyến Chống giả mạo</h2>
+    <div class="diagram-box">
+      <pre class="mermaid">
+flowchart LR
+  CAM["Camera V4L2 / RTSP"] --> DET["YuNet Face + YOLOX-Nano<br/>(Person & Spoof Medium)"]
+  DET --> POSE["3DDFA_V2 ONNX<br/>68 điểm 3D + (yaw, pitch, roll)"]
+  POSE --> BUCKET{"Phân nhóm tư thế<br/>(Pose-Bucketed Track)"}
+  BUCKET -->|"|yaw| ≤ 40° (Ưu tiên Best-Shot)"| FA["Căn chỉnh Frontal<br/>+ EdgeFace/SFace"]
+  BUCKET -->|"40° < |yaw| ≤ 90°"| PA["Căn chỉnh Left/Right Profile<br/>+ Khớp Gallery cùng phía"]
+  FA --> FAS1["Nhánh A: MiniFASNet V2+V1SE<br/>+ Kiểm tra vật chứa"]
+  PA --> FAS2["Nhánh B: Không thiết bị màn hình<br/>+ Gắn kết Đầu-Thân + Thị sai 3D ≥6 frame<br/>+ Kiểm tra vân Moiré"]
+  FAS1 -->|"Đạt"| V1["Check-in: verified"]
+  FAS2 -->|"Đạt đủ 3 cổng"| V2["Check-in: profile_verified<br/>(Lưu clip hậu kiểm HR)"]
+  FAS1 -->|"Rớt"| SP["Cảnh báo ĐỎ: spoof + Lưu clip"]
+  FAS2 -->|"Phát hiện màn hình / Ảnh phẳng"| SP
+      </pre>
+    </div>
+  </section>
+
+  <div class="grid cols-2">
+    <section class="card">
+      <h2>2. Quyết định Mô hình & Ngân sách CPU (4 nhân)</h2>
+      <table>
+        <thead>
+          <tr><th>Mô hình ONNX</th><th>Vai trò</th><th>Giấy phép</th><th>Độ trễ CPU</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>YuNet</code></td><td>Phát hiện mặt đa tỷ lệ</td><td>Apache-2.0</td><td>~16 ms / frame</td></tr>
+          <tr><td><code>YOLOX-Nano</code> <span class="tag-new">[Mới]</span></td><td>Phát hiện <code>person</code> + điện thoại/tablet/màn hình</td><td>Apache-2.0</td><td>~11 ms / frame</td></tr>
+          <tr><td><code>3DDFA_V2</code> <span class="tag-new">[Mới]</span></td><td>68 điểm mốc 3D + góc Euler tới ±90° + chiều sâu</td><td>MIT</td><td>~2 ms / mặt</td></tr>
+          <tr><td><code>EdgeFace-XS</code> / <code>SFace</code></td><td>Trích vector đặc trưng bền góc nghiêng</td><td>BSD-3 / Apache-2.0</td><td>~8 ms / mặt</td></tr>
+          <tr><td><code>MiniFASNet</code> / <code>Parallax+FFT</code></td><td>Chống giả mạo theo nhánh góc ≤40° hoặc &gt;40°</td><td>Apache-2.0</td><td>~1–4 ms / mặt</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="card">
+      <h2>3. Bản đồ Tác động Kiến trúc (Knowledge Graph Overlay)</h2>
+      <table>
+        <thead>
+          <tr><th>Module trong <code>facegate</code></th><th>Loại thay đổi</th><th>Nội dung cốt lõi</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>app/pose3d.py</code></td><td><span class="tag-new">Thêm mới</span></td><td>Hồi quy 62 tham số 3DMM, 68 landmark 3D, sai số homography phẳng</td></tr>
+          <tr><td><code>app/context_detector.py</code></td><td><span class="tag-new">Thêm mới</span></td><td>Quét vật chứa màn hình quanh đầu & kiểm tra tỷ lệ gắn kết Đầu–Thân</td></tr>
+          <tr><td><code>app/tracker.py</code> & <code>gallery.py</code></td><td><span class="tag-mod">Nâng cấp</span></td><td>Tách 3 ngăn <code>frontal</code> / <code>left_profile</code> / <code>right_profile</code>, ưu tiên Best-Shot</td></tr>
+          <tr><td><code>app/liveness.py</code> & <code>pipeline.py</code></td><td><span class="tag-mod">Nâng cấp</span></td><td>Định tuyến chống giả mạo 4 lớp, xuất <code>verification_tier</code> & <code>spoof_reason</code></td></tr>
+          <tr><td><code>app/guided.py</code> & <code>enrollment.py</code></td><td><span class="tag-mod">Nâng cấp</span></td><td>Đăng ký hướng dẫn 7 bước (thêm ±80°), lọc outlier theo từng nhóm góc</td></tr>
+          <tr><td><code>app/db.py</code> & <code>app/static/*</code></td><td><span class="tag-mod">Nâng cấp</span></td><td>Tự động migrate DB, lọc hậu kiểm <code>profile_verified</code> cho HR</td></tr>
+        </tbody>
+      </table>
+    </section>
+  </div>
+
+  <section class="card" style="margin-bottom:18px">
+    <h2>4. Lộ trình Triển khai 4 Giai đoạn (Sẵn sàng cho <code>/speckit-tasks</code>)</h2>
+    <div class="phase-list">
+      <div class="phase">
+        <b>Giai đoạn A · 3D Pose & Căn chỉnh</b>
+        <ul>
+          <li>Tải model ONNX mới & migrate SQLite</li>
+          <li>Tích hợp <code>app/pose3d.py</code> (3DDFA_V2)</li>
+          <li>Căn chỉnh 3 khung + <code>EdgeFaceEngine</code></li>
+          <li>Kiểm thử <code>tests/test_pose3d.py</code></li>
+        </ul>
+      </div>
+      <div class="phase">
+        <b>Giai đoạn B · Tracker & Gallery Đa góc</b>
+        <ul>
+          <li>Tách 3 ngăn embedding trong <code>Track</code></li>
+          <li>Neo <code>person_bbox</code> giữ ID khi xoay đầu</li>
+          <li>Ưu tiên Best-Shot + ngưỡng profile chặt</li>
+          <li>Kiểm thử <code>tests/test_tracker_buckets.py</code></li>
+        </ul>
+      </div>
+      <div class="phase">
+        <b>Giai đoạn C · Chống giả mạo 4 Lớp</b>
+        <ul>
+          <li><code>YOLOX-Nano</code> bắt điện thoại & 2 mặt/thân</li>
+          <li>Kiểm định thị sai chuyển động 3D ≥6 frame</li>
+          <li>Kiểm tra vân Moiré FFT màn hình</li>
+          <li>Kiểm thử <code>tests/test_liveness_profile.py</code></li>
+        </ul>
+      </div>
+      <div class="phase">
+        <b>Giai đoạn D · Đăng ký 7 Góc & Hậu kiểm UI</b>
+        <ul>
+          <li>Hướng dẫn 7 bước + quay bổ sung 2 góc nghiêng</li>
+          <li>Huy hiệu <code>Đủ góc 90°</code> ở tab Nhân viên</li>
+          <li>Bộ lọc <code>profile_verified</code> & xuất CSV</li>
+          <li>Đo kiểm bằng <code>scripts/benchmark.py</code></li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>5. Cổng Duyệt Kế hoạch Kỹ thuật (Sign-off trước khi chạy <code>/speckit-tasks</code>)</h2>
+    <div class="check-row"><input type="checkbox" checked> <span>Đồng ý cơ chế <b>Best-Shot ưu tiên góc ≤ 40°</b> và khớp <b>Profile-to-Profile</b> với ngưỡng chặt hơn ở góc 40°–90°.</span></div>
+    <div class="check-row"><input type="checkbox" checked> <span>Đồng ý cơ chế chống giả mạo nhánh góc nghiêng bằng <b>Vật chứa/Cơ thể + Thị sai chuyển động 3D + Moiré</b> và gắn nhãn <code>profile_verified</code> kèm clip.</span></div>
+    <div class="check-row"><input type="checkbox" checked> <span>Đồng ý bộ mô hình nguồn mở thương mại hóa được (<code>YuNet</code>, <code>YOLOX-Nano</code>, <code>3DDFA_V2</code>, <code>EdgeFace-XS</code> / <code>SFace</code>).</span></div>
+    <div class="sign-box">
+      <input id="approver" placeholder="Người duyệt (PM / Tech Lead)">
+      <select id="decision">
+        <option value="approved">Duyệt kế hoạch — Chuyển sang /speckit-tasks</option>
+        <option value="adjust">Cần điều chỉnh ngưỡng / phạm vi</option>
+      </select>
+      <input id="note" placeholder="Ghi chú thêm (nếu có)">
+    </div>
+    <button class="btn" type="button" onclick="saveSignoff()">Lưu xác nhận duyệt</button>
+    <span class="saved-note" id="savedMsg"></span>
+  </section>
+</main>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({ startOnLoad: true, theme: "dark" });
+</script>
+<script>
+  function saveSignoff() {
+    const data = {
+      approver: document.getElementById("approver").value,
+      decision: document.getElementById("decision").value,
+      note: document.getElementById("note").value,
+      ts: new Date().toLocaleString("vi-VN")
+    };
+    localStorage.setItem("facegate_plan_001_signoff", JSON.stringify(data));
+    document.getElementById("savedMsg").textContent = "Đã lưu trạng thái duyệt lúc " + data.ts;
+  }
+</script>
+</body>
+</html>

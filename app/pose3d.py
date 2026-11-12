@@ -243,7 +243,10 @@ class PoseEstimator3D:
             p0 = self.param_mean[:12].reshape(3, 4)[:, :3]
             self.r0_ortho = _orthogonalize_rows(p0)
         else:
-            log.warning("Chua co du bo file 3DDFA_V2 trong %s -> dung uoc luong hinh hoc 5 diem du phong", models_dir)
+            log.warning(
+                "Chua co du bo file 3DDFA_V2 trong %s -> dung uoc luong 5 diem du phong (khong du luoi 68 diem cho parallax goc >40 do)",
+                models_dir,
+            )
 
     def estimate(self, img: np.ndarray, face, prev_group: str | None = None) -> PoseResult:
         if self.session is None:

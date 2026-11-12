@@ -1,0 +1,310 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FaceGate SpecKit Tasks · 002-low-latency-stream</title>
+<style>
+  :root {
+    --bg: #0f172a;
+    --panel: #1e293b;
+    --panel-alt: #162033;
+    --border: #334155;
+    --text: #f1f5f9;
+    --muted: #94a3b8;
+    --accent: #38bdf8;
+    --p1: #4ade80;
+    --p2: #fbbf24;
+    --p3: #c084fc;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, Ubuntu, sans-serif;
+    background: var(--bg); color: var(--text); line-height: 1.55;
+  }
+  header {
+    background: linear-gradient(135deg, #0f172a 0%, #1e293b 60%, #164e63 100%);
+    border-bottom: 1px solid var(--border); padding: 26px 24px;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 0 20px; }
+  .badges { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+  .badge {
+    font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: 999px;
+    background: rgba(56, 189, 248, 0.14); color: var(--accent); border: 1px solid rgba(56, 189, 248, 0.35);
+  }
+  .badge.ok { background: rgba(74, 222, 128, 0.14); color: var(--p1); border-color: rgba(74, 222, 128, 0.35); }
+  .badge.warn { background: rgba(251, 191, 36, 0.14); color: var(--p2); border-color: rgba(251, 191, 36, 0.35); }
+  h1 { margin: 4px 0 8px; font-size: 25px; }
+  h2 { font-size: 18px; margin: 0 0 12px; color: #e2e8f0; }
+  p.lead { margin: 0; color: #cbd5e1; max-width: 940px; }
+  main { padding: 22px 0 54px; }
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; margin-bottom: 18px; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; margin-bottom: 16px; }
+  .kpi b { display: block; font-size: 24px; color: var(--accent); }
+  .kpi span { font-size: 13px; color: var(--muted); }
+  .grid-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(430px, 1fr)); gap: 16px; margin-bottom: 16px; }
+  .diagram-box { background: #0b1220; border: 1px solid var(--border); border-radius: 10px; padding: 14px; overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 13.2px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--muted); background: var(--panel-alt); font-weight: 600; }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; align-items: center; }
+  .filter-btn {
+    background: var(--panel-alt); color: var(--text); border: 1px solid var(--border);
+    padding: 6px 12px; border-radius: 8px; font-size: 13px; cursor: pointer;
+  }
+  .filter-btn.active { background: #0284c7; border-color: #38bdf8; font-weight: 600; }
+  .prog-wrap { flex: 1; min-width: 220px; display: flex; align-items: center; gap: 10px; justify-content: flex-end; }
+  .prog-bar { width: 180px; height: 9px; background: #0b1220; border-radius: 99px; overflow: hidden; border: 1px solid var(--border); }
+  .prog-fill { height: 100%; background: var(--p1); width: 0%; transition: width 0.2s; }
+  .phase-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+  .task-row {
+    display: flex; align-items: flex-start; gap: 10px; padding: 9px 8px;
+    border-top: 1px solid rgba(51, 65, 85, 0.65); font-size: 13.8px; cursor: pointer;
+  }
+  .task-row.done span.desc { text-decoration: line-through; color: var(--muted); }
+  .tid { font-family: ui-monospace, monospace; font-weight: 700; color: var(--accent); min-width: 44px; }
+  .pill {
+    font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 6px; white-space: nowrap;
+  }
+  .pill.p { background: rgba(56, 189, 248, 0.16); color: #7dd3fc; border: 1px solid rgba(56, 189, 248, 0.35); }
+  .pill.us1, .pill.us2 { background: rgba(74, 222, 128, 0.15); color: var(--p1); }
+  .pill.us3 { background: rgba(251, 191, 36, 0.15); color: var(--p2); }
+  .pill.us4 { background: rgba(192, 132, 252, 0.16); color: var(--p3); }
+  code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12.2px; background: rgba(15, 23, 42, 0.7); padding: 2px 6px; border-radius: 5px; color: #7dd3fc;
+  }
+  .sign-box {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; margin-top: 12px;
+  }
+  .sign-box input, .sign-box select {
+    width: 100%; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border);
+    background: #0b1220; color: var(--text); font-size: 13.5px;
+  }
+  .btn {
+    margin-top: 12px; background: #0284c7; color: #fff; border: 0; border-radius: 8px;
+    padding: 9px 16px; font-weight: 600; cursor: pointer;
+  }
+  .btn:hover { background: #0369a1; }
+  .saved-note { margin-left: 10px; font-size: 13px; color: var(--p1); }
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <div class="badges">
+      <span class="badge">SpecKit Tasks · 002-low-latency-stream</span>
+      <span class="badge ok">22 Executable Tasks · 7 Phases</span>
+      <span class="badge warn">12 Parallelizable [P] Tasks</span>
+      <span class="badge">Knowledge Graph Mapped</span>
+    </div>
+    <h1>Danh sách Tác vụ Triển khai: Tối ưu Độ trễ & Hiệu năng Luồng Stream Server</h1>
+    <p class="lead">Phân rã hành động chi tiết từ <code>plan.md</code>, <code>spec.md</code>, <code>data-model.md</code> và <code>contracts/</code> theo thứ tự phụ thuộc User Story. Sẵn sàng thực thi tự động bằng lệnh <code>/speckit-implement</code>.</p>
+  </div>
+</header>
+
+<main class="wrap">
+  <section class="kpis">
+    <div class="card kpi"><b>22 Tác vụ</b><span>T001 → T022 (100% chuẩn định dạng Checklist + File Path)</span></div>
+    <div class="card kpi"><b>13 Tác vụ MVP</b><span>Setup (2) + Foundational (3) + US1 (4) + US2 (4)</span></div>
+    <div class="card kpi"><b>12 Tác vụ [P]</b><span>Thực thi song song trên các module tách biệt</span></div>
+    <div class="card kpi"><b>4 Cổng Kiểm thử</b><span>TDD đi trước cho US1, US2, US3 và US4</span></div>
+  </section>
+
+  <div class="grid-2">
+    <section class="card" style="margin-bottom:0">
+      <h2>1. Đồ thị Phụ thuộc Thực thi (Dependency DAG)</h2>
+      <div class="diagram-box">
+        <pre class="mermaid">
+flowchart TD
+  P1["Phase 1: Setup<br/>T001 – T002 (Config 24 FPS, q=72, RTSP flags)"] --> P2["Phase 2: Foundational (BLOCKING)<br/>T003 – T005 (Camera Ingest + OverlaySnapshot + FrameHub)"]
+  P2 --> US1["Phase 3: US1 [P1] 🎯 Core Smoothness<br/>T006 – T009 (ROI Sprite Cache + 24 FPS StreamComposer)"]
+  US1 --> US2["Phase 4: US2 [P1] 🎯 Server Zero-Drift<br/>T010 – T013 (Async Broadcast + Zero-Viewer Idle + Tab Sync)"]
+  US1 --> US3["Phase 5: US3 [P2] Guided Mirror<br/>T014 – T016 (Shared Raw Hub + Preview Active)"]
+  US2 --> US4["Phase 6: US4 [P3] Telemetry & Recovery<br/>T017 – T019 (/api/status FPS + Auto-Reload)"]
+  US3 --> US4
+  US4 --> P7["Phase 7: Polish & Benchmark<br/>T020 – T022 (--stream-bench + Docs + Full Pytest)"]
+        </pre>
+      </div>
+    </section>
+
+    <section class="card" style="margin-bottom:0">
+      <h2>2. Ánh xạ Node Kiến trúc (Knowledge Graph Diff-Overlay)</h2>
+      <table>
+        <thead>
+          <tr><th>Lớp kiến trúc</th><th>Module</th><th>Tác vụ</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Cấu hình & Benchmark</td>
+            <td><code>app/config.py</code>, <code>config.yaml</code>, <code>scripts/benchmark.py</code></td>
+            <td><code>T001</code>, <code>T002</code>, <code>T020</code></td>
+          </tr>
+          <tr>
+            <td>Xử lý & Phân phối Stream <b style="color:#4ade80">(Mới)</b></td>
+            <td><code>app/stream.py</code></td>
+            <td><code>T004</code>, <code>T008</code>, <code>T011</code>, <code>T015</code></td>
+          </tr>
+          <tr>
+            <td>Xử lý nhận diện</td>
+            <td><code>app/camera.py</code>, <code>app/draw.py</code>, <code>app/pipeline.py</code></td>
+            <td><code>T003</code>, <code>T007</code>, <code>T009</code>, <code>T015</code>, <code>T018</code></td>
+          </tr>
+          <tr>
+            <td>API & Trạng thái dùng chung</td>
+            <td><code>app/main.py</code></td>
+            <td><code>T012</code>, <code>T016</code>, <code>T018</code></td>
+          </tr>
+          <tr>
+            <td>Giao diện Web</td>
+            <td><code>app/static/app.js</code></td>
+            <td><code>T013</code>, <code>T016</code>, <code>T019</code></td>
+          </tr>
+          <tr>
+            <td>Kiểm thử & Tài liệu</td>
+            <td><code>tests/test_stream_latency.py</code>, <code>test_camera.py</code>, <code>test_api_contracts.py</code>, <code>README.md</code></td>
+            <td><code>T005</code>, <code>T006</code>, <code>T010</code>, <code>T014</code>, <code>T017</code>, <code>T021</code>, <code>T022</code></td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+  </div>
+
+  <section class="card">
+    <div class="toolbar">
+      <button class="filter-btn active" onclick="filterTasks('all', this)">Tất cả (22)</button>
+      <button class="filter-btn" onclick="filterTasks('mvp', this)">Gói P1 MVP + Server (13)</button>
+      <button class="filter-btn" onclick="filterTasks('parallel', this)">Chạy song song [P] (12)</button>
+      <button class="filter-btn" onclick="filterTasks('US1', this)">US1 · Mượt 24 FPS (4)</button>
+      <button class="filter-btn" onclick="filterTasks('US2', this)">US2 · Server Không trễ dồn (4)</button>
+      <button class="filter-btn" onclick="filterTasks('US3', this)">US3 · Soi gương Đăng ký (3)</button>
+      <button class="filter-btn" onclick="filterTasks('US4', this)">US4 · Giám sát & Tự hồi (3)</button>
+      <div class="prog-wrap">
+        <span id="progText" style="font-size:13px;color:var(--muted)">0 / 22 hoàn thành</span>
+        <div class="prog-bar"><div class="prog-fill" id="progFill"></div></div>
+      </div>
+    </div>
+    <div id="taskContainer"></div>
+  </section>
+
+  <section class="card">
+    <h2>3. Xác nhận Duyệt Phân rã Tác vụ (Sign-off cho <code>/speckit-implement</code>)</h2>
+    <p style="margin:0 0 8px;font-size:13.5px;color:var(--muted)">Kiểm tra độ phủ yêu cầu: 10/10 yêu cầu chức năng (<code>FR-001</code> → <code>FR-010</code>) và 5/5 tiêu chí thành công (<code>SC-001</code> → <code>SC-005</code>) đã được gắn trực tiếp vào 22 tác vụ bên trên.</p>
+    <div class="sign-box">
+      <input id="approver" placeholder="Người duyệt (Developer / Tech Lead)">
+      <select id="decision">
+        <option value="approved">Duyệt danh sách tác vụ — Bắt đầu /speckit-implement</option>
+        <option value="adjust">Cần tách/gộp lại tác vụ</option>
+      </select>
+      <input id="note" placeholder="Ghi chú thực thi (nếu có)">
+    </div>
+    <button class="btn" type="button" onclick="saveSignoff()">Lưu xác nhận duyệt</button>
+    <span class="saved-note" id="savedMsg"></span>
+  </section>
+</main>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({ startOnLoad: true, theme: "dark" });
+</script>
+<script>
+const PHASES = [
+  { title: "Phase 1: Setup (Cấu hình Luồng Phát & Tham số Tương thích Ngược)", mvp: true, tasks: [
+    { id: "T001", p: true, us: "", text: "Bổ sung mặc định & clamp miền giá trị (<code>stream_fps=24</code>, <code>stream_jpeg_quality=72</code>, <code>interpolate_boxes</code>, <code>rtsp_low_latency</code>, <code>grab_drain</code>) trong <code>app/config.py</code>" },
+    { id: "T002", p: true, us: "", text: "Cập nhật tham số mặc định cho luồng stream độ trễ thấp trên máy chủ trong <code>config.yaml</code>" }
+  ]},
+  { title: "Phase 2: Foundational (Hạ tầng Thu nhận Độ trễ Thấp & Thực thể Phân phối)", mvp: true, tasks: [
+    { id: "T003", p: true, us: "", text: "Nâng cấp <code>app/camera.py</code>: cờ FFmpeg RTSP <code>nobuffer/low_delay</code>, <code>grab_drain</code>, hàm <code>read_latest()</code> trả kèm <code>frame_ts</code> và cờ <code>preview_active</code>" },
+    { id: "T004", p: true, us: "", text: "Khởi tạo <code>OverlayBox</code>, <code>OverlaySnapshot</code> bất biến, <code>STREAM_HEADERS</code> và <code>FrameHub</code> bất đồng bộ không khóa threadpool trong <code>app/stream.py</code>" },
+    { id: "T005", p: true, us: "", text: "Mở rộng kiểm thử cấu hình mặc định, <code>Camera.read_latest()</code> và <code>preview_active</code> trong <code>tests/test_camera.py</code> & <code>tests/test_api_contracts.py</code>" }
+  ]},
+  { title: "Phase 3: User Story 1 - Xem trực tiếp mượt 24 FPS khi đang nhận diện nhiều người (P1) 🎯 MVP", mvp: true, tasks: [
+    { id: "T006", p: true, us: "US1", text: "Viết kiểm thử <code>LabelSpriteCache</code> tiếng Việt (cắt biên an toàn, &lt; 1ms/frame) & tách luồng dưới tải AI 220ms trong <code>tests/test_stream_latency.py</code>" },
+    { id: "T007", p: true, us: "US1", text: "Tối ưu <code>app/draw.py</code> sang <code>LabelSpriteCache</code> (LRU 256) dán trực tiếp vùng ROI thay vì chuyển đổi màu toàn khung" },
+    { id: "T008", p: false, us: "US1", text: "Cài đặt <code>StreamComposer</code> (24 FPS, ngoại suy hộp mặt ≤120ms, đẩy <code>ClipRecorder</code> & nén JPEG) trong <code>app/stream.py</code>" },
+    { id: "T009", p: false, us: "US1", text: "Gỡ bỏ <code>_render/_publish</code> khỏi vòng lặp suy luận AI và xuất bản nguyên tử <code>OverlaySnapshot</code> trong <code>app/pipeline.py</code>" }
+  ]},
+  { title: "Phase 4: User Story 2 - Vận hành trên Server không trễ dồn & tiết kiệm CPU (P1) 🎯 MVP", mvp: true, tasks: [
+    { id: "T010", p: true, us: "US2", text: "Viết kiểm thử Latest-Frame Drop (client chậm 250ms), Shared Encoding (5 người xem = 1 lần nén), Zero-Viewer Idle & Anti-Buffering Headers trong <code>tests/test_stream_latency.py</code>" },
+    { id: "T011", p: false, us: "US2", text: "Hoàn thiện cơ chế <code>FrameHub.stream_mjpeg()</code> nhảy cóc frame cũ và ngắt nén JPEG 0% CPU khi <code>viewer_count == 0</code> trong <code>app/stream.py</code>" },
+    { id: "T012", p: false, us: "US2", text: "Tích hợp <code>StreamComposer</code> vào <code>lifespan</code>, <code>_switch_camera()</code> và chuyển <code>GET /video.mjpg</code> sang async <code>live_hub</code> kèm <code>STREAM_HEADERS</code> trong <code>app/main.py</code>" },
+    { id: "T013", p: true, us: "US2", text: "Cài đặt <code>syncVideoStreams()</code> tự đóng/mở kết nối MJPEG theo tab đang chọn và <code>document.visibilitychange</code> trong <code>app/static/app.js</code>" }
+  ]},
+  { title: "Phase 5: User Story 3 - Phản hồi soi gương tức thời khi quay Đăng ký 7 góc (P2)", mvp: false, tasks: [
+    { id: "T014", p: true, us: "US3", text: "Viết kiểm thử chia sẻ luồng sạch <code>raw_hub</code> và tự động kích hoạt <code>camera.preview_active</code> khi đang ngủ trong <code>tests/test_stream_latency.py</code>" },
+    { id: "T015", p: false, us: "US3", text: "Mở rộng <code>StreamComposer</code> xuất bản <code>raw_hub</code> theo nhu cầu và đồng bộ <code>camera.preview_active</code> trong <code>app/stream.py</code> & <code>app/pipeline.py</code>" },
+    { id: "T016", p: false, us: "US3", text: "Chuyển <code>GET /video_raw.mjpg</code> sang async <code>raw_hub</code> trong <code>app/main.py</code> và hợp nhất vòng đời <code>#enrollVideo</code> vào <code>syncVideoStreams()</code> trong <code>app/static/app.js</code>" }
+  ]},
+  { title: "Phase 6: User Story 4 - Giám sát thông số Stream & Tự khôi phục kết nối (P3)", mvp: false, tasks: [
+    { id: "T017", p: true, us: "US4", text: "Viết kiểm thử hợp đồng trường mới <code>stream_fps</code>, <code>stream_target_fps</code>, <code>stream_viewers</code> và đổi nguồn camera nóng trong <code>tests/test_api_contracts.py</code> & <code>tests/test_stream_latency.py</code>" },
+    { id: "T018", p: false, us: "US4", text: "Bổ sung chỉ số <code>stream_fps</code>, <code>stream_target_fps</code>, <code>stream_viewers</code> vào <code>Pipeline.status()</code> trong <code>app/pipeline.py</code> & đồng bộ đổi nguồn ở <code>app/main.py</code>" },
+    { id: "T019", p: false, us: "US4", text: "Hiển thị <code>stream FPS</code> trên thanh trạng thái và bổ sung watchdog tự làm mới <code>#video</code> trong ≤ 2s khi nguồn phục hồi trong <code>app/static/app.js</code>" }
+  ]},
+  { title: "Phase 7: Polish & Cross-Cutting Concerns (Benchmark, Tài liệu & Nghiệm thu)", mvp: false, tasks: [
+    { id: "T020", p: true, us: "", text: "Bổ sung chế độ <code>--stream-bench</code> đo tốc độ ROI overlay, JPEG encode và FPS đầu ra trong <code>scripts/benchmark.py</code>" },
+    { id: "T021", p: true, us: "", text: "Cập nhật hướng dẫn tham số luồng phát & cấu hình Nginx Reverse Proxy cho máy chủ trong <code>README.md</code> và <code>docs/HUONG_DAN_KY_THUAT.html</code>" },
+    { id: "T022", p: false, us: "", text: "Chạy kiểm chứng toàn bộ <code>.venv/bin/pytest -v</code> và <code>scripts/benchmark.py --stream-bench</code> theo <code>specs/002-low-latency-stream/quickstart.md</code>" }
+  ]}
+];
+
+const KEY = "facegate_tasks_002_done";
+let doneSet = new Set(JSON.parse(localStorage.getItem(KEY) || "[]"));
+let currentFilter = "all";
+
+function toggleTask(id) {
+  if (doneSet.has(id)) doneSet.delete(id); else doneSet.add(id);
+  localStorage.setItem(KEY, JSON.stringify([...doneSet]));
+  render();
+}
+
+function filterTasks(mode, btn) {
+  currentFilter = mode;
+  document.querySelectorAll(".filter-btn").forEach(b => b.classList.toggle("active", b === btn));
+  render();
+}
+
+function render() {
+  const box = document.getElementById("taskContainer");
+  box.innerHTML = PHASES.map(ph => {
+    const items = ph.tasks.filter(t => {
+      if (currentFilter === "all") return true;
+      if (currentFilter === "mvp") return ph.mvp;
+      if (currentFilter === "parallel") return t.p;
+      return t.us === currentFilter;
+    });
+    if (!items.length) return "";
+    return `<div style="margin-bottom:16px">
+      <div class="phase-head"><b>${ph.title}</b><span style="font-size:12px;color:var(--muted)">${items.length} tác vụ</span></div>
+      ${items.map(t => {
+        const checked = doneSet.has(t.id);
+        const usBadge = t.us ? `<span class="pill ${t.us.toLowerCase()}">[${t.us}]</span>` : "";
+        return `<label class="task-row ${checked ? 'done' : ''}">
+          <input type="checkbox" ${checked ? "checked" : ""} onchange="toggleTask('${t.id}')">
+          <span class="tid">${t.id}</span>
+          ${t.p ? '<span class="pill p">[P]</span>' : ''}
+          ${usBadge}
+          <span class="desc">${t.text}</span>
+        </label>`;
+      }).join("")}
+    </div>`;
+  }).join("");
+  const total = 22, done = doneSet.size;
+  document.getElementById("progText").textContent = `${done} / ${total} hoàn thành`;
+  document.getElementById("progFill").style.width = `${Math.round(done / total * 100)}%`;
+}
+
+function saveSignoff() {
+  const data = {
+    approver: document.getElementById("approver").value,
+    decision: document.getElementById("decision").value,
+    note: document.getElementById("note").value,
+    ts: new Date().toLocaleString("vi-VN")
+  };
+  localStorage.setItem("facegate_tasks_002_signoff", JSON.stringify(data));
+  document.getElementById("savedMsg").textContent = "Đã lưu xác nhận lúc " + data.ts;
+}
+
+render();
+</script>
+</body>
+</html>

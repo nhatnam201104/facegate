@@ -178,11 +178,12 @@ class Liveness:
         # 1. Cổng ngữ cảnh: phát hiện mặt trong màn hình trên tỉ lệ đáng kể các frame gần nhất (vd >= 3/5) hoặc 2 mặt/1 thân
         recent_scr = hist[-self.screen_window:] if hist else []
         screen_hits = sum(1 for h in recent_scr if h["spoof_reason"] == "screen_detected")
-        dual_hits = sum(1 for h in hist[-self.screen_window:] if h["spoof_reason"] == "multi_face_single_body")
+        dual_hits = sum(1 for h in recent_scr if h["spoof_reason"] == "multi_face_single_body")
         if screen_hits >= self.screen_min_hits:
             return self._mark_spoof(track, "screen_detected", 0.05, "context_parallax", medium_clean=False)
         if dual_hits >= 2:
             return self._mark_spoof(track, "multi_face_single_body", 0.08, "context_parallax", body_coupled=False)
+        screen_suspect = (screen_hits >= 2) or bool(recent_scr and recent_scr[-1]["spoof_reason"] == "screen_detected")
 
         moire_vals = [h["moire_score"] for h in hist if h.get("moire_score") is not None]
         moire_med = float(np.median(moire_vals[-6:])) if moire_vals else 0.0
@@ -192,7 +193,13 @@ class Liveness:
             return self._mark_spoof(track, "moire_pattern", round(1.0 - moire_med, 4), "context_parallax",
                                     moire_ok=False)
 
-        # 2. Nhánh A (Ưu tiên Best-shot chính diện nếu có đủ mẫu MiniFASNet hoặc đang chốt ở frontal)
+        # Nếu đã có >= 2 mẫu MiniFASNet chính diện nhưng trung bình dưới ngưỡng spoof -> chặn sớm không cho lách sang Nhánh B
+        if len(track.live) >= 2:
+            early_fas = float(np.mean(track.live))
+            if early_fas < self.spoof_below:
+                return self._mark_spoof(track, "texture_spoof", early_fas, "hybrid" if hist else "texture_fas", fas=early_fas)
+
+        # 2. Nhánh A (Chính diện / đủ mẫu MiniFASNet)
         if len(track.live) >= self.min_frames:
             fas_mean = float(np.mean(track.live))
             body_ok = (not hist) or (sum(1 for h in hist[-4:] if h["body_coupled"]) >= max(1, len(hist[-4:]) // 2))
@@ -201,23 +208,30 @@ class Liveness:
             track.liveness_score = round(fas_mean, 4)
             track.liveness_detail = {
                 "fas": round(fas_mean, 4),
-                "medium_clean": True,
+                "medium_clean": not screen_suspect,
                 "body_coupled": body_ok,
                 "parallax_ok": None,
                 "moire_ok": moire_a_ok,
-                "reason": None,
+                "reason": "intermittent_screen" if screen_suspect else None,
             }
             if fas_mean < self.spoof_below:
                 return self._mark_spoof(track, "texture_spoof", fas_mean, track.liveness_mode, fas=fas_mean)
-            if fas_mean >= self.fas_thr and body_ok and moire_a_ok:
+            if fas_mean >= self.fas_thr and body_ok and moire_a_ok and not screen_suspect:
                 if track.employee_id is not None:
-                    track.verification_tier = "verified"
+                    track.verification_tier = "verified" if track.matched_group == "frontal" else "profile_verified"
                 return "live"
             return "checking"
 
-        # Nếu đang nhắm chốt ở ngăn frontal mà chưa đủ min_frames -> tiếp tục chờ
-        if track.matched_group == "frontal" and len(track.buckets.get("left_profile", [])) < self.min_frames \
-                and len(track.buckets.get("right_profile", [])) < self.min_frames:
+        # Khóa chặt định tuyến theo nhóm góc dùng để chốt danh tính: đang chốt ở 'frontal' bắt buộc chờ đủ mẫu Nhánh A
+        if track.employee_id is not None:
+            is_frontal_target = track.matched_group == "frontal"
+        elif track.matched_group != "frontal":
+            is_frontal_target = False
+        elif track.pose_history and abs(float(track.pose_history[-1][1])) > self.frontal_max_yaw:
+            is_frontal_target = False
+        else:
+            is_frontal_target = track.pose_group == "frontal"
+        if is_frontal_target:
             return "checking"
 
         # 3. Nhánh B: Góc nghiêng sâu (40° < |yaw| <= 90°) — Kiểm định Context + Body + 3D Motion Parallax + Moiré
@@ -232,12 +246,13 @@ class Liveness:
                 return self._mark_spoof(track, "unattached_face", 0.12, "context_parallax", body_coupled=False)
 
         frame_w = float(frame_shape[1]) if frame_shape is not None and len(frame_shape) >= 2 else 640.0
+        pose_tail = list(track.pose_history)[-max(self.par_min_frames, 8):]
         xs = [float(p[4][0]) for p in track.pose_history]
         travel_ratio = (max(xs) - min(xs)) / max(frame_w, 1.0)
         if self.par_enabled and travel_ratio < self.par_min_travel:
             track.liveness_detail = {
                 "fas": None,
-                "medium_clean": True,
+                "medium_clean": not screen_suspect,
                 "body_coupled": True,
                 "parallax_ok": False,
                 "travel_ratio": round(travel_ratio, 4),
@@ -246,12 +261,12 @@ class Liveness:
             }
             return "checking"
 
-        lm_seq = [p[5] for p in list(track.pose_history)[-max(self.par_min_frames, 8):] if p[5] is not None]
+        lm_seq = [p[5] for p in pose_tail if p[5] is not None]
         if self.par_enabled:
             if not has_valid_parallax_landmarks(lm_seq):
                 track.liveness_detail = {
                     "fas": None,
-                    "medium_clean": True,
+                    "medium_clean": not screen_suspect,
                     "body_coupled": True,
                     "parallax_ok": None,
                     "moire_ok": moire_ok,
@@ -265,8 +280,23 @@ class Liveness:
         body_ok = (not recent_ctx) or (sum(1 for h in recent_ctx if h["body_coupled"]) >= len(recent_ctx) // 2 + 1)
 
         if self.par_enabled and len(lm_seq) >= self.par_min_frames and par_score < self.par_min_depth * 0.65:
-            return self._mark_spoof(track, "planar_no_parallax", par_score, "context_parallax",
-                                    parallax_ok=False, parallax_score=par_score)
+            yaws = [float(p[1]) for p in pose_tail]
+            yaw_span = (max(yaws) - min(yaws)) if yaws else 0.0
+            flat_z = any(lm.shape[1] >= 3 and float(np.ptp(lm[:, 2])) < 1e-3 for lm in lm_seq)
+            medium_near = any(h.get("medium_nearby") for h in recent_ctx) or screen_suspect
+            if flat_z or yaw_span >= 3.0 or medium_near or len(track.pose_history) >= self.par_min_frames + 4:
+                return self._mark_spoof(track, "planar_no_parallax", par_score, "context_parallax",
+                                        parallax_ok=False, parallax_score=par_score)
+            track.liveness_detail = {
+                "fas": None,
+                "medium_clean": not screen_suspect,
+                "body_coupled": body_ok,
+                "parallax_ok": False,
+                "parallax_score": round(par_score, 4),
+                "moire_ok": moire_ok,
+                "reason": "waiting_angle_variation",
+            }
+            return "checking"
 
         if self.moire_enabled and not moire_ready:
             return "checking"
@@ -275,7 +305,7 @@ class Liveness:
             return self._mark_spoof(track, "moire_pattern", round(1.0 - moire_med, 4), "context_parallax",
                                     moire_ok=False)
 
-        if par_ok and body_ok and moire_ok:
+        if par_ok and body_ok and moire_ok and not screen_suspect:
             comp_score = round(float(0.65 * par_score + 0.35 * (1.0 - moire_med)), 4)
             track.liveness_score = comp_score
             track.liveness_detail = {
@@ -287,8 +317,8 @@ class Liveness:
                 "moire_ok": True,
                 "reason": None,
             }
-            if track.employee_id is not None and track.verification_tier != "verified":
-                track.verification_tier = "profile_verified"
+            if track.employee_id is not None:
+                track.verification_tier = "verified" if track.matched_group == "frontal" else "profile_verified"
             return "live"
 
         return "checking"

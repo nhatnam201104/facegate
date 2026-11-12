@@ -1,0 +1,71 @@
+{
+  "schema_version": "1.0",
+  "extensions": {
+    "bug": {
+      "version": "1.0.2",
+      "source": "local",
+      "manifest_hash": "sha256:00ec851a8e57713e9d65401e4c7fa5b4fa4a689decacb0b654ba5411c653b647",
+      "enabled": true,
+      "priority": 10,
+      "registered_commands": {
+        "claude": [
+          "speckit.bug.assess",
+          "speckit.bug.fix",
+          "speckit.bug.test"
+        ]
+      },
+      "registered_skills": [],
+      "installed_at": "2026-11-11T06:34:12.469658+00:00"
+    },
+    "assess": {
+      "version": "1.0.2",
+      "source": "local",
+      "manifest_hash": "sha256:c446e95c0cfc9482eb794fa90d428c5da3257162515db2cebd9ae3ec534d1919",
+      "enabled": true,
+      "priority": 10,
+      "registered_commands": {
+        "claude": [
+          "speckit.assess.intake",
+          "speckit.assess.research",
+          "speckit.assess.define",
+          "speckit.assess.shape",
+          "speckit.assess.decide"
+        ]
+      },
+      "registered_skills": [],
+      "installed_at": "2026-11-11T06:34:12.478571+00:00"
+    },
+    "git": {
+      "version": "1.0.3",
+      "source": "local",
+      "manifest_hash": "sha256:69b995053c85418e1b2b32e02aea5f52e8b34f01bc2888537bcb2a029b33ce05",
+      "enabled": true,
+      "priority": 10,
+      "registered_commands": {
+        "claude": [
+          "speckit.git.feature",
+          "speckit.git.validate",
+          "speckit.git.remote",
+          "speckit.git.initialize",
+          "speckit.git.commit"
+        ]
+      },
+      "registered_skills": [],
+      "installed_at": "2026-11-11T06:34:12.502075+00:00"
+    },
+    "github": {
+      "version": "1.0.5",
+      "source": "local",
+      "manifest_hash": "sha256:72a5e53c586714c757db44ab4e1c89a915b15dd05baf7e272e37fc3c84e5afae",
+      "enabled": true,
+      "priority": 10,
+      "registered_commands": {
+        "claude": [
+          "speckit.github.taskstoissues"
+        ]
+      },
+      "registered_skills": [],
+      "installed_at": "2026-11-11T06:34:12.536033+00:00"
+    }
+  }
+}

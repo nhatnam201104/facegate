@@ -17,7 +17,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from .enrollment import EnrollError, _resize_for_detect, store_enrollment
+from .enrollment import DEFAULT_CROSS_POSE_COS, EnrollError, _resize_for_detect, store_enrollment
 from .pipeline import crop_with_margin
 from .quality import assess
 from .state import bc
@@ -137,18 +137,21 @@ def evaluate(step: Step, dyaw: float, dpitch: float, p: dict) -> tuple[bool, str
 
 class GuidedSession:
     def __init__(self, ctx, code: str, name: str,
-                 profile_90: bool | None = None, supplement_only: bool = False):
+                 profile_90: bool | None = None, supplement_only: bool = False,
+                 verify_refs: list[np.ndarray] | None = None):
         self.id = uuid.uuid4().hex[:12]
         self.ctx, self.code, self.name = ctx, code, name
         ecfg = ctx.cfg["enrollment"]
         self.p = {**DEFAULTS, **(ecfg.get("guided") or {})}
-        self.cross_pose_cos = float(ecfg.get("cross_pose_min_cosine", 0.22))
+        self.cross_pose_cos = float(ecfg.get("cross_pose_min_cosine", DEFAULT_CROSS_POSE_COS))
         use_90 = bool(self.p.get("enable_profile_90", True)) if profile_90 is None else bool(profile_90)
         self.supplement_only = bool(supplement_only)
         self._verify_refs: list[np.ndarray] = []
         self._verified_front_emb: np.ndarray | None = None
         if self.supplement_only:
-            self._verify_refs = load_employee_frontal_embeddings(ctx.db, code, ctx.engine.model_version)
+            self._verify_refs = list(verify_refs) if verify_refs is not None else load_employee_frontal_embeddings(
+                ctx.db, code, ctx.engine.model_version
+            )
             if not self._verify_refs:
                 raise EnrollError(f"Nhân viên {code} chưa có mẫu khuôn mặt chính diện cho model hiện tại. Hãy thực hiện đăng ký đầy đủ trước.")
             self.steps = [VERIFY_FRONT_STEP, *PROFILE_STEPS]

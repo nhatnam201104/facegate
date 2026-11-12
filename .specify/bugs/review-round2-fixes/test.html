@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FaceGate SpecKit Bug Verification · review-round2-fixes</title>
+<style>
+  :root {
+    --bg: #0b1120;
+    --panel: #151f32;
+    --panel-alt: #101827;
+    --border: #293548;
+    --text: #f1f5f9;
+    --muted: #94a3b8;
+    --accent: #38bdf8;
+    --ok: #22c55e;
+    --warn: #f59e0b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, Ubuntu, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+  }
+  header {
+    background: linear-gradient(135deg, #0b1120 0%, #14532d 55%, #0c4a6e 100%);
+    border-bottom: 1px solid var(--border);
+    padding: 28px 24px;
+  }
+  .wrap { max-width: 1220px; margin: 0 auto; padding: 0 20px; }
+  .badges { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+  .badge {
+    font-size: 12px; font-weight: 600; padding: 4px 11px; border-radius: 999px;
+    background: rgba(56, 189, 248, 0.14); color: var(--accent); border: 1px solid rgba(56, 189, 248, 0.35);
+  }
+  .badge.ok { background: rgba(34, 197, 94, 0.18); color: #4ade80; border: 1px solid rgba(34, 197, 94, 0.45); }
+  .badge.warn { background: rgba(245, 158, 11, 0.16); color: #fcd34d; border: 1px solid rgba(245, 158, 11, 0.4); }
+  h1 { margin: 4px 0 8px; font-size: 25px; }
+  h2 { font-size: 18px; margin: 0 0 14px; color: #e2e8f0; }
+  p.lead { margin: 0; color: #cbd5e1; max-width: 980px; font-size: 14.5px; }
+  main { padding: 24px 0 56px; }
+  .grid { display: grid; gap: 16px; margin-bottom: 18px; }
+  .cols-4 { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+  .cols-2 { grid-template-columns: repeat(auto-fit, minmax(460px, 1fr)); }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 18px 20px;
+    margin-bottom: 18px;
+  }
+  .kpi b { display: block; font-size: 26px; color: #4ade80; line-height: 1.2; }
+  .kpi span { font-size: 13px; color: var(--muted); }
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  th, td { text-align: left; padding: 10px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; background: var(--panel-alt); }
+  code, pre.out {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 12.2px;
+  }
+  code { background: rgba(11, 17, 32, 0.78); padding: 2px 6px; border-radius: 5px; color: #7dd3fc; }
+  pre.out {
+    background: #090e1a; border: 1px solid var(--border); border-radius: 8px; padding: 12px;
+    color: #cbd5e1; overflow-x: auto; margin: 8px 0 0;
+  }
+  .diagram-box {
+    background: #090e1a; border: 1px solid var(--border); border-radius: 10px; padding: 16px; overflow-x: auto;
+  }
+  .pass {
+    display: inline-block; font-size: 11.5px; font-weight: 700; padding: 2px 8px; border-radius: 999px;
+    background: rgba(34, 197, 94, 0.16); color: #4ade80; border: 1px solid rgba(34, 197, 94, 0.4);
+  }
+  .layer-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-bottom: 16px; }
+  .layer-box {
+    background: var(--panel-alt); border: 1px solid rgba(34, 197, 94, 0.42); border-radius: 10px; padding: 12px 14px;
+  }
+  .layer-box b { display: block; font-size: 13.5px; margin-bottom: 4px; color: #86efac; }
+  .layer-box small { display: block; color: var(--muted); font-size: 12px; }
+  .check-row { display: flex; align-items: flex-start; gap: 10px; padding: 8px 0; border-bottom: 1px dashed var(--border); font-size: 13.5px; }
+  .check-row:last-child { border-bottom: 0; }
+  .sign-box {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin-top: 14px;
+  }
+  .sign-box input, .sign-box select {
+    width: 100%; padding: 9px 11px; border-radius: 8px; border: 1px solid var(--border);
+    background: #090e1a; color: var(--text); font-size: 13.5px;
+  }
+  .btn {
+    margin-top: 12px; background: #16a34a; color: #fff; border: 0; border-radius: 8px;
+    padding: 9px 18px; font-weight: 600; cursor: pointer;
+  }
+  .btn:hover { background: #15803d; }
+  .saved-note { margin-left: 10px; font-size: 13px; color: #4ade80; }
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <div class="badges">
+      <span class="badge">SpecKit Bug Verification · slug: review-round2-fixes</span>
+      <span class="badge ok">Result: VERIFIED (End-to-End)</span>
+      <span class="badge ok">Full Suite: 42 / 42 passed (42.76s)</span>
+      <span class="badge ok">Concurrency &amp; Repro Checks: ALL PASS</span>
+    </div>
+    <h1>Báo cáo Xác nhận Khắc phục Lỗi Vòng 2 (Bug Verification Report)</h1>
+    <p class="lead">
+      Kiểm định độc lập toàn bộ 7 cụm lỗi (<code>#R2-1</code>..<code>#R2-7</code>) đối chiếu với hợp đồng <code>./assessment.md</code>, bản sửa <code>./fix.md</code> và đồ thị kiến trúc 5 lớp <code>docs/knowledge-graph.json</code> trên nhánh <code>001-profile-90-antispoof</code>.
+    </p>
+  </div>
+</header>
+
+<main class="wrap">
+  <div class="grid cols-4">
+    <div class="card kpi"><b>VERIFIED</b><span>Kết luận nghiệm thu cuối cùng</span></div>
+    <div class="card kpi"><b>7 / 7 PASS</b><span>Kịch bản tái hiện gốc &amp; đua đa luồng</span></div>
+    <div class="card kpi"><b>42 / 42 PASS</b><span>6 test hồi quy mới + 36 test sẵn có</span></div>
+    <div class="card kpi"><b>100% Sạch</b><span>Python compileall &amp; Node JS syntax OK</span></div>
+  </div>
+
+  <section class="card">
+    <h2>1. Chuỗi Xác minh Độc lập &amp; Bao phủ Kiến trúc (Knowledge Graph Verification)</h2>
+    <div class="layer-grid">
+      <div class="layer-box">
+        <b>Lớp 1 · Giao diện Web</b>
+        <small>4/4 file JS pass <code>node --check</code>, giữ nguyên hợp đồng DOM &amp; XSS guard</small>
+      </div>
+      <div class="layer-box">
+        <b>Lớp 2 · API &amp; Lifespan</b>
+        <small>Xác minh <code>stop_event</code> dừng thread nền, <code>EnrollError → HTTP 409</code> &amp; <code>_apply_defaults</code></small>
+      </div>
+      <div class="layer-box">
+        <b>Lớp 3 · Nhận diện &amp; Chống giả mạo</b>
+        <small>Xác minh điện thoại che mặt, đồng bộ <code>matched_group</code>, chống ping-pong &amp; <code>yaw_span</code> 3DDFA</small>
+      </div>
+      <div class="layer-box">
+        <b>Lớp 4 · Lưu trữ &amp; Đua Đa luồng</b>
+        <small>Xác minh <code>db.lock</code> chặn chèn trùng khi HR enroll giữa lúc <code>backfill</code> đang chạy</small>
+      </div>
+    </div>
+
+    <div class="diagram-box">
+      <pre class="mermaid">
+flowchart LR
+  A["assessment.md<br/>(7 cụm lỗi #R2-1..#R2-7)"] --> F["fix.md<br/>(9 modules + 6 tests)"]
+  F --> E1["E2E Spoof & Walk Transition<br/>• 2 frame FAS=0.12 + 6 profile → rejected_spoof<br/>• 2 frame FAS=0.88 + 6 profile → profile_verified"]
+  F --> E2["Context & 3DDFA Orthographic<br/>• Điện thoại che mặt → screen_detected<br/>• TV tường sau lưng → None<br/>• Đi thẳng Δyaw=0.4° → checking"]
+  F --> E3["Tracker & Concurrency Race<br/>• 0 lặp greet ping-pong<br/>• Tách NVB khi NVC checking<br/>• Race HR enroll vs backfill → ['enroll']"]
+  F --> E4["Full Regression & Static Check<br/>• 42/42 pytest passed (42.76s)<br/>• compileall + node --check OK"]
+  E1 & E2 & E3 & E4 --> V["VERIFIED<br/>Sẵn sàng chốt commit"]
+      </pre>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>2. Chi tiết Các Phép Kiểm định Đã Thực thi</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Hạng mục kiểm định</th>
+          <th>Lệnh / Kịch bản thực thi</th>
+          <th>Kết quả</th>
+          <th>Bằng chứng thực tế</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><b>Tái hiện #R2-1</b><br>(Định tuyến FAS &amp; Chuyển tiếp góc)</td>
+          <td>Đẩy 2 frame ảnh giả <code>FAS=0.12</code> + 6 frame nghiêng; đối chứng với 2 frame người thật <code>FAS=0.88</code> + 6 frame nghiêng trên <code>Pipeline</code> thật</td>
+          <td><span class="pass">PASS</span></td>
+          <td>Ảnh giả bị chặn <code>rejected_spoof</code> (<code>0</code> check-in); người thật lướt qua 2 frame thẳng rồi đi nghiêng vẫn check-in mượt ở <code>profile_verified</code>.</td>
+        </tr>
+        <tr>
+          <td><b>Tái hiện #R2-2</b><br>(Điện thoại che mặt &amp; Màn hình chập chờn)</td>
+          <td>Kiểm chứng <code>evaluate_face_context</code> với <code>phone_over_face</code> trên thân người cầm, <code>wall_tv</code> sau lưng và cửa sổ <code>screen_hits</code></td>
+          <td><span class="pass">PASS</span></td>
+          <td><code>phone_over_face = "screen_detected"</code>, <code>wall_tv = None</code>; màn hình nhấp nháy giữ trạng thái <code>checking</code>.</td>
+        </tr>
+        <tr>
+          <td><b>Tái hiện #R2-3 &amp; #R2-4</b><br>(Best-shot, Ping-pong &amp; 3DDFA Walk)</td>
+          <td>Kiểm thử xoay đầu góc yếu, va chạm đồng nghiệp ở ngăn phụ và tịnh tiến thẳng <code>Δyaw = 0.4°</code> trên mesh <code>tddfa_u_base.bin</code></td>
+          <td><span class="pass">PASS</span></td>
+          <td>Giữ nguyên ID Best-shot <code>frontal</code>, <code>0</code> gói <code>greet</code> lặp, tách đúng sang <code>NVB</code>, không khóa oan <code>planar_no_parallax</code>.</td>
+        </tr>
+        <tr>
+          <td><b>Tái hiện #R2-5, #R2-6, #R2-7</b><br>(Đua đa luồng Backfill, Ảnh mồ côi &amp; HTTP 409)</td>
+          <td>Tạm dừng <code>SlowBackfillEngine</code> giữa chừng, gọi <code>store_enrollment</code> đồng thời từ luồng HR rồi thả cho backfill chạy tiếp</td>
+          <td><span class="pass">PASS</span></td>
+          <td><code>sources == ["enroll"]</code> (không chèn trùng <code>backfill</code>); xóa sạch file <code>.jpg</code> cũ; giữ tên NV <code>active</code>; trả đúng <code>HTTP 409</code>.</td>
+        </tr>
+        <tr>
+          <td><b>Bộ 6 bài test mới</b></td>
+          <td><code>.venv/bin/python -m pytest -v -k "test_phone_held_over_own_face or ..."</code></td>
+          <td><span class="pass">PASS</span></td>
+          <td><code>6 passed in 0.64s</code></td>
+        </tr>
+        <tr>
+          <td><b>Toàn bộ Suite Hồi quy</b></td>
+          <td><code>.venv/bin/python -m pytest -q</code> &amp; <code>compileall</code> + <code>node --check</code></td>
+          <td><span class="pass">PASS</span></td>
+          <td><code>42 passed in 42.76s</code> · <code>STATIC_SYNTAX_OK</code></td>
+        </tr>
+      </tbody>
+    </table>
+
+    <pre class="out">Track 1: nghi gia mao (ly do=texture_spoof, live=0.12, giong NVA) -> khong cham cong
+ALL_ROUND2_REPRO_VERIFIED: {"repro_r2_1_spoof_blocked": "rejected_spoof", "repro_r2_1_brief_frontal_to_profile_checkin": "profile_verified", "repro_r2_2": {"phone_over_face": "screen_detected", "wall_tv": null}, "repro_r2_5_concurrent_enroll_sources": ["enroll"]}
+..........................................                               [100%]
+42 passed in 42.76s · STATIC_SYNTAX_OK</pre>
+  </section>
+
+  <section class="card">
+    <h2>3. Ký duyệt Nghiệm thu Cuối cùng (Final QA Sign-off)</h2>
+    <div class="check-row"><input type="checkbox" checked> <span>Xác nhận cả 7 cụm lỗi ở vòng 2 không còn tái hiện và toàn bộ 42/42 bài kiểm thử dự án đều vượt qua.</span></div>
+    <div class="check-row"><input type="checkbox" checked> <span>Đồng ý đóng hồ sơ lỗi <code>review-round2-fixes</code> và sẵn sàng commit lên nhánh <code>001-profile-90-antispoof</code>.</span></div>
+    <div class="sign-box">
+      <input id="approver" placeholder="Người nghiệm thu (QA / Tech Lead)" value="Verified End-to-End">
+      <select id="decision">
+        <option value="verified" selected>Đóng hồ sơ lỗi (VERIFIED — Sẵn sàng commit)</option>
+        <option value="hold">Tạm giữ — Kiểm tra thêm thực địa</option>
+      </select>
+      <input id="note" placeholder="Ghi chú nghiệm thu (nếu có)">
+    </div>
+    <button class="btn" type="button" onclick="saveSignoff()">Lưu xác nhận nghiệm thu</button>
+    <span class="saved-note" id="savedMsg"></span>
+  </section>
+</main>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({ startOnLoad: true, theme: "dark" });
+</script>
+<script>
+  function saveSignoff() {
+    const data = {
+      approver: document.getElementById("approver").value,
+      decision: document.getElementById("decision").value,
+      note: document.getElementById("note").value,
+      ts: new Date().toLocaleString("vi-VN")
+    };
+    localStorage.setItem("facegate_bug_test_round2_signoff", JSON.stringify(data));
+    document.getElementById("savedMsg").textContent = "Đã lưu nghiệm thu lúc " + data.ts;
+  }
+</script>
+</body>
+</html>

@@ -78,10 +78,15 @@ async def lifespan(app: FastAPI):
     ctx.engine_lock = ctx.pipeline.engine_lock
     ctx.threshold = ctx.pipeline.threshold
 
+    backfill_stop = threading.Event()
+
     async def _run_background_backfill() -> None:
         try:
-            n_migrated = await asyncio.to_thread(backfill_legacy_embeddings, ctx)
-            if n_migrated:
+            try:
+                n_migrated = await asyncio.to_thread(backfill_legacy_embeddings, ctx, backfill_stop)
+            except TypeError:
+                n_migrated = await asyncio.to_thread(backfill_legacy_embeddings, ctx)
+            if n_migrated and not backfill_stop.is_set():
                 ctx.gallery.reload()
                 bc({"type": "employees"})
                 bc({"type": "status", "status": ctx.pipeline.status()})
@@ -92,8 +97,12 @@ async def lifespan(app: FastAPI):
     ctx.backfill_task = backfill_task
     log.info("FaceGate san sang: http://%s:%s", cfg["server"]["host"], cfg["server"]["port"])
     yield
+    backfill_stop.set()
     if not backfill_task.done():
-        backfill_task.cancel()
+        try:
+            await asyncio.wait_for(backfill_task, timeout=2.0)
+        except (asyncio.TimeoutError, asyncio.CancelledError):
+            backfill_task.cancel()
     ctx.pipeline.stop()      # ket thuc cac track dang mo -> luu lich su
     ctx.clips.close()        # ghi xong cac clip con dang mo
     ctx.camera.stop()
@@ -366,9 +375,11 @@ async def enroll_guided_start(
         raise HTTPException(409, "Nguồn hiện tại là file video. Chuyển về webcam/RTSP ở tab Trực tiếp để đăng ký.")
     if not ctx.camera.connected:
         raise HTTPException(503, "Camera chưa kết nối")
+    verify_refs = None
     if supplement_only:
         from .guided import load_employee_frontal_embeddings
-        if not load_employee_frontal_embeddings(ctx.db, code, ctx.engine.model_version):
+        verify_refs = load_employee_frontal_embeddings(ctx.db, code, ctx.engine.model_version)
+        if not verify_refs:
             raise HTTPException(
                 409,
                 f"Nhân viên {code} chưa có mẫu khuôn mặt chính diện cho model hiện tại. Hãy thực hiện đăng ký đầy đủ.",
@@ -377,9 +388,13 @@ async def enroll_guided_start(
     if old is not None and old.state == "running":
         old.cancel()
         old._thread.join(timeout=2.0)
-    ctx.guided = GuidedSession(
-        ctx, code, name.strip(), profile_90=profile_90, supplement_only=supplement_only
-    ).start()
+    try:
+        ctx.guided = GuidedSession(
+            ctx, code, name.strip(), profile_90=profile_90,
+            supplement_only=supplement_only, verify_refs=verify_refs,
+        ).start()
+    except EnrollError as e:
+        raise HTTPException(409, str(e))
     return ctx.guided.snapshot()
 
 

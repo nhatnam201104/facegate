@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FaceGate SpecKit Tasks · 001-profile-90-antispoof</title>
+<style>
+  :root {
+    --bg: #0f172a;
+    --panel: #1e293b;
+    --panel-alt: #162033;
+    --border: #334155;
+    --text: #f1f5f9;
+    --muted: #94a3b8;
+    --accent: #38bdf8;
+    --p1: #4ade80;
+    --p2: #fbbf24;
+    --p3: #c084fc;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, Ubuntu, sans-serif;
+    background: var(--bg); color: var(--text); line-height: 1.55;
+  }
+  header {
+    background: linear-gradient(135deg, #0f172a 0%, #1e293b 60%, #164e63 100%);
+    border-bottom: 1px solid var(--border); padding: 26px 24px;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 0 20px; }
+  .badges { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+  .badge {
+    font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: 999px;
+    background: rgba(56, 189, 248, 0.14); color: var(--accent); border: 1px solid rgba(56, 189, 248, 0.35);
+  }
+  .badge.ok { background: rgba(74, 222, 128, 0.14); color: var(--p1); border-color: rgba(74, 222, 128, 0.35); }
+  h1 { margin: 4px 0 8px; font-size: 25px; }
+  h2 { font-size: 18px; margin: 0 0 12px; color: #e2e8f0; }
+  p.lead { margin: 0; color: #cbd5e1; max-width: 920px; }
+  main { padding: 22px 0 54px; }
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; margin-bottom: 18px; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; margin-bottom: 16px; }
+  .kpi b { display: block; font-size: 24px; color: var(--accent); }
+  .kpi span { font-size: 13px; color: var(--muted); }
+  .diagram-box { background: #0b1220; border: 1px solid var(--border); border-radius: 10px; padding: 14px; overflow-x: auto; }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; align-items: center; }
+  .filter-btn {
+    background: var(--panel-alt); color: var(--text); border: 1px solid var(--border);
+    padding: 6px 12px; border-radius: 8px; font-size: 13px; cursor: pointer;
+  }
+  .filter-btn.active { background: #0284c7; border-color: #38bdf8; font-weight: 600; }
+  .prog-wrap { flex: 1; min-width: 220px; display: flex; align-items: center; gap: 10px; justify-content: flex-end; }
+  .prog-bar { width: 180px; height: 9px; background: #0b1220; border-radius: 99px; overflow: hidden; border: 1px solid var(--border); }
+  .prog-fill { height: 100%; background: var(--p1); width: 0%; transition: width 0.2s; }
+  .phase-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+  .task-row {
+    display: flex; align-items: flex-start; gap: 10px; padding: 9px 8px;
+    border-top: 1px solid rgba(51, 65, 85, 0.65); font-size: 13.8px;
+  }
+  .task-row.done span.desc { text-decoration: line-through; color: var(--muted); }
+  .tid { font-family: ui-monospace, monospace; font-weight: 700; color: var(--accent); min-width: 44px; }
+  .pill {
+    font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 6px; white-space: nowrap;
+  }
+  .pill.p { background: rgba(56, 189, 248, 0.16); color: #7dd3fc; border: 1px solid rgba(56, 189, 248, 0.35); }
+  .pill.us1, .pill.us2 { background: rgba(74, 222, 128, 0.15); color: var(--p1); }
+  .pill.us3 { background: rgba(251, 191, 36, 0.15); color: var(--p2); }
+  .pill.us4 { background: rgba(192, 132, 252, 0.16); color: var(--p3); }
+  code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12.2px; background: rgba(15, 23, 42, 0.7); padding: 2px 6px; border-radius: 5px; color: #7dd3fc;
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <div class="badges">
+      <span class="badge">SpecKit Tasks · 001-profile-90-antispoof</span>
+      <span class="badge ok">27 Executable Tasks · 7 Phases</span>
+      <span class="badge">14 Parallelizable [P] Tasks</span>
+    </div>
+    <h1>Danh sách Tác vụ Triển khai: Nhận diện 90° & Chống giả mạo Đa lớp</h1>
+    <p class="lead">Phân rã từ <code>plan.md</code>, <code>spec.md</code>, <code>data-model.md</code> và <code>contracts/</code> theo thứ tự phụ thuộc. Sẵn sàng thực thi tự động bằng lệnh <code>/speckit-implement</code>.</p>
+  </div>
+</header>
+
+<main class="wrap">
+  <section class="kpis">
+    <div class="card kpi"><b>27 Tác vụ</b><span>T001 → T027 (100% có đường dẫn file rõ ràng)</span></div>
+    <div class="card kpi"><b>17 Tác vụ MVP</b><span>Setup (3) + Foundational (4) + US1 (6) + US2 (4)</span></div>
+    <div class="card kpi"><b>14 Tác vụ [P]</b><span>Chạy song song trên các module độc lập</span></div>
+    <div class="card kpi"><b>4 Bộ Pytest</b><span>Kiểm thử đi trước cho Pose3D, Buckets, FAS, Guided</span></div>
+  </section>
+
+  <section class="card">
+    <h2>1. Đồ thị Phụ thuộc Giữa các Pha & User Stories</h2>
+    <div class="diagram-box">
+      <pre class="mermaid">
+flowchart TD
+  P1["Phase 1: Setup<br/>T001 – T003 (Models & Config)"] --> P2["Phase 2: Foundational (BLOCKING)<br/>T004 – T007 (DB Migrate + 3DDFA_V2 + Visible Quality)"]
+  P2 --> US1["Phase 3: US1 [P1] 🎯 MVP<br/>T008 – T013 (3-Bin Align + PoseGallery + Best-Shot Tracker)"]
+  P2 --> US2A["Phase 4: US2 [P1] Modules<br/>T014 – T016 (YOLOX-Nano + 3D Parallax + Moiré)"]
+  P2 --> US3["Phase 5: US3 [P2]<br/>T018 – T021 (7-Step Guided Enrollment)"]
+  US1 --> US2B["T017 [US2]: Tích hợp 4-Layer Liveness vào Pipeline"]
+  US1 -. "T010 Align Templates" .-> US3
+  US2B --> US4["Phase 6: US4 [P3]<br/>T022 – T024 (HR Audit Tiers & CSV/UI Filter)"]
+  US3 --> P7["Phase 7: Polish & Benchmark<br/>T025 – T027 (benchmark.py + Docs + E2E)"]
+  US4 --> P7
+      </pre>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="toolbar">
+      <button class="filter-btn active" onclick="filterTasks('all', this)">Tất cả (27)</button>
+      <button class="filter-btn" onclick="filterTasks('mvp', this)">Gói MVP Bảo mật (P1..P4 · 17)</button>
+      <button class="filter-btn" onclick="filterTasks('parallel', this)">Chạy song song [P] (14)</button>
+      <button class="filter-btn" onclick="filterTasks('US1', this)">US1 · Góc 90° (6)</button>
+      <button class="filter-btn" onclick="filterTasks('US2', this)">US2 · Chống giả mạo (4)</button>
+      <button class="filter-btn" onclick="filterTasks('US3', this)">US3 · Đăng ký 7 góc (4)</button>
+      <button class="filter-btn" onclick="filterTasks('US4', this)">US4 · Hậu kiểm HR (3)</button>
+      <div class="prog-wrap">
+        <span id="progText" style="font-size:13px;color:var(--muted)">0 / 27 hoàn thành</span>
+        <div class="prog-bar"><div class="prog-fill" id="progFill"></div></div>
+      </div>
+    </div>
+    <div id="taskContainer"></div>
+  </section>
+</main>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({ startOnLoad: true, theme: "dark" });
+</script>
+<script>
+const PHASES = [
+  { title: "Phase 1: Setup (Hạ tầng Mô hình & Cấu hình)", mvp: true, tasks: [
+    { id: "T001", p: false, us: "", text: "Cập nhật tải model ONNX mới (3DDFA_V2, EdgeFace-XS, YOLOX-Nano, cờ --research) trong <code>scripts/download_models.py</code>" },
+    { id: "T002", p: true, us: "", text: "Mở rộng nạp cấu hình & tương thích ngược ngưỡng <code>frontal/profile</code> trong <code>app/config.py</code>" },
+    { id: "T003", p: true, us: "", text: "Cập nhật tham số góc 90°, hysteresis và khối <code>liveness.context/parallax/moire</code> trong <code>config.yaml</code>" }
+  ]},
+  { title: "Phase 2: Foundational (Nền tảng Chặn Trước Mọi User Story)", mvp: true, tasks: [
+    { id: "T004", p: false, us: "", text: "Tự động migrate các cột <code>pose_group</code>, <code>yaw</code>, <code>verification_tier</code>, <code>liveness_mode</code>, <code>spoof_reason</code> trong <code>app/db.py</code>" },
+    { id: "T005", p: true, us: "", text: "Viết unit test ước lượng góc Euler 3D, hysteresis ±40° và sai số homography phẳng trong <code>tests/test_pose3d.py</code>" },
+    { id: "T006", p: false, us: "", text: "Xây dựng mô-đun <code>PoseEstimator3D</code> (3DDFA_V2 68 điểm mốc 3D + phân nhóm tư thế) trong <code>app/pose3d.py</code>" },
+    { id: "T007", p: true, us: "", text: "Đánh giá độ nét/độ sáng chỉ trên vùng da nhìn thấy (visible ROI), thêm kiểm tra <code>pitch/roll/occluded</code> & nhãn tiếng Việt trong <code>app/quality.py</code>, <code>app/pipeline.py</code>, <code>app/guided.py</code>" }
+  ]},
+  { title: "Phase 3: User Story 1 - Nhận diện góc nghiêng tới 90° & Best-Shot (Priority: P1) 🎯 MVP", mvp: true, tasks: [
+    { id: "T008", p: true, us: "US1", text: "Viết kiểm thử căn chỉnh 3 khung hình học & <code>EdgeFaceEngine</code> trong <code>tests/test_pose3d.py</code>" },
+    { id: "T009", p: true, us: "US1", text: "Viết kiểm thử <code>PoseGallery</code>, <code>Track</code> 3 ngăn không cắt track khi xoay đầu & ưu tiên Best-shot trong <code>tests/test_tracker_buckets.py</code>" },
+    { id: "T010", p: true, us: "US1", text: "Cài đặt căn chỉnh 3 khung <code>112×112</code> từ landmark 3D và <code>EdgeFaceEngine</code> trong <code>app/engines.py</code>" },
+    { id: "T011", p: true, us: "US1", text: "Nâng cấp <code>Gallery</code> tách 3 ma trận con theo <code>pose_group</code>, ngưỡng profile riêng & <code>pose_coverage</code> trong <code>app/gallery.py</code>" },
+    { id: "T012", p: false, us: "US1", text: "Nâng cấp <code>Track</code> & <code>IoUTracker</code> lưu 3 ngăn <code>buckets</code>, tham số tùy chọn <code>person_boxes=None</code> và tách <code>split_cosine</code> cùng nhóm góc trong <code>app/tracker.py</code>" },
+    { id: "T013", p: false, us: "US1", text: "Tích hợp <code>PoseEstimator3D</code> và ưu tiên Best-shot + nâng hạng tự động vào <code>app/pipeline.py</code>" }
+  ]},
+  { title: "Phase 4: User Story 2 - Chống giả mạo đa lớp ở góc chính diện & góc 90° (Priority: P1)", mvp: true, tasks: [
+    { id: "T014", p: true, us: "US2", text: "Viết kiểm thử 4 lớp chống giả mạo (màn hình điện thoại, 2 mặt/thân, ảnh phẳng không thị sai 3D, vân Moiré, quỹ đạo thật) trong <code>tests/test_liveness_profile.py</code>" },
+    { id: "T015", p: true, us: "US2", text: "Xây dựng <code>ContextDetector</code> (YOLOX-Nano COCO) quét vật chứa giả mạo & tỷ lệ Đầu–Cơ thể trong <code>app/context_detector.py</code>" },
+    { id: "T016", p: false, us: "US2", text: "Nâng cấp bộ điều phối chống giả mạo định tuyến tư thế (MiniFASNet ≤40° + 3D Motion Parallax + Moiré FFT >40°) trong <code>app/liveness.py</code>" },
+    { id: "T017", p: false, us: "US2", text: "Tích hợp máy trạng thái xác thực 4 lớp, <code>verification_tier</code> & <code>spoof_reason</code> vào <code>app/pipeline.py</code> và <code>app/main.py</code>" }
+  ]},
+  { title: "Phase 5: User Story 3 - Đăng ký hướng dẫn 7 góc & Tương thích dữ liệu cũ (Priority: P2)", mvp: false, tasks: [
+    { id: "T018", p: true, us: "US3", text: "Mở rộng kiểm thử phiên đăng ký 7 bước (±80°), <code>supplement_only</code>, lọc outlier cùng nhóm góc & tự động backfill model mới trong <code>tests/test_guided.py</code>" },
+    { id: "T019", p: true, us: "US3", text: "Nâng cấp lọc outlier theo từng <code>pose_group</code>, bổ sung <code>backfill_legacy_embeddings(ctx)</code> và cờ <code>supplement_only</code> trong <code>app/enrollment.py</code>" },
+    { id: "T020", p: false, us: "US3", text: "Mở rộng <code>GuidedSession</code> lên 7 bước (thêm nghiêng sâu trái/phải 65°–88°) trong <code>app/guided.py</code>" },
+    { id: "T021", p: false, us: "US3", text: "Kích hoạt backfill lúc khởi động <code>lifespan</code>, cập nhật API (<code>pose_coverage</code>, <code>ready_90</code>) & UI hướng dẫn 7 góc trong <code>app/main.py</code>, <code>app/static/index.html</code>, <code>app/static/app.js</code>" }
+  ]},
+  { title: "Phase 6: User Story 4 - Phân tầng tin cậy & Hậu kiểm cho HR (Priority: P3)", mvp: false, tasks: [
+    { id: "T022", p: true, us: "US4", text: "Mở rộng <code>/api/status</code>, <code>/api/events</code>, <code>/api/metrics</code> và <code>/api/events.csv</code> theo <code>verification_tier</code> trong <code>app/main.py</code>" },
+    { id: "T023", p: true, us: "US4", text: "Bổ sung lọc <code>tier</code> cho <code>/api/appearances</code> và cột <code>Mức xác thực</code> khi xuất CSV bảng công trong <code>app/attendance.py</code> và <code>app/records.py</code>" },
+    { id: "T024", p: false, us: "US4", text: "Cập nhật huy hiệu <code>profile_verified</code>, cảnh báo lý do giả mạo và bộ lọc hậu kiểm clip trên UI trong <code>app/static/*</code>" }
+  ]},
+  { title: "Phase 7: Polish & Cross-Cutting Concerns (Benchmark & Nghiệm thu)", mvp: false, tasks: [
+    { id: "T025", p: true, us: "US", text: "Mở rộng cờ <code>--profile-eval</code> thống kê độ trễ từng mô hình & độ chính xác theo dải góc trong <code>scripts/benchmark.py</code>" },
+    { id: "T026", p: true, us: "US", text: "Cập nhật tài liệu vận hành 7 góc & chống giả mạo 4 lớp trong <code>README.md</code> và <code>docs/HUONG_DAN_KY_THUAT.html</code>" },
+    { id: "T027", p: false, us: "US", text: "Chạy kiểm chứng toàn bộ <code>.venv/bin/pytest -v</code> và kịch bản <code>specs/001-profile-90-antispoof/quickstart.md</code>" }
+  ]}
+];
+
+const KEY = "facegate_tasks_001_done";
+const ALL_IDS = PHASES.flatMap(ph => ph.tasks.map(t => t.id));
+let doneSet = new Set(JSON.parse(localStorage.getItem(KEY) || JSON.stringify(ALL_IDS)));
+let currentFilter = "all";
+
+function toggleTask(id) {
+  if (doneSet.has(id)) doneSet.delete(id); else doneSet.add(id);
+  localStorage.setItem(KEY, JSON.stringify([...doneSet]));
+  render();
+}
+
+function filterTasks(mode, btn) {
+  currentFilter = mode;
+  document.querySelectorAll(".filter-btn").forEach(b => b.classList.toggle("active", b === btn));
+  render();
+}
+
+function render() {
+  const box = document.getElementById("taskContainer");
+  box.innerHTML = PHASES.map(ph => {
+    const items = ph.tasks.filter(t => {
+      if (currentFilter === "all") return true;
+      if (currentFilter === "mvp") return ph.mvp;
+      if (currentFilter === "parallel") return t.p;
+      return t.us === currentFilter;
+    });
+    if (!items.length) return "";
+    return `<div style="margin-bottom:16px">
+      <div class="phase-head"><b>${ph.title}</b><span style="font-size:12px;color:var(--muted)">${items.length} tác vụ</span></div>
+      ${items.map(t => {
+        const checked = doneSet.has(t.id);
+        const usBadge = t.us && t.us.startsWith("US") && t.us.length === 3
+          ? `<span class="pill ${t.us.toLowerCase()}">[${t.us}]</span>` : "";
+        return `<label class="task-row ${checked ? 'done' : ''}">
+          <input type="checkbox" ${checked ? "checked" : ""} onchange="toggleTask('${t.id}')">
+          <span class="tid">${t.id}</span>
+          ${t.p ? '<span class="pill p">[P]</span>' : ''}
+          ${usBadge}
+          <span class="desc">${t.text}</span>
+        </label>`;
+      }).join("")}
+    </div>`;
+  }).join("");
+  const total = 27, done = doneSet.size;
+  document.getElementById("progText").textContent = `${done} / ${total} hoàn thành`;
+  document.getElementById("progFill").style.width = `${Math.round(done / total * 100)}%`;
+}
+render();
+</script>
+</body>
+</html>

@@ -121,3 +121,39 @@ def test_employee_tab_no_inline_onclick_xss_and_name_validation():
     with pytest.raises(HTTPException) as exc_long:
         _check("NV_LONG", "A" * 150)
     assert exc_long.value.status_code == 400
+
+
+def test_config_defaults_sync_and_guided_start_catches_enroll_error(tmp_path, monkeypatch):
+    import asyncio
+    from types import SimpleNamespace
+    import pytest
+    from fastapi import HTTPException
+    from app import main as app_main
+    from app.config import _apply_defaults
+    from app.db import DB
+    from app.enrollment import EnrollError
+
+    raw_cfg = {"storage": {"data_dir": "data"}}
+    _apply_defaults(raw_cfg)
+    assert raw_cfg["enrollment"]["cross_pose_min_cosine"] == 0.20
+    assert raw_cfg["liveness"]["context"]["screen_face_overlap"] == 0.80
+    assert raw_cfg["liveness"]["context"]["screen_window"] == 5
+    assert raw_cfg["liveness"]["context"]["screen_min_hits"] == 3
+
+    # Mô phỏng khe hở TOCTOU: GuidedSession ném EnrollError phải được dịch sang HTTP 409 thay vì 500
+    dummy_ctx = SimpleNamespace(
+        cfg=load_config(),
+        db=DB(tmp_path / "toctou.db"),
+        camera=SimpleNamespace(kind="webcam", connected=True),
+        engine=SimpleNamespace(name="edgeface", model_version="ef_v1"),
+        guided=None,
+    )
+    monkeypatch.setattr(app_main, "ctx", dummy_ctx)
+
+    def _raise_enroll_err(*a, **k):
+        raise EnrollError("Mất mẫu frontal do xóa đồng thời")
+
+    monkeypatch.setattr(app_main, "GuidedSession", _raise_enroll_err)
+    with pytest.raises(HTTPException) as exc_409:
+        asyncio.run(app_main.enroll_guided_start(code="NV_RACE", name="Nguyen Van Race", profile_90=True, supplement_only=False))
+    assert exc_409.value.status_code == 409

@@ -19,5 +19,3 @@ models/*.bin
 *.tmp
 *.log
 .ua/
-.specify/
-specs/

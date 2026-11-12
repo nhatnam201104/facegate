@@ -45,6 +45,9 @@ def _apply_defaults(cfg: dict) -> None:
     ctx_cfg.setdefault("enabled", True)
     ctx_cfg.setdefault("person_conf", 0.45)
     ctx_cfg.setdefault("medium_conf", 0.35)
+    ctx_cfg.setdefault("screen_face_overlap", 0.80)
+    ctx_cfg.setdefault("screen_window", 5)
+    ctx_cfg.setdefault("screen_min_hits", 3)
     ctx_cfg.setdefault("require_body_coupling", True)
     ctx_cfg.setdefault("face_body_ratio", [0.12, 0.65])
 
@@ -61,6 +64,7 @@ def _apply_defaults(cfg: dict) -> None:
     ec = cfg.setdefault("enrollment", {})
     ec.setdefault("max_frames", 21)
     ec.setdefault("outlier_min_cosine", 0.42)
+    ec.setdefault("cross_pose_min_cosine", 0.20)
     gc = ec.setdefault("guided", {})
     gc.setdefault("enable_profile_90", True)
     gc.setdefault("profile_yaw_min", 65.0)

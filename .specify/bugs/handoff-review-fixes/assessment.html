@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FaceGate SpecKit Bug Assessment · handoff-review-fixes</title>
+<style>
+  :root {
+    --bg: #0f172a;
+    --panel: #1e293b;
+    --panel-alt: #162033;
+    --border: #334155;
+    --text: #f1f5f9;
+    --muted: #94a3b8;
+    --accent: #38bdf8;
+    --ok: #22c55e;
+    --warn: #f59e0b;
+    --danger: #ef4444;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, Ubuntu, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+  }
+  header {
+    background: linear-gradient(135deg, #0f172a 0%, #1e293b 60%, #7f1d1d 100%);
+    border-bottom: 1px solid var(--border);
+    padding: 28px 24px;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 0 20px; }
+  .badges { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+  .badge {
+    font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: 999px;
+    background: rgba(56, 189, 248, 0.14); color: var(--accent); border: 1px solid rgba(56, 189, 248, 0.35);
+  }
+  .badge.crit { background: rgba(239, 68, 68, 0.16); color: #fca5a5; border-color: rgba(239, 68, 68, 0.4); }
+  .badge.ok { background: rgba(34, 197, 94, 0.15); color: #4ade80; border-color: rgba(34, 197, 94, 0.35); }
+  h1 { margin: 4px 0 8px; font-size: 25px; }
+  h2 { font-size: 18px; margin: 0 0 14px; color: #e2e8f0; }
+  p.lead { margin: 0; color: #cbd5e1; max-width: 940px; }
+  main { padding: 24px 0 56px; }
+  .grid { display: grid; gap: 18px; margin-bottom: 20px; }
+  .cols-4 { grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 18px 20px;
+    margin-bottom: 18px;
+  }
+  .kpi b { display: block; font-size: 24px; color: var(--accent); }
+  .kpi span { font-size: 13px; color: var(--muted); }
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; background: var(--panel-alt); }
+  code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 12.5px; background: rgba(15, 23, 42, 0.65); padding: 2px 6px; border-radius: 5px; color: #7dd3fc;
+  }
+  .diagram-box {
+    background: #0b1220; border: 1px solid var(--border); border-radius: 10px; padding: 16px; overflow-x: auto;
+  }
+  .p0 { color: #f87171; font-weight: 700; }
+  .p1 { color: #fbbf24; font-weight: 700; }
+  .p2 { color: #38bdf8; font-weight: 700; }
+  .sign-box {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin-top: 14px;
+  }
+  .sign-box input, .sign-box select {
+    width: 100%; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border);
+    background: #0b1220; color: var(--text); font-size: 13.5px;
+  }
+  .btn {
+    margin-top: 12px; background: #0284c7; color: #fff; border: 0; border-radius: 8px;
+    padding: 9px 16px; font-weight: 600; cursor: pointer;
+  }
+  .saved-note { margin-left: 10px; font-size: 13px; color: #4ade80; }
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <div class="badges">
+      <span class="badge">Slug: handoff-review-fixes</span>
+      <span class="badge crit">Severity: Critical (4 P0 · 4 P1 · 2 P2)</span>
+      <span class="badge ok">Verdict: Valid</span>
+      <span class="badge">Branch: 001-profile-90-antispoof</span>
+    </div>
+    <h1>Đánh giá lỗi (Bug Assessment): 10 vấn đề từ Code Review nhánh 90° &amp; Anti-Spoofing</h1>
+    <p class="lead">Tổng hợp và đối chiếu kiến trúc từ <code>specs/001-profile-90-antispoof/handoff-review-fixes.md</code> kết hợp đồ thị tri thức <code>docs/knowledge-graph.json</code> (5 lớp kiến trúc FaceGate).</p>
+  </div>
+</header>
+<main class="wrap">
+  <div class="grid cols-4">
+    <div class="card kpi"><b>10</b><span>Tổng số lỗi xác nhận hợp lệ</span></div>
+    <div class="card kpi"><b>4 P0</b><span>Bảo mật &amp; mất sự kiện spoof</span></div>
+    <div class="card kpi"><b>11 files</b><span>Tệp mã nguồn &amp; cấu hình bị ảnh hưởng</span></div>
+    <div class="card kpi"><b>25 passed</b><span>Baseline kiểm thử trước khi sửa</span></div>
+  </div>
+
+  <section class="card">
+    <h2>Bản đồ tác động lên các lớp kiến trúc (Knowledge Graph Overlay)</h2>
+    <div class="diagram-box">
+      <pre class="mermaid">
+flowchart LR
+  subgraph UI["Lớp Giao diện Web"]
+    JS["app/static/app.js + attendance.js<br/>(#3 Stored XSS onclick)"]
+  end
+  subgraph API["Lớp API & Trạng thái"]
+    MAIN["app/main.py<br/>(#2 HTTP 409, #3 _check, #8 bg task)"]
+  end
+  subgraph PIPE["Lớp Xử lý Nhận diện & Chống giả mạo"]
+    PL["app/pipeline.py<br/>(#1 spoof emit & render, #5 re-verify)"]
+    TR["app/tracker.py<br/>(#1 spoof_emitted, #5 _jump)"]
+    LV["app/liveness.py<br/>(#4 Moiré median, #7, #10)"]
+    CD["app/context_detector.py<br/>(#10 screen overlap & body)"]
+    P3D["app/pose3d.py<br/>(#6 Euler YXZ, #7 2D parallax)"]
+    EN["app/enrollment.py + guided.py<br/>(#2 supplement verify, #8 backfill, #9 cross-pose)"]
+  end
+  subgraph DB["Lớp Nghiệp vụ & Lưu trữ"]
+    SQL["app/db.py + gallery.py<br/>(events, embeddings, status)"]
+  end
+  JS --> MAIN --> EN --> SQL
+  PL --> TR
+  PL --> LV --> CD
+  LV --> P3D
+  PL --> SQL
+      </pre>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Danh mục 10 lỗi và lộ trình khắc phục</h2>
+    <table>
+      <thead>
+        <tr><th>Thứ tự</th><th>Mục</th><th>Mức</th><th>Tệp chính</th><th>Nguyên nhân gốc &amp; Hướng khắc phục</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>1</td><td><b>#1</b></td><td class="p0">P0</td><td><code>app/pipeline.py</code>, <code>app/tracker.py</code></td><td><code>_mark_spoof</code> đặt <code>track.spoof=True</code> làm điều kiện <code>not t.spoof</code> luôn sai; tách cờ <code>spoof_emitted</code> và cache <code>live_state</code> cho <code>_render</code>.</td></tr>
+        <tr><td>2</td><td><b>#3</b></td><td class="p0">P0</td><td><code>app/static/app.js</code>, <code>attendance.js</code>, <code>app/main.py</code></td><td>Nội suy chuỗi vào nháy đơn trong <code>onclick</code> gây XSS/SyntaxError; chuyển sang <code>data-*</code> + event delegation.</td></tr>
+        <tr><td>3</td><td><b>#6</b></td><td class="p1">P1</td><td><code>app/pose3d.py</code></td><td>Công thức <code>atan2</code> cũ làm bùng nổ pitch/roll khi yaw gần 90°; đổi sang phân rã Euler chuẩn Y-X-Z.</td></tr>
+        <tr><td>4</td><td><b>#4</b></td><td class="p1">P1</td><td><code>app/liveness.py</code></td><td>Lọc <code>moire_score &gt; 0</code> làm mất các frame sạch 0.0; trả <code>None</code> khi không đo, giữ 0.0 và lấy trung vị 6 frame gần nhất (≥4 mẫu).</td></tr>
+        <tr><td>5</td><td><b>#2 + #9</b></td><td class="p0">P0</td><td><code>app/guided.py</code>, <code>app/enrollment.py</code>, <code>app/main.py</code>, <code>config.yaml</code></td><td>Thiếu xác minh mặt chính diện khi <code>supplement_only</code> và thiếu kiểm tra <code>cross_pose_min_cosine</code> giữa frontal ↔ profile.</td></tr>
+        <tr><td>6</td><td><b>#5</b></td><td class="p1">P1</td><td><code>app/pipeline.py</code>, <code>app/tracker.py</code></td><td>Sau khi chốt frontal không xác minh lại khi đủ mẫu ở góc nghiêng mới; bổ sung hậu kiểm theo bucket hiện tại và siết <code>_jump</code>.</td></tr>
+        <tr><td>7</td><td><b>#10</b></td><td class="p1">P1</td><td><code>app/context_detector.py</code>, <code>app/liveness.py</code></td><td>Báo nhầm thiết bị gần ngực/TV sau lưng; chỉ báo <code>screen_detected</code> khi mặt nằm ≥80% trong thiết bị và không gắn thân người, cần ≥3/5 frame gần nhất.</td></tr>
+        <tr><td>8</td><td><b>#8</b></td><td class="p2">P2</td><td><code>app/enrollment.py</code>, <code>app/main.py</code></td><td>Backfill nhúng ảnh không thấy mặt và chặn khởi động server; bỏ ảnh không thấy mặt, chấm chất lượng + lọc nhất quán, chạy nền trong <code>lifespan</code>.</td></tr>
+        <tr><td>9</td><td><b>#7</b></td><td class="p2">P2</td><td><code>app/pose3d.py</code>, <code>app/liveness.py</code></td><td>Điểm độ sâu morphable 3DDFA cộng sẵn 0.35 cho cả ảnh in; bỏ trọng số <code>depth_ratio</code> khỏi điểm cuối và chặn nhánh dự phòng 5 điểm tự duyệt live.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section class="card">
+    <h2>Xác nhận phê duyệt đánh giá (Sign-off)</h2>
+    <div class="sign-box">
+      <input id="approver" placeholder="Người duyệt (VD: Tech Lead / Reviewer)" value="Confirmed via Clarify">
+      <select id="decision">
+        <option value="approved" selected>Đã duyệt — Thực thi /speckit-bug-fix</option>
+        <option value="hold">Tạm hoãn — Cần làm rõ thêm</option>
+      </select>
+      <input id="note" placeholder="Ghi chú quyết định (#2 giữ active nếu sạch, #10 giữ spoof cố định, commit theo mục)">
+    </div>
+    <button class="btn" type="button" onclick="saveSignoff()">Lưu xác nhận đánh giá</button>
+    <span class="saved-note" id="savedMsg"></span>
+  </section>
+</main>
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({ startOnLoad: true, theme: "dark" });
+</script>
+<script>
+  function saveSignoff() {
+    const data = {
+      approver: document.getElementById("approver").value,
+      decision: document.getElementById("decision").value,
+      note: document.getElementById("note").value,
+      ts: new Date().toLocaleString("vi-VN")
+    };
+    localStorage.setItem("facegate_bug_assess_handoff_signoff", JSON.stringify(data));
+    document.getElementById("savedMsg").textContent = "Đã lưu lúc " + data.ts;
+  }
+</script>
+</body>
+</html>

@@ -1,0 +1,376 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FaceGate SpecKit Bug Assessment · review-round2-fixes</title>
+<style>
+  :root {
+    --bg: #0b1120;
+    --panel: #151f32;
+    --panel-alt: #101827;
+    --border: #293548;
+    --text: #f1f5f9;
+    --muted: #94a3b8;
+    --accent: #38bdf8;
+    --ok: #22c55e;
+    --warn: #f59e0b;
+    --danger: #ef4444;
+    --purple: #a78bfa;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, Ubuntu, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+  }
+  header {
+    background: linear-gradient(135deg, #0b1120 0%, #1e293b 58%, #7f1d1d 100%);
+    border-bottom: 1px solid var(--border);
+    padding: 28px 24px;
+  }
+  .wrap { max-width: 1220px; margin: 0 auto; padding: 0 20px; }
+  .badges { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+  .badge {
+    font-size: 12px; font-weight: 600; padding: 4px 11px; border-radius: 999px;
+    background: rgba(56, 189, 248, 0.14); color: var(--accent); border: 1px solid rgba(56, 189, 248, 0.35);
+  }
+  .badge.crit { background: rgba(239, 68, 68, 0.18); color: #fca5a5; border-color: rgba(239, 68, 68, 0.45); }
+  .badge.ok { background: rgba(34, 197, 94, 0.16); color: #4ade80; border-color: rgba(34, 197, 94, 0.4); }
+  .badge.purple { background: rgba(167, 139, 250, 0.16); color: #c4b5fd; border-color: rgba(167, 139, 250, 0.4); }
+  h1 { margin: 4px 0 8px; font-size: 25px; letter-spacing: -0.01em; }
+  h2 { font-size: 18px; margin: 0 0 14px; color: #e2e8f0; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  h3 { font-size: 15px; margin: 14px 0 8px; color: var(--accent); }
+  p.lead { margin: 0; color: #cbd5e1; max-width: 980px; font-size: 14.5px; }
+  main { padding: 24px 0 56px; }
+  .grid { display: grid; gap: 16px; margin-bottom: 18px; }
+  .cols-4 { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+  .cols-2 { grid-template-columns: repeat(auto-fit, minmax(460px, 1fr)); }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 18px 20px;
+    margin-bottom: 18px;
+  }
+  .kpi b { display: block; font-size: 26px; color: var(--accent); line-height: 1.2; }
+  .kpi.danger b { color: #f87171; }
+  .kpi.ok b { color: #4ade80; }
+  .kpi span { font-size: 13px; color: var(--muted); }
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  th, td { text-align: left; padding: 10px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; background: var(--panel-alt); }
+  tr:hover td { background: rgba(255, 255, 255, 0.02); }
+  code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 12.2px; background: rgba(11, 17, 32, 0.78); padding: 2px 6px; border-radius: 5px; color: #7dd3fc;
+  }
+  .diagram-box {
+    background: #090e1a; border: 1px solid var(--border); border-radius: 10px; padding: 16px; overflow-x: auto;
+  }
+  .pill {
+    display: inline-block; font-size: 11.5px; font-weight: 700; padding: 2px 8px; border-radius: 999px;
+  }
+  .p0 { background: rgba(239, 68, 68, 0.18); color: #fca5a5; border: 1px solid rgba(239, 68, 68, 0.4); }
+  .p1 { background: rgba(245, 158, 11, 0.18); color: #fcd34d; border: 1px solid rgba(245, 158, 11, 0.4); }
+  .p2 { background: rgba(56, 189, 248, 0.16); color: #7dd3fc; border: 1px solid rgba(56, 189, 248, 0.35); }
+  .rej { background: rgba(148, 163, 184, 0.16); color: #cbd5e1; border: 1px solid rgba(148, 163, 184, 0.35); }
+  .filter-bar { display: flex; gap: 6px; flex-wrap: wrap; }
+  .filter-btn {
+    background: var(--panel-alt); color: var(--muted); border: 1px solid var(--border);
+    border-radius: 7px; padding: 5px 11px; font-size: 12.5px; cursor: pointer; font-weight: 600;
+  }
+  .filter-btn.active { background: rgba(56, 189, 248, 0.18); color: var(--accent); border-color: var(--accent); }
+  .layer-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(215px, 1fr)); gap: 12px; }
+  .layer-box {
+    background: var(--panel-alt); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px;
+  }
+  .layer-box.hot { border-color: rgba(248, 113, 113, 0.55); background: rgba(127, 29, 29, 0.12); }
+  .layer-box.warm { border-color: rgba(251, 191, 36, 0.45); }
+  .layer-box b { display: block; font-size: 13.5px; margin-bottom: 4px; color: #e2e8f0; }
+  .layer-box small { display: block; color: var(--muted); font-size: 12px; margin-bottom: 8px; }
+  .node-tag {
+    display: inline-block; margin: 2px 3px 2px 0; padding: 2px 6px; border-radius: 4px;
+    font-size: 11.5px; background: #0b1120; border: 1px solid var(--border); color: #cbd5e1;
+  }
+  .node-tag.hit { border-color: #f87171; color: #fca5a5; }
+  .cluster-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; }
+  .cluster {
+    background: var(--panel-alt); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px;
+  }
+  .cluster b { color: var(--accent); display: block; margin-bottom: 6px; font-size: 14px; }
+  .cluster ul { margin: 0; padding-left: 18px; font-size: 13px; color: #cbd5e1; }
+  .check-row { display: flex; align-items: flex-start; gap: 10px; padding: 8px 0; border-bottom: 1px dashed var(--border); font-size: 13.5px; }
+  .check-row:last-child { border-bottom: 0; }
+  .sign-box {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin-top: 14px;
+  }
+  .sign-box input, .sign-box select {
+    width: 100%; padding: 9px 11px; border-radius: 8px; border: 1px solid var(--border);
+    background: #090e1a; color: var(--text); font-size: 13.5px;
+  }
+  .btn {
+    margin-top: 12px; background: #0284c7; color: #fff; border: 0; border-radius: 8px;
+    padding: 9px 18px; font-weight: 600; cursor: pointer;
+  }
+  .btn:hover { background: #0369a1; }
+  .saved-note { margin-left: 10px; font-size: 13px; color: #4ade80; }
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <div class="badges">
+      <span class="badge">SpecKit Bug Assessment · slug: review-round2-fixes</span>
+      <span class="badge crit">Severity: Critical (2 P0 · 3 P1 · 2 P2)</span>
+      <span class="badge ok">Verdict: Valid (Đã tái hiện thực nghiệm)</span>
+      <span class="badge purple">HEAD: a6591a3 (001-profile-90-antispoof)</span>
+    </div>
+    <h1>Đánh giá Lỗi Vòng 2: Chống giả mạo Đa góc, Hậu kiểm Tracker &amp; Vòng đời Backfill</h1>
+    <p class="lead">
+      Hợp nhất và khử trùng lặp kết quả <code>/codereview</code> cùng bản đối chiếu phản biện 10 mục trên nhánh <code>001-profile-90-antispoof</code> (sau 10 commit sửa lỗi vòng 1), đối chiếu trực tiếp với đồ thị tri thức <code>docs/knowledge-graph.json</code> (106 nodes · 114 edges · 5 lớp kiến trúc) và diff-overlay <code>main...a6591a3</code>.
+    </p>
+  </div>
+</header>
+
+<main class="wrap">
+  <div class="grid cols-4">
+    <div class="card kpi danger"><b>7 cụm lỗi</b><span>Hợp nhất từ 3 phát hiện /codereview + 10 mục phản biện</span></div>
+    <div class="card kpi danger"><b>2 P0</b><span>Lệch nhánh Liveness ↔ matched_group &amp; điện thoại che mặt</span></div>
+    <div class="card kpi"><b>9 files</b><span>Module cốt lõi cần chỉnh sửa nguyên tử (không đổi schema DB)</span></div>
+    <div class="card kpi ok"><b>36 / 36</b><span>Bài kiểm thử pytest hiện tại xanh (baseline trước khi sửa)</span></div>
+  </div>
+
+  <section class="card">
+    <h2>1. Knowledge Graph &amp; Diff-Overlay (5 Lớp Kiến trúc FaceGate)</h2>
+    <div class="layer-grid" style="margin-bottom:16px">
+      <div class="layer-box">
+        <b>Lớp 1 · Giao diện Web</b>
+        <small>Đã ổn định sau fix #3 (XSS)</small>
+        <span class="node-tag">index.html</span>
+        <span class="node-tag">app.js</span>
+        <span class="node-tag">attendance.js</span>
+        <span class="node-tag">history.js</span>
+      </div>
+      <div class="layer-box warm">
+        <b>Lớp 2 · API &amp; Trạng thái chung</b>
+        <small>Ảnh hưởng: #R2-5, #R2-7 (+195 LOC diff)</small>
+        <span class="node-tag hit">app/main.py</span>
+        <span class="node-tag hit">app/config.py</span>
+        <span class="node-tag">app/records.py</span>
+        <span class="node-tag">app/state.py</span>
+      </div>
+      <div class="layer-box hot">
+        <b>Lớp 3 · Xử lý Nhận diện &amp; FAS</b>
+        <small>Trọng tâm: #R2-1..#R2-6 (+1.780 LOC diff)</small>
+        <span class="node-tag hit">app/liveness.py</span>
+        <span class="node-tag hit">app/context_detector.py</span>
+        <span class="node-tag hit">app/pipeline.py</span>
+        <span class="node-tag hit">app/tracker.py</span>
+        <span class="node-tag hit">app/pose3d.py</span>
+        <span class="node-tag hit">app/enrollment.py</span>
+        <span class="node-tag hit">app/guided.py</span>
+      </div>
+      <div class="layer-box">
+        <b>Lớp 4 · Nghiệp vụ &amp; Lưu trữ</b>
+        <small>Đọc/ghi qua RLock SQLite (+128 LOC diff)</small>
+        <span class="node-tag">app/db.py</span>
+        <span class="node-tag">app/attendance.py</span>
+        <span class="node-tag">app/clips.py</span>
+      </div>
+      <div class="layer-box warm">
+        <b>Lớp 5 · Cấu hình &amp; Kiểm thử</b>
+        <small>Đồng bộ ngưỡng &amp; thêm 8 test hồi quy</small>
+        <span class="node-tag hit">config.yaml</span>
+        <span class="node-tag hit">tests/test_liveness_profile.py</span>
+        <span class="node-tag hit">tests/test_tracker_buckets.py</span>
+        <span class="node-tag hit">tests/test_guided.py</span>
+      </div>
+    </div>
+
+    <div class="diagram-box">
+      <pre class="mermaid">
+flowchart LR
+  subgraph L3["Lớp Xử lý Nhận diện & Chống giả mạo (Hotspot)"]
+    CD["context_detector.py:145<br/>(#R2-2: Điện thoại che mặt<br/>body_outside_medium đảo mẫu số)"]
+    P3D["pose3d.py:208, 272<br/>(#R2-4: Chiếu trực giao 3DDFA<br/>Δyaw &lt; 1° gây planar_no_parallax)"]
+    LV["liveness.py:182, 196-222<br/>(#R2-1: Lệch matched_group ↔ Nhánh A/B<br/>&amp; screen_hits 1..2 duyệt live sớm)"]
+    PL["pipeline.py:454-484<br/>(#R2-3: Cắt nhầm Best-shot,<br/>ping-pong NVA↔None &amp; emp_sim=None)"]
+    EN["enrollment.py:260, 350<br/>(#R2-5, #R2-6: Ảnh .jpg mồ côi<br/>&amp; lặp cảnh báo backfill mỗi lần boot)"]
+  end
+  subgraph L2["Lớp API & Lifespan"]
+    MN["main.py:83-96, 369<br/>(#R2-5, #R2-7: stop_event cho thread<br/>backfill &amp; bắt EnrollError → 409)"]
+    CF["config.py:26-68<br/>(#R2-7: Đồng bộ _apply_defaults)"]
+  end
+  CD --> LV
+  P3D --> LV
+  PL <--> LV
+  MN --> EN
+  CF --> LV
+  CF --> EN
+      </pre>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>
+      <span>2. Ma trận Đối chiếu, Phản biện &amp; Phân hạng Lỗi Hợp nhất</span>
+      <div class="filter-bar">
+        <button class="filter-btn active" onclick="filterRows('all', this)">Tất cả (8)</button>
+        <button class="filter-btn" onclick="filterRows('P0', this)">P0 Bảo mật (2)</button>
+        <button class="filter-btn" onclick="filterRows('P1', this)">P1 Nhận diện/Data (4)</button>
+        <button class="filter-btn" onclick="filterRows('P2', this)">P2 Cấu hình/Phòng vệ (1)</button>
+        <button class="filter-btn" onclick="filterRows('REJ', this)">Đã phản biện / Không phải lỗi (1)</button>
+      </div>
+    </h2>
+    <table id="bugTable">
+      <thead>
+        <tr>
+          <th style="width:76px">Mã</th>
+          <th style="width:72px">Mức</th>
+          <th style="width:220px">Vị trí xác minh</th>
+          <th>Bằng chứng thực nghiệm &amp; Phản biện kỹ thuật</th>
+          <th>Hướng khắc phục tối thiểu</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr data-sev="P0">
+          <td><b>#R2-1</b></td>
+          <td><span class="pill p0">P0</span></td>
+          <td><code>app/liveness.py:196-222</code><br><code>app/liveness.py:290</code><br><code>app/tracker.py:103</code></td>
+          <td><b>Từ /codereview #1 (Đã tái hiện E2E):</b> 2 frame ảnh giả thẳng (<code>FAS=0.12</code>, chốt <code>matched_group='frontal'</code>) + 6 frame nghiêng rơi xuống Nhánh B và phát <code>checkin</code> hạng <code>verified</code> với <code>liveness=0.12</code>; chiều ngược lại nâng nhầm <code>left_profile</code> lên <code>verified</code>.</td>
+          <td>Khóa chặt Nhánh A cho <code>matched_group == 'frontal'</code> (chỉ hạ sang <code>profile_verified</code> nếu các frame thẳng không có mẫu <code>&lt; spoof_below</code> và ngăn profile tự khớp hợp lệ); dùng <code>liveness_score</code> nhất quán.</td>
+        </tr>
+        <tr data-sev="P0">
+          <td><b>#R2-2</b></td>
+          <td><span class="pill p0">P0</span></td>
+          <td><code>app/context_detector.py:145</code><br><code>app/liveness.py:182, 212</code></td>
+          <td><b>Đối chiếu Mục 1 &amp; Mục 4 (Valid):</b> Khi cầm điện thoại che chính mặt mình, <code>_face_overlap_ratio(coupled_person, m_box) ≈ 0.27 &lt; 0.75</code> làm <code>body_outside_medium=True</code> vô hiệu hóa <code>screen_detected</code>. Khi <code>1 &lt;= screen_hits &lt; 3</code>, Nhánh A vẫn duyệt <code>live</code> ngay.</td>
+          <td>Đổi sang kiểm tra tỷ lệ thiết bị nằm trong thân người <code>_face_overlap_ratio(m_box, coupled_person)</code> (chỉ miễn trừ <code>tv</code> nền lớn vượt ra ngoài cơ thể); khi <code>screen_hits &gt;= 1</code> giữ trạng thái <code>checking</code>.</td>
+        </tr>
+        <tr data-sev="P1">
+          <td><b>#R2-3</b></td>
+          <td><span class="pill p1">P1</span></td>
+          <td><code>app/pipeline.py:454-484</code></td>
+          <td><b>Hợp nhất /codereview #2 + Mục 2 + Mục 6 (Đã tái hiện):</b> (a) Xoay đầu sang góc nghiêng yếu làm cắt đứt track Best-shot đang chờ liveness; (b) <code>reset_identity()</code> tại chỗ gây dao động ping-pong <code>NVA ↔ None</code> bắn lặp <code>greet</code>; (c) <code>emp_sim is None</code> trả sớm bỏ lọt ghép nhầm sang đồng nghiệp khác.</td>
+          <td>Bảo vệ Best-shot <code>frontal</code> khi xoay sang ngăn phụ; chỉ <code>tracker.split</code> dứt điểm khi ngăn hiện tại khớp <code>accepted</code> với <b>nhân viên khác</b> (kể cả lúc <code>emp_sim is None</code>), bỏ <code>reset_identity()</code> gây ping-pong.</td>
+        </tr>
+        <tr data-sev="P1">
+          <td><b>#R2-4</b></td>
+          <td><span class="pill p1">P1</span></td>
+          <td><code>app/pose3d.py:208, 272</code><br><code>app/liveness.py:267</code></td>
+          <td><b>Đối chiếu Mục 3 (Valid về cơ chế 3DDFA):</b> <code>3DDFA_V2</code> chiếu trực giao cục bộ trên từng crop; nếu người đi thẳng giữ <code>Δyaw &lt; 1.0°</code> so với ống kính, 2 lưới điểm chỉ lệch phép tịnh tiến phẳng (<code>score &lt; 0.3575</code>) gây khóa spoof vĩnh viễn.</td>
+          <td>Đo thêm biên độ xoay tương đối <code>yaw_span</code> trong cửa sổ quỹ đạo: nếu <code>yaw_span &lt; 4.0°</code> và không có <code>medium_nearby</code> / Moiré cao thì giữ <code>checking</code> thay vì khóa chết <code>planar_no_parallax</code>.</td>
+        </tr>
+        <tr data-sev="P1">
+          <td><b>#R2-5</b></td>
+          <td><span class="pill p1">P1</span></td>
+          <td><code>app/enrollment.py:349-445</code><br><code>app/main.py:81-96</code></td>
+          <td><b>Đối chiếu Mục 5 &amp; Mục 7 (Valid):</b> Nhân viên backfill lỗi vẫn <code>n_emb=0</code> nên mỗi lần boot lại chèn thêm dòng stub <code>crops:[]</code> che mất báo cáo gốc; thread nền dùng snapshot cũ dễ đua với <code>enroll</code>/<code>delete</code> và không dừng khi shutdown.</td>
+          <td>Bỏ qua nếu báo cáo mới nhất đã ghi nhận lỗi backfill cho cùng <code>model_version</code>, kế thừa <code>crops</code> cũ khi cảnh báo; thêm <code>stop_event</code> trong <code>lifespan</code> và kiểm tra lại DB ngay trước khi <code>INSERT</code>.</td>
+        </tr>
+        <tr data-sev="P1">
+          <td><b>#R2-6</b></td>
+          <td><span class="pill p1">P1</span></td>
+          <td><code>app/enrollment.py:259-286</code></td>
+          <td><b>Từ /codereview #3 (Đã tái hiện):</b> <code>supplement_only=True</code> xóa dòng DB nhưng để lại file <code>.jpg</code> cũ trên đĩa làm lệch lần backfill sau, dùng <code>len(glob)</code> dễ đè tên file, và cho đổi tên nhân viên đang <code>active</code>.</td>
+          <td>Xóa đúng các file <code>crop_path</code> của nhóm góc được thay thế trước khi ghi mẫu mới, tính chỉ số <code>max_prefix + 1</code> và giữ nguyên tên của nhân viên đang <code>active</code>.</td>
+        </tr>
+        <tr data-sev="P2">
+          <td><b>#R2-7</b></td>
+          <td><span class="pill p2">P2</span></td>
+          <td><code>app/main.py:369-383</code><br><code>app/config.py:26-68</code></td>
+          <td><b>Đối chiếu Mục 9 &amp; Mục 10 (Phòng vệ &amp; Vệ sinh):</b> Truy vấn lặp frontal trong <code>enroll_guided_start</code> thiếu <code>except EnrollError</code> (race hẹp trả 500); lệch fallback <code>cross_pose_min_cosine</code> (<code>0.22</code> vs <code>0.20</code>) và thiếu khai báo trong <code>_apply_defaults</code>.</td>
+          <td>Truyền <code>verify_refs</code> 1 lần + bọc <code>except EnrollError → HTTP 409</code>; tập trung toàn bộ giá trị mặc định vào <code>app/config.py:_apply_defaults</code> và nối <code>medium_nearby</code> vào cổng kiểm tra.</td>
+        </tr>
+        <tr data-sev="REJ">
+          <td><b>Mục 8</b></td>
+          <td><span class="pill rej">Phản biện</span></td>
+          <td><code>app/liveness.py:251</code><br><code>app/pose3d.py:249</code></td>
+          <td><b>Không phải lỗi runtime theo từng frame:</b> Khi đã nạp <code>3ddfa_v2_mb1_120x120.onnx</code>, <code>self.session</code> luôn trả đủ 68 đỉnh cho mọi góc; nhánh 5 điểm chỉ chạy trong unit test không model và việc giữ <code>checking</code> (fail-closed) là yêu cầu an ninh của mục #7.</td>
+          <td>Giữ nguyên hành vi fail-closed; chỉ bổ sung 1 dòng <code>log.warning</code> rõ ràng khi bật <code>parallax.enabled=True</code> nhưng thiếu file model 3DDFA_V2.</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section class="card">
+    <h2>3. Kế hoạch Khắc phục 4 Cụm (Chuẩn bị cho <code>/speckit-bug-fix</code>)</h2>
+    <div class="cluster-grid">
+      <div class="cluster">
+        <b>Cụm 1 · Chống giả mạo &amp; Phân tầng (#R2-1, #R2-2)</b>
+        <ul>
+          <li>Sửa <code>body_outside_medium</code> bắt chặt điện thoại che mặt.</li>
+          <li>Giữ <code>checking</code> khi <code>screen_hits &gt;= 1</code> trong cửa sổ 5 frame.</li>
+          <li>Ràng buộc Nhánh A/B theo <code>track.matched_group</code>, không nâng nhầm <code>verified</code>.</li>
+        </ul>
+      </div>
+      <div class="cluster">
+        <b>Cụm 2 · Hậu kiểm Tracker ổn định (#R2-3)</b>
+        <ul>
+          <li>Giữ Best-shot <code>frontal</code> khi xoay đầu sang góc nghiêng khó.</li>
+          <li>Loại bỏ <code>reset_identity()</code> gây ping-pong <code>greet</code>.</li>
+          <li>Chạy so khớp mở kể cả khi <code>emp_sim is None</code> để tách đồng nghiệp khác.</li>
+        </ul>
+      </div>
+      <div class="cluster">
+        <b>Cụm 3 · Thị sai 3DDFA an toàn (#R2-4)</b>
+        <ul>
+          <li>Tính <code>yaw_span</code> trên chuỗi <code>pose_history</code>.</li>
+          <li>Không khóa spoof vĩnh viễn khi người đi thẳng chưa đổi góc tương đối (<code>yaw_span &lt; 4°</code>) và ngữ cảnh sạch.</li>
+        </ul>
+      </div>
+      <div class="cluster">
+        <b>Cụm 4 · Enrollment, Backfill &amp; Config (#R2-5..#R2-7)</b>
+        <ul>
+          <li>Dọn ảnh <code>.jpg</code> cũ khi <code>supplement_only</code>, giữ tên NV <code>active</code>.</li>
+          <li>Chống lặp backfill mỗi lần restart, thêm <code>stop_event</code> &amp; check DB nguyên tử.</li>
+          <li>Bắt <code>EnrollError → 409</code> và đồng bộ <code>_apply_defaults</code>.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>4. Cổng Phê duyệt Đánh giá Lỗi (Sign-off trước khi chạy <code>/speckit-bug-fix</code>)</h2>
+    <div class="check-row"><input type="checkbox" checked> <span>Xác nhận phạm vi hợp nhất 7 cụm lỗi (<code>#R2-1</code> đến <code>#R2-7</code>) và giữ nguyên cơ chế fail-closed cho nhánh không có model 3DDFA (Mục 8).</span></div>
+    <div class="check-row"><input type="checkbox" checked> <span>Xác nhận giữ tương thích ngược hoàn toàn với lược đồ SQLite, hợp đồng API/WebSocket và 36 bài kiểm thử hiện có.</span></div>
+    <div class="sign-box">
+      <input id="approver" placeholder="Người duyệt (Tech Lead / Developer)" value="Confirmed via Clarify">
+      <select id="decision">
+        <option value="approved" selected>Đã duyệt — Chuyển sang /speckit-bug-fix slug=review-round2-fixes</option>
+        <option value="adjust">Cần điều chỉnh thêm phạm vi</option>
+      </select>
+      <input id="note" placeholder="Ghi chú thêm (nếu có)">
+    </div>
+    <button class="btn" type="button" onclick="saveSignoff()">Lưu xác nhận đánh giá</button>
+    <span class="saved-note" id="savedMsg"></span>
+  </section>
+</main>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({ startOnLoad: true, theme: "dark" });
+</script>
+<script>
+  function filterRows(sev, btn) {
+    document.querySelectorAll(".filter-btn").forEach(b => b.classList.toggle("active", b === btn));
+    document.querySelectorAll("#bugTable tbody tr").forEach(tr => {
+      tr.style.display = (sev === "all" || tr.dataset.sev === sev) ? "" : "none";
+    });
+  }
+  function saveSignoff() {
+    const data = {
+      approver: document.getElementById("approver").value,
+      decision: document.getElementById("decision").value,
+      note: document.getElementById("note").value,
+      ts: new Date().toLocaleString("vi-VN")
+    };
+    localStorage.setItem("facegate_bug_assess_round2_signoff", JSON.stringify(data));
+    document.getElementById("savedMsg").textContent = "Đã lưu xác nhận lúc " + data.ts;
+  }
+</script>
+</body>
+</html>

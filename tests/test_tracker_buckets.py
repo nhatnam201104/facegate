@@ -236,3 +236,109 @@ def test_reverification_on_current_pose_bucket_splits_when_profile_mismatches(tm
         pipe._process(frame, 31.0 + i * 0.2)
     t_c_after = next(iter(pipe.tracker.tracks.values()))
     assert t_c_after.code == "NVC"
+
+
+def test_reverify_preserves_best_shot_prevents_pingpong_and_splits_legacy_impostor(tmp_path):
+    from types import SimpleNamespace
+    from app.config import load_config
+    from app.pipeline import Pipeline
+    from app.pose3d import PoseResult
+
+    cfg = load_config()
+    cfg["_paths"] = {**cfg["_paths"], "snapshots": tmp_path / "snapshots"}
+    db = DB(tmp_path / "reverify_r2.db")
+    mv = "ef_reverify_r2"
+
+    emp_a = db.create_employee("NVA", "Nguyễn Văn A")
+    db.set_status(emp_a, "active")
+    emp_b = db.create_employee("NVB", "Trần Thị B")
+    db.set_status(emp_b, "active")
+    emp_c = db.create_employee("NVC", "Lê Văn C (chỉ có frontal)")
+    db.set_status(emp_c, "active")
+
+    a_front = _unit([1.0, 0.0, 0.0, 0.0])
+    a_left = _unit([0.0, 0.85, 0.5268, 0.0])
+    b_front = _unit([0.0, 0.0, 0.0, 1.0])
+    b_left = _unit([0.0, 0.55, 0.835, 0.0])
+    c_front = _unit([0.8, 0.6, 0.0, 0.0])
+
+    db.add_embedding(emp_a, a_front, mv, 0.9, "thang-giua", None, pose_group="frontal", yaw=0.0)
+    db.add_embedding(emp_a, a_left, mv, 0.9, "nghieng-sau-trai", None, pose_group="left_profile", yaw=-80.0)
+    db.add_embedding(emp_b, b_front, mv, 0.9, "thang-giua", None, pose_group="frontal", yaw=0.0)
+    db.add_embedding(emp_b, b_left, mv, 0.9, "nghieng-sau-trai", None, pose_group="left_profile", yaw=-80.0)
+    db.add_embedding(emp_c, c_front, mv, 0.9, "thang-giua", None, pose_group="frontal", yaw=0.0)
+
+    state = {"emb": a_front, "yaw": 0.0, "grp": "frontal", "live_ret": "checking"}
+    face = Face(
+        bbox=np.array([150.0, 80.0, 270.0, 220.0], np.float32),
+        score=0.95,
+        kps=np.array([[185, 130], [235, 130], [210, 165], [190, 195], [230, 195]], np.float32),
+    )
+
+    class ScriptedEngine:
+        name = "edgeface"
+        model_version = mv
+
+        def detect(self, img):
+            return [face]
+
+        def align(self, img, f, pose=None, pose_group=None):
+            return np.zeros((112, 112, 3), np.uint8)
+
+        def embed_aligned(self, aligned):
+            return state["emb"]
+
+    class ScriptedPose:
+        def estimate(self, frame, f, prev_group=None):
+            return PoseResult(state["yaw"], 0.0, 0.0, state["grp"], np.zeros((68, 3), np.float32), face.kps, 0.85)
+
+    liv = SimpleNamespace(
+        observe=lambda *a, **k: None,
+        evaluate_track=lambda tr, frame_shape=None: state["live_ret"],
+    )
+    msgs = []
+    pipe = Pipeline(
+        cfg, db, ScriptedEngine(), Gallery(db, mv),
+        SimpleNamespace(read=lambda: (0, None), idle=False, fps_in=15.0),
+        SimpleNamespace(notify=lambda: None), msgs.append,
+        liveness=liv, clips=None, pose_estimator=ScriptedPose(),
+    )
+    frame = np.random.default_rng(7).integers(60, 200, size=(360, 480, 3), dtype=np.uint8)
+
+    # (a) NVA khớp frontal (liveness đang checking), quay đầu sang góc nghiêng có điểm yếu (0.20) nhưng không khớp người khác -> KHÔNG cắt đứt Best-shot
+    for i in range(2):
+        pipe._process(frame, 10.0 + i * 0.2)
+    t_a = next(iter(pipe.tracker.tracks.values()))
+    tid_a = t_a.id
+    assert t_a.code == "NVA"
+    weak_noisy_prof = _unit([0.95, 0.20, 0.0, 0.23])  # không khớp NVB, sim với a_left thấp
+    state.update(emb=weak_noisy_prof, yaw=-84.0, grp="left_profile")
+    for i in range(4):
+        pipe._process(frame, 10.6 + i * 0.2)
+    t_a_after = next(iter(pipe.tracker.tracks.values()))
+    assert t_a_after.id == tid_a and t_a_after.code == "NVA" and t_a_after.matched_group == "frontal"
+
+    # (b) Chặn ping-pong danh tính: NVA đã check-in ở frontal, sang left_profile khớp accepted với NVB -> phải tách track, không được bắn lặp greet cho NVA
+    pipe.tracker.tracks.clear()
+    msgs.clear()
+    state.update(emb=a_front, yaw=0.0, grp="frontal", live_ret="live")
+    for i in range(2):
+        pipe._process(frame, 20.0 + i * 0.2)
+    probe_b_prof = _unit([0.0, 0.30, 0.9539, 0.0])  # sim(a_left)=0.757 >= 0.41 nhưng khớp accepted với NVB (0.962)
+    state.update(emb=probe_b_prof, yaw=-80.0, grp="left_profile", live_ret="live")
+    for i in range(7):
+        pipe._process(frame, 20.6 + i * 0.2)
+    greet_msgs = [m for m in msgs if m.get("type") == "greet" and m.get("code") == "NVA"]
+    assert len(greet_msgs) == 0, f"Bị ping-pong bắn lặp greet cho NVA: {greet_msgs}"
+
+    # (c) Nhân viên cũ NVC (chưa có mẫu left_profile -> emp_sim is None) đang checking, bị ghép nhầm sang 4 frame left_profile của NVB -> phải tách khỏi NVC
+    pipe.tracker.tracks.clear()
+    state.update(emb=c_front, yaw=0.0, grp="frontal", live_ret="checking")
+    for i in range(2):
+        pipe._process(frame, 30.0 + i * 0.2)
+    assert next(iter(pipe.tracker.tracks.values())).code == "NVC"
+    state.update(emb=b_left, yaw=-80.0, grp="left_profile", live_ret="live")
+    for i in range(4):
+        pipe._process(frame, 30.6 + i * 0.2)
+    t_end = next(iter(pipe.tracker.tracks.values()))
+    assert t_end.code == "NVB", f"Phải tách sang NVB thay vì giữ NVC khi ngăn profile khớp NVB: {t_end.code}"

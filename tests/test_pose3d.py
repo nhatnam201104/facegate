@@ -166,6 +166,41 @@ def test_planar_homography_with_nonzero_3ddfa_z_still_scores_below_spoof_thresho
     assert liv.evaluate_track(tr_fb, frame_shape=blank.shape) == "checking"
 
 
+def test_pure_translation_under_3ddfa_orthographic_projection_stays_checking_not_permanent_spoof():
+    from app.config import load_config
+    from app.liveness import create_liveness
+    from app.tracker import Track
+
+    cfg = load_config()
+    liv = create_liveness(cfg)
+    u_base = np.fromfile(MODELS_DIR / "tddfa_u_base.bin", np.float32).reshape(3, 68, order="F").T
+    u_centered = u_base - u_base.mean(axis=0)
+    u_centered *= 85.0 / float(u_centered[:, 1].max() - u_centered[:, 1].min())
+
+    # Người thật đi ngang qua khung hình nhưng giữ góc đầu ổn định (Δyaw = 0.4° < 4° trên đầu ra trực giao cục bộ của 3DDFA, không có màn hình/Moiré)
+    tr = Track(105, np.array([120.0, 90.0, 200.0, 190.0], np.float32), 10.0, 10.0)
+    tr.matched_group = "left_profile"
+    for i in range(6):
+        yaw_i = -80.0 + i * 0.08
+        p = (_rot_y(yaw_i) @ u_centered.T).T
+        cx = 150.0 + i * 20.0
+        p[:, 0] += cx
+        p[:, 1] += 160.0
+        tr.bbox = np.array([cx - 40, 110.0, cx + 40, 210.0], np.float32)
+        tr.pose_history.append((10.0 + i * 0.2, yaw_i, 0.0, 0.0, (cx, 160.0), p.astype(np.float32)))
+        tr.context_history.append({
+            "yaw": yaw_i,
+            "medium_clean": True,
+            "medium_nearby": False,
+            "body_coupled": True,
+            "spoof_reason": None,
+            "moire_score": 0.04,
+        })
+
+    st = liv.evaluate_track(tr, frame_shape=(480, 640, 3))
+    assert st == "checking" and not tr.spoof, f"Người thật đi thẳng Δyaw nhỏ không được bị khóa spoof vĩnh viễn: {st}, {tr.spoof_reason}"
+
+
 def test_real_3ddfa_onnx_inference_shapes():
     est = PoseEstimator3D(MODELS_DIR)
     img = np.full((360, 480, 3), 140, dtype=np.uint8)

@@ -547,3 +547,77 @@ def test_deep_profile_step_passes_when_profile_template_shifts_embedding_space(e
     assert g_imp.step == 6
     g_imp.cancel()
     assert wait(lambda: g_imp.state == "cancelled")
+
+
+def test_supplement_cleans_old_profile_crops_keeps_active_name_and_backfill_idempotent_with_stop_event(env):
+    import cv2
+    from app.enrollment import backfill_legacy_embeddings, store_enrollment
+    from app.quality import Quality
+
+    ctx, _ = env
+    mv = ctx.engine.model_version
+    u = lambda v: np.array(v, np.float32) / np.linalg.norm(v)
+    q_f = Quality(90, 120, 120, 0.0, 0.0, True, "ok", 0.9, 0.0, "frontal")
+    q_l = Quality(90, 120, 120, -80.0, 0.0, True, "ok", 0.82, 0.0, "left_profile")
+    crop_img = np.full((80, 80, 3), 120, dtype=np.uint8)
+
+    # 1. Đăng ký nhân viên NV_SUP, duyệt active rồi chạy supplement_only 2 lần liên tiếp với tên khác
+    store_enrollment(
+        [{"emb": u([1, 0, 0, 0, 0, 0, 0, 0]), "q": q_f, "bin": "thang-giua", "pose_group": "frontal", "crop": crop_img}],
+        "NV_SUP", "Tên Chính Thức HR Duyệt", ctx, {"frames_total": 1, "no_face": 0, "multi_face": 0, "rejected": {}},
+        n_good=1, n_outliers=0, bin_names=["thang-giua"], guided=True, supplement_only=False,
+    )
+    emp = ctx.db.get_employee_by_code("NV_SUP")
+    ctx.db.set_status(emp["id"], "active")
+
+    for k in range(2):
+        store_enrollment(
+            [{"emb": u([0, 1, 0.1 * k, 0, 0, 0, 0, 0]), "q": q_l, "bin": "nghieng-sau-trai", "pose_group": "left_profile", "crop": crop_img}],
+            "NV_SUP", f"Tên Tùy Ý Lần {k}", ctx, {"frames_total": 1, "no_face": 0, "multi_face": 0, "rejected": {}},
+            n_good=1, n_outliers=0, bin_names=["nghieng-sau-trai"], guided=True, supplement_only=True,
+        )
+
+    emp_after = ctx.db.get_employee_by_code("NV_SUP")
+    assert emp_after["status"] == "active"
+    assert emp_after["name"] == "Tên Chính Thức HR Duyệt", "supplement_only không được ghi đè tên nhân viên đang active"
+
+    emp_dir = ctx.cfg["_paths"]["enroll"] / "NV_SUP"
+    disk_files = sorted(f"enroll/NV_SUP/{p.name}" for p in emp_dir.glob("*.jpg"))
+    db_files = sorted(r["crop_path"] for r in ctx.db.q("SELECT crop_path FROM embeddings WHERE employee_id=?", (emp["id"],)))
+    assert disk_files == db_files, f"Còn sót file ảnh .jpg mồ côi trên đĩa: disk={disk_files} vs db={db_files}"
+
+    # 2. Backfill thất bại không được chèn lặp cảnh báo mỗi lần restart và không xóa trắng crops của báo cáo gốc
+    emp_err = ctx.db.create_employee("NV_BF_FAIL", "Nhân Viên Ảnh Lỗi")
+    ctx.db.add_enrollment(emp_err, {
+        "frames_total": 5, "frames_good": 5, "frames_selected": 5,
+        "bins": {"thang-giua": 1}, "crops": ["enroll/NV_BF_FAIL/00_thang-giua.jpg"],
+        "warnings": [], "model_version": "old-model-v0",
+    })
+    err_dir = ctx.cfg["_paths"]["enroll"] / "NV_BF_FAIL"
+    err_dir.mkdir(parents=True, exist_ok=True)
+    cv2.imwrite(str(err_dir / "00_thang-giua.jpg"), np.full((90, 90, 3), 255, dtype=np.uint8))
+
+    class NoFaceEngine:
+        name = "edgeface"
+        model_version = "new-model-v3"
+
+        def detect(self, img):
+            return []
+
+    ctx.engine = NoFaceEngine()
+    backfill_legacy_embeddings(ctx)
+    cnt_after_first = len(ctx.db.q("SELECT id FROM enrollments WHERE employee_id=?", (emp_err,)))
+    latest_rep = [r for r in ctx.db.list_employees("new-model-v3") if r["code"] == "NV_BF_FAIL"][0]["report"]
+    import json
+    rep_obj = json.loads(latest_rep) if isinstance(latest_rep, str) else latest_rep
+    assert rep_obj["crops"] == ["enroll/NV_BF_FAIL/00_thang-giua.jpg"], "Không được làm mất danh sách crops của báo cáo gốc"
+
+    # Gọi lần 2 (mô phỏng restart server): không được chạy lặp và không phình bảng enrollments
+    backfill_legacy_embeddings(ctx)
+    cnt_after_second = len(ctx.db.q("SELECT id FROM enrollments WHERE employee_id=?", (emp_err,)))
+    assert cnt_after_second == cnt_after_first, "Backfill thất bại bị ghi lặp thêm dòng vào enrollments mỗi lần restart"
+
+    # 3. Tôn trọng stop_event khi tắt server
+    stop_ev = threading.Event()
+    stop_ev.set()
+    assert backfill_legacy_embeddings(ctx, stop_event=stop_ev) == 0

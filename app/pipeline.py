@@ -451,37 +451,88 @@ class Pipeline:
                     t.score, t.margin = m.score, m.margin
         return t
 
+    def _split_mismatched_bucket(self, t: Track, f: Face, now: float, pose_group: str,
+                                 vec: np.ndarray, pose) -> Track:
+        saved_bucket = list(t.buckets.get(pose_group, []))
+        saved_yaws = list(t.bucket_yaws.get(pose_group, []))
+        t.buckets[pose_group] = []
+        t.bucket_yaws[pose_group] = []
+        self._on_track_end(t)
+        new_t = self.tracker.split(t, f, now)
+        new_t.buckets[pose_group] = saved_bucket
+        new_t.bucket_yaws[pose_group] = saved_yaws
+        new_t.good_frames = len(saved_bucket)
+        new_t.pose_group = pose_group
+        new_t.last_yaw = pose.yaw
+        new_t.min_abs_yaw = min((abs(y) for y in saved_yaws), default=abs(pose.yaw))
+        new_t.pose_history.append((now, pose.yaw, pose.pitch, pose.roll, new_t.center, pose.landmarks3d))
+        self._start_clip(new_t)
+        return self._identify(new_t, now, pose_group, vec)
+
     def _reverify_current_bucket(self, t: Track, f: Face, now: float, pose_group: str,
                                  vec: np.ndarray | None, pose) -> Track:
-        """Hậu kiểm danh tính trên chính ngăn góc nhìn hiện tại để phát hiện ghép nhầm người khác."""
+        """Hậu kiểm ngăn góc nhìn hiện tại: tách track dứt điểm khi ghép nhầm sang đồng nghiệp khác,
+        bảo vệ Best-shot frontal khi cùng một người xoay đầu và triệt tiêu dao động ping-pong.
+        """
         if vec is None or t.employee_id is None:
             return t
-        emp_sim = self.gallery.employee_similarity(t.employee_id, vec, pose_group)
-        if emp_sim is None:
-            log.debug("Track %d: %s chua co mau gallery cho ngan %s -> giu nguyen danh tinh", t.id, t.code, pose_group)
-            return t
+        m = self.gallery.match(
+            vec,
+            self.threshold,
+            self.margin,
+            pose_group=pose_group,
+            profile_threshold=self.profile_threshold,
+            profile_margin=self.profile_margin,
+        )
+        t.best_score = max(t.best_score, m.score)
         eff_thr = self.threshold if pose_group == "frontal" else self.profile_threshold
-        if emp_sim < eff_thr - VERIFY_SLACK:
+        emp_sim = self.gallery.employee_similarity(t.employee_id, vec, pose_group)
+        if m.employee_id is not None and m.score >= eff_thr:
+            t.claimed = (m.employee_id, m.code, m.name)
+
+        # 1. Ngăn hiện tại khớp mở (accepted) với một nhân viên KHÁC:
+        #    - Nếu nhân viên hiện tại đã có mẫu ở nhóm góc này (emp_sim is not None) -> tách track ngay (tránh ping-pong).
+        #    - Nếu nhân viên cũ chưa có mẫu ở nhóm góc này (emp_sim is None): chỉ tách khi chưa hoàn tất sự kiện check-in
+        #      của nhân viên cũ (chặn ghép nhầm lúc đang checking) hoặc khớp rất sát (>= 0.95), giữ ổn định sau khi đã check-in.
+        if m.accepted and m.employee_id != t.employee_id:
+            if emp_sim is not None or not t.event_done or m.score >= 0.95:
+                log.info(
+                    "Track %d: ngan %s khop nhan vien khac %s (score=%.3f, cu=%s) -> tach track",
+                    t.id, pose_group, m.code, m.score, t.code,
+                )
+                return self._split_mismatched_bucket(t, f, now, pose_group, vec, pose)
+            return t
+
+        # 2. Đang ở ngăn phụ (khác matched_group): nâng lên Best-shot frontal nếu cùng người, hoặc giữ Best-shot hiện có
+        if pose_group != t.matched_group:
+            if pose_group == "frontal" and m.accepted and m.employee_id == t.employee_id:
+                t.matched_group = "frontal"
+                t.verification_tier = "verified"
+                t.score, t.margin = m.score, m.margin
+                return t
+            if (
+                t.matched_group == "frontal"
+                and not t.event_done
+                and m.accepted
+                and m.employee_id == t.employee_id
+                and len(t.live) < self.live_min
+                and (not t.live or float(np.mean(t.live)) >= self.spoof_thr)
+            ):
+                t.matched_group = pose_group
+                t.verification_tier = "profile_verified"
+                t.score, t.margin = m.score, m.margin
+            return t
+
+        # 3. Đang ở chính ngăn đã chốt danh tính (pose_group == t.matched_group): kiểm tra điểm khớp với chính nhân viên đó
+        if emp_sim is not None and emp_sim < eff_thr - VERIFY_SLACK:
             log.info(
-                "Track %d: ngan %s khong khop %s (sim=%.3f < %.3f) -> tach track xac minh lai",
+                "Track %d: ngan chinh %s khong con khop %s (sim=%.3f < %.3f) -> tach track xac minh lai",
                 t.id, pose_group, t.code, emp_sim, eff_thr - VERIFY_SLACK,
             )
-            saved_bucket = list(t.buckets.get(pose_group, []))
-            saved_yaws = list(t.bucket_yaws.get(pose_group, []))
-            t.buckets[pose_group] = []
-            t.bucket_yaws[pose_group] = []
-            self._on_track_end(t)
-            new_t = self.tracker.split(t, f, now)
-            new_t.buckets[pose_group] = saved_bucket
-            new_t.bucket_yaws[pose_group] = saved_yaws
-            new_t.good_frames = len(saved_bucket)
-            new_t.pose_group = pose_group
-            new_t.last_yaw = pose.yaw
-            new_t.min_abs_yaw = min((abs(y) for y in saved_yaws), default=abs(pose.yaw))
-            new_t.pose_history.append((now, pose.yaw, pose.pitch, pose.roll, new_t.center, pose.landmarks3d))
-            self._start_clip(new_t)
-            return self._identify(new_t, now, pose_group, vec)
-        return self._identify(t, now, pose_group, vec)
+            return self._split_mismatched_bucket(t, f, now, pose_group, vec, pose)
+        if m.employee_id == t.employee_id and m.score >= eff_thr - VERIFY_SLACK:
+            t.score, t.margin = m.score, m.margin
+        return t
 
     def _merge_same_person(self, t: Track) -> Track:
         for o in self.tracker.tracks.values():

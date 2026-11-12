@@ -101,9 +101,11 @@ class Track:
 
     @property
     def live_mean(self) -> float | None:
+        if self.liveness_score is not None:
+            return self.liveness_score
         if self.live:
             return float(np.mean(self.live))
-        return self.liveness_score
+        return None
 
     def reset_identity(self) -> None:
         self.employee_id = self.code = self.name = self.confirmed_at = None

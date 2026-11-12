@@ -1,0 +1,324 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FaceGate SpecKit Plan · Tối ưu Độ trễ & Hiệu năng Luồng Stream Server</title>
+<style>
+  :root {
+    --bg: #0f172a;
+    --panel: #1e293b;
+    --panel-alt: #162033;
+    --border: #334155;
+    --text: #f1f5f9;
+    --muted: #94a3b8;
+    --accent: #38bdf8;
+    --ok: #22c55e;
+    --warn: #f59e0b;
+    --danger: #ef4444;
+    --purple: #a78bfa;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, Ubuntu, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+  }
+  header {
+    background: linear-gradient(135deg, #0f172a 0%, #1e293b 55%, #0c4a6e 100%);
+    border-bottom: 1px solid var(--border);
+    padding: 28px 24px;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 0 20px; }
+  .badges { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+  .badge {
+    font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: 999px;
+    background: rgba(56, 189, 248, 0.14); color: var(--accent); border: 1px solid rgba(56, 189, 248, 0.35);
+  }
+  .badge.ok { background: rgba(34, 197, 94, 0.15); color: #4ade80; border-color: rgba(34, 197, 94, 0.35); }
+  .badge.warn { background: rgba(245, 158, 11, 0.15); color: #fbbf24; border-color: rgba(245, 158, 11, 0.35); }
+  h1 { margin: 4px 0 8px; font-size: 26px; }
+  h2 { font-size: 19px; margin: 0 0 14px; color: #e2e8f0; display: flex; align-items: center; gap: 8px; }
+  h3 { font-size: 15px; margin: 14px 0 6px; color: var(--accent); }
+  p.lead { margin: 0; color: #cbd5e1; max-width: 960px; }
+  main { padding: 24px 0 56px; }
+  .grid { display: grid; gap: 18px; margin-bottom: 20px; }
+  .cols-4 { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+  .cols-2 { grid-template-columns: repeat(auto-fit, minmax(440px, 1fr)); }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 18px 20px;
+  }
+  .kpi b { display: block; font-size: 24px; color: var(--accent); }
+  .kpi span { font-size: 13px; color: var(--muted); }
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; background: var(--panel-alt); }
+  code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 12.5px; background: rgba(15, 23, 42, 0.65); padding: 2px 6px; border-radius: 5px; color: #7dd3fc;
+  }
+  .diagram-box {
+    background: #0b1220; border: 1px solid var(--border); border-radius: 10px; padding: 16px; overflow-x: auto;
+  }
+  .tag-new { color: #4ade80; font-weight: 600; }
+  .tag-mod { color: #fbbf24; font-weight: 600; }
+  .tag-bad { color: #f87171; font-weight: 600; }
+  .phase-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 14px; }
+  .phase { background: var(--panel-alt); border: 1px solid var(--border); border-radius: 10px; padding: 14px; }
+  .phase b { color: var(--accent); display: block; margin-bottom: 6px; }
+  .phase ul { margin: 0; padding-left: 18px; font-size: 13.5px; color: #cbd5e1; }
+  .check-row { display: flex; align-items: flex-start; gap: 10px; padding: 8px 0; border-bottom: 1px dashed var(--border); font-size: 14px; }
+  .check-row:last-child { border-bottom: 0; }
+  .sign-box {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin-top: 14px;
+  }
+  .sign-box input, .sign-box select {
+    width: 100%; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border);
+    background: #0b1220; color: var(--text); font-size: 13.5px;
+  }
+  .btn {
+    margin-top: 12px; background: #0284c7; color: #fff; border: 0; border-radius: 8px;
+    padding: 9px 16px; font-weight: 600; cursor: pointer;
+  }
+  .btn:hover { background: #0369a1; }
+  .saved-note { margin-left: 10px; font-size: 13px; color: #4ade80; }
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <div class="badges">
+      <span class="badge">SpecKit Plan · 002-low-latency-stream</span>
+      <span class="badge ok">Constitution Gate: 5/5 PASS</span>
+      <span class="badge">Zero New Dependencies · CPU-First</span>
+      <span class="badge warn">Server & Reverse-Proxy Ready</span>
+    </div>
+    <h1>Kế hoạch Tối ưu Độ trễ & Hiệu năng Luồng Stream cho Triển khai Máy chủ</h1>
+    <p class="lead">
+      Loại bỏ triệt để hiện tượng giật hình theo nhịp suy luận AI và rủi ro trễ dồn khi đưa <code>facegate</code> lên máy chủ bằng kiến trúc <b>Tách rời Luồng Render 24 FPS (StreamComposer)</b>, <b>Bộ nhớ đệm Sprite Nhãn Tiếng Việt ROI (~0.2 ms)</b>, <b>Phân phối Khung hình Bất đồng bộ Latest-Frame Drop (FrameHub)</b> và <b>Quản lý Vòng đời Kết nối theo Tab</b>.
+    </p>
+  </div>
+</header>
+
+<main class="wrap">
+  <section class="grid cols-4">
+    <div class="card kpi"><b>~65–120 ms</b><span>Độ trễ LAN dự kiến p50 (giảm từ 250–950 ms hiện tại)</span></div>
+    <div class="card kpi"><b>24 FPS Mượt</b><span>Không bị khựng khi AI xử lý 1–3 người đồng thời</span></div>
+    <div class="card kpi"><b>~0.25 ms</b><span>Vẽ nhãn tiếng Việt bằng ROI Sprite Cache (nhanh hơn ~25×)</span></div>
+    <div class="card kpi"><b>0% Idle CPU</b><span>Tự ngắt nén JPEG khi không có trình duyệt nào mở xem</span></div>
+  </section>
+
+  <section class="card" style="margin-bottom:18px">
+    <h2>1. Sơ đồ Kiến trúc Tách Luồng 3 Tầng & Phân phối Không Trễ Dồn</h2>
+    <div class="diagram-box">
+      <pre class="mermaid">
+flowchart LR
+  subgraph INGEST["1. Tầng Thu nhận (Camera Thread)"]
+    CAM["Webcam V4L2/MSMF<br/>hoặc RTSP Low-Delay<br/>(nobuffer + grab drain)"]
+    LATEST[("LatestCameraFrame<br/>(frame_id, ts, BGR)")]
+    CAM -->|"Ghi đè frame mới nhất"| LATEST
+  end
+
+  subgraph AI["2. Tầng Suy luận Độc lập (Pipeline Thread · 5 FPS)"]
+    PROC["YuNet + YOLOX-Nano +<br/>3DDFA_V2 + EdgeFace + FAS<br/>(~65-150 ms, không chặn video)"]
+    SNAP[("OverlaySnapshot<br/>(Immutable Boxes + HUD)")]
+    PROC -->|"Cập nhật nguyên tử"| SNAP
+  end
+
+  subgraph STREAM["3. Tầng Xuất hình Theo Nhu cầu (StreamComposer · 24 FPS)"]
+    COMP["Resize + ROI Sprite Overlay<br/>+ JPEG Encode 1 lần (q=72)"]
+    LHUB[("live FrameHub<br/>(/video.mjpg)")]
+    RHUB[("raw FrameHub<br/>(/video_raw.mjpg)")]
+    CLIPS["ClipRecorder Queue<br/>(10 FPS WebM/MP4)"]
+    COMP -->|"Khi live_viewers > 0"| LHUB
+    COMP -->|"Khi raw_viewers > 0"| RHUB
+    COMP -->|"Khi có người qua cửa"| CLIPS
+  end
+
+  LATEST --> PROC
+  LATEST --> COMP
+  SNAP -.->|"Đọc không khóa"| COMP
+  LHUB -->|"Async Event + Latest-Frame Drop<br/>+ X-Accel-Buffering: no"| UI1["1..N Trình duyệt (Tab Trực tiếp)"]
+  RHUB -->|"Dùng chung 1 bản nén"| UI2["Trình duyệt (Tab Đăng ký)"]
+      </pre>
+    </div>
+  </section>
+
+  <div class="grid cols-2">
+    <section class="card">
+      <h2>2. Đối chiếu 6 Nút thắt Gây Lag & Giải pháp Triệt tiêu</h2>
+      <table>
+        <thead>
+          <tr><th>Nút thắt hiện tại</th><th>Độ trễ cũ</th><th>Giải pháp mới</th><th>Sau tối ưu</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>_render()</code> nằm chung vòng lặp với <code>_process()</code></td>
+            <td><span class="tag-bad">70–220 ms khựng</span></td>
+            <td>Tách sang <code>StreamComposer</code> đọc <code>OverlaySnapshot</code> bất biến</td>
+            <td><span class="tag-new">0 ms chặn</span></td>
+          </tr>
+          <tr>
+            <td>Pillow chuyển đổi <code>BGR↔RGB</code> toàn ảnh <code>960×540</code></td>
+            <td><span class="tag-bad">6–10 ms / frame</span></td>
+            <td><code>LabelSpriteCache</code> LRU chỉ dựng mảnh chữ nhỏ <code>~200×24</code></td>
+            <td><span class="tag-new">~0.25 ms</span></td>
+          </tr>
+          <tr>
+            <td>FFmpeg RTSP giữ jitter buffer mặc định</td>
+            <td><span class="tag-bad">300–800 ms</span></td>
+            <td>Cờ <code>fflags;nobuffer|flags;low_delay|max_delay;250000</code></td>
+            <td><span class="tag-new">15–45 ms</span></td>
+          </tr>
+          <tr>
+            <td><code>run_in_threadpool</code> mỗi frame + nén riêng ở <code>video_raw</code></td>
+            <td><span class="tag-bad">Nghẽn worker</span></td>
+            <td><code>AsyncIO FrameHub</code> dùng chung 1 mảng byte JPEG cho N người xem</td>
+            <td><span class="tag-new">0 OS thread</span></td>
+          </tr>
+          <tr>
+            <td>Reverse Proxy gom buffer + mạng chậm gây trễ dồn</td>
+            <td><span class="tag-bad">Trễ tăng dần</span></td>
+            <td>Header <code>X-Accel-Buffering: no</code> + nhảy thẳng tới <code>hub.seq</code> mới nhất</td>
+            <td><span class="tag-new">Tự hồi &lt; 2s</span></td>
+          </tr>
+          <tr>
+            <td>Tab ẩn vẫn mở <code>/video.mjpg</code> ngầm vĩnh viễn</td>
+            <td><span class="tag-bad">Tốn CPU/Băng thông</span></td>
+            <td><code>syncVideoStreams()</code> ngắt kết nối ngay khi đổi tab / ẩn cửa sổ</td>
+            <td><span class="tag-new">0% khi ẩn</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="card">
+      <h2>3. Bản đồ Tác động Kiến trúc (Knowledge Graph Overlay)</h2>
+      <table>
+        <thead>
+          <tr><th>Lớp kiến trúc / Module</th><th>Thay đổi</th><th>Vai trò trong luồng mới</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><b>Xử lý & Phân phối Stream</b><br/><code>app/stream.py</code></td>
+            <td><span class="tag-new">Thêm mới</span></td>
+            <td>Chứa <code>OverlayBox</code>, <code>OverlaySnapshot</code>, <code>FrameHub</code> (async pub/sub không khóa threadpool) và <code>StreamComposer</code> (24 FPS on-demand).</td>
+          </tr>
+          <tr>
+            <td><b>Xử lý nhận diện</b><br/><code>app/draw.py</code></td>
+            <td><span class="tag-mod">Nâng cấp</span></td>
+            <td>Bổ sung <code>LabelSpriteCache</code> (LRU 256) dán trực tiếp ROI lên ảnh BGR, giữ nguyên chữ tiếng Việt có dấu.</td>
+          </tr>
+          <tr>
+            <td><b>Xử lý nhận diện</b><br/><code>app/camera.py</code></td>
+            <td><span class="tag-mod">Nâng cấp</span></td>
+            <td>Tối ưu cờ FFmpeg RTSP low-latency, bổ sung <code>read_latest()</code> trả kèm dấu thời gian <code>frame_ts</code> và điều phối chế độ <code>idle</code> theo người xem raw.</td>
+          </tr>
+          <tr>
+            <td><b>Xử lý nhận diện</b><br/><code>app/pipeline.py</code></td>
+            <td><span class="tag-mod">Nâng cấp</span></td>
+            <td>Gỡ bỏ việc tự vẽ/nén JPEG khỏi vòng lặp suy luận; xuất bản <code>OverlaySnapshot</code> và báo cáo <code>stream_fps</code>, <code>stream_viewers</code> trong <code>status()</code>.</td>
+          </tr>
+          <tr>
+            <td><b>API & Trạng thái</b><br/><code>app/main.py</code>, <code>app/config.py</code>, <code>config.yaml</code></td>
+            <td><span class="tag-mod">Nâng cấp</span></td>
+            <td>Khởi tạo <code>StreamComposer</code> trong lifespan; chuyển <code>/video.mjpg</code> & <code>/video_raw.mjpg</code> sang async <code>FrameHub</code> kèm anti-buffering headers.</td>
+          </tr>
+          <tr>
+            <td><b>Giao diện Web</b><br/><code>app/static/app.js</code></td>
+            <td><span class="tag-mod">Nâng cấp</span></td>
+            <td>Quản lý đóng/mở kết nối MJPEG theo <code>visibilitychange</code> và tab đang chọn; hiển thị <code>stream FPS</code> và tự động kết nối lại khi nguồn phục hồi.</td>
+          </tr>
+          <tr>
+            <td><b>Kiểm thử & Đo kiểm</b><br/><code>tests/test_stream_latency.py</code>, <code>scripts/benchmark.py</code></td>
+            <td><span class="tag-new">Thêm mới / Mở rộng</span></td>
+            <td>Kiểm thử định lượng tách luồng dưới tải AI chậm, nhảy cóc frame cho client chậm, 0% encode khi không ai xem và đo tốc độ render.</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+  </div>
+
+  <section class="card" style="margin-bottom:18px">
+    <h2>4. Lộ trình Triển khai 4 Giai đoạn (Định hướng cho <code>/speckit-tasks</code>)</h2>
+    <div class="phase-list">
+      <div class="phase">
+        <b>Giai đoạn A · Tối ưu Ingest & ROI Overlay</b>
+        <ul>
+          <li>Cập nhật <code>config.yaml</code> & <code>app/config.py</code> (24 FPS, q=72, RTSP flags)</li>
+          <li>Nâng cấp <code>app/camera.py</code> giảm đệm RTSP & trả <code>frame_ts</code></li>
+          <li>Nâng cấp <code>app/draw.py</code> sang <code>LabelSpriteCache</code> cắt dán ROI</li>
+          <li>Viết unit test hiệu năng & cắt biên nhãn tiếng Việt</li>
+        </ul>
+      </div>
+      <div class="phase">
+        <b>Giai đoạn B · Tách Luồng StreamComposer & FrameHub</b>
+        <ul>
+          <li>Xây dựng <code>app/stream.py</code> (<code>FrameHub</code> + <code>StreamComposer</code>)</li>
+          <li>Tách <code>_render</code> khỏi <code>app/pipeline.py</code> bằng <code>OverlaySnapshot</code></li>
+          <li>Đảm bảo tương thích 100% với <code>ClipRecorder</code> & Chế độ chờ</li>
+          <li>Kiểm thử tách luồng khi <code>_process</code> bị giữ chậm 220 ms</li>
+        </ul>
+      </div>
+      <div class="phase">
+        <b>Giai đoạn C · Async Endpoints & Proxy Headers</b>
+        <ul>
+          <li>Chuyển <code>/video.mjpg</code> & <code>/video_raw.mjpg</code> trong <code>app/main.py</code> sang async <code>FrameHub</code></li>
+          <li>Gắn bộ headers chống đệm (<code>X-Accel-Buffering: no</code>)</li>
+          <li>Bổ sung <code>stream_fps</code>, <code>stream_viewers</code> vào <code>/api/status</code></li>
+          <li>Kiểm thử Latest-Frame Drop cho người xem mạng chậm</li>
+        </ul>
+      </div>
+      <div class="phase">
+        <b>Giai đoạn D · Vòng đời Trình duyệt & Benchmark</b>
+        <ul>
+          <li>Nâng cấp <code>app/static/app.js</code> tự ngắt/mở stream theo tab & visibility</li>
+          <li>Hiển thị <code>stream FPS</code> trên thanh trạng thái giao diện</li>
+          <li>Mở rộng <code>scripts/benchmark.py --stream-bench</code></li>
+          <li>Chạy trọn bộ <code>pytest</code> đảm bảo 0 hồi quy toàn hệ thống</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>5. Cổng Duyệt Kế hoạch Kỹ thuật (Sign-off trước khi chạy <code>/speckit-tasks</code>)</h2>
+    <div class="check-row"><input type="checkbox" checked> <span>Đồng ý tách hoàn toàn luồng xuất hình <b>StreamComposer (24 FPS)</b> khỏi luồng suy luận AI <b>Pipeline (5 FPS)</b> qua <code>OverlaySnapshot</code> bất biến.</span></div>
+    <div class="check-row"><input type="checkbox" checked> <span>Đồng ý giữ giao thức <b>Async Broadcast MJPEG + Latest-Frame Drop + Anti-Buffering Headers</b> (không cài thêm thư viện WebRTC nặng gây tốn CPU server).</span></div>
+    <div class="check-row"><input type="checkbox" checked> <span>Đồng ý cơ chế <b>Zero-Viewer Idle</b>: tự động ngắt nén JPEG khi không có trình duyệt nào đang mở tab xem video để tiết kiệm tài nguyên server 24/7.</span></div>
+    <div class="sign-box">
+      <input id="approver" placeholder="Người duyệt (PM / Tech Lead)">
+      <select id="decision">
+        <option value="approved">Duyệt kế hoạch — Chuyển sang /speckit-tasks</option>
+        <option value="adjust">Cần điều chỉnh thông số / phạm vi</option>
+      </select>
+      <input id="note" placeholder="Ghi chú thêm (nếu có)">
+    </div>
+    <button class="btn" type="button" onclick="saveSignoff()">Lưu xác nhận duyệt</button>
+    <span class="saved-note" id="savedMsg"></span>
+  </section>
+</main>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({ startOnLoad: true, theme: "dark" });
+</script>
+<script>
+  function saveSignoff() {
+    const data = {
+      approver: document.getElementById("approver").value,
+      decision: document.getElementById("decision").value,
+      note: document.getElementById("note").value,
+      ts: new Date().toLocaleString("vi-VN")
+    };
+    localStorage.setItem("facegate_plan_002_signoff", JSON.stringify(data));
+    document.getElementById("savedMsg").textContent = "Đã lưu trạng thái duyệt lúc " + data.ts;
+  }
+</script>
+</body>
+</html>

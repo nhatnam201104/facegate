@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FaceGate SpecKit Bug Verification · handoff-review-fixes</title>
+<style>
+  :root {
+    --bg: #0f172a;
+    --panel: #1e293b;
+    --panel-alt: #162033;
+    --border: #334155;
+    --text: #f1f5f9;
+    --muted: #94a3b8;
+    --accent: #38bdf8;
+    --ok: #22c55e;
+    --warn: #f59e0b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, Ubuntu, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+  }
+  header {
+    background: linear-gradient(135deg, #0f172a 0%, #14532d 55%, #0c4a6e 100%);
+    border-bottom: 1px solid var(--border);
+    padding: 28px 24px;
+  }
+  .wrap { max-width: 1200px; margin: 0 auto; padding: 0 20px; }
+  .badges { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+  .badge {
+    font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: 999px;
+    background: rgba(56, 189, 248, 0.14); color: var(--accent); border: 1px solid rgba(56, 189, 248, 0.35);
+  }
+  .badge.ok { background: rgba(34, 197, 94, 0.18); color: #4ade80; border-color: rgba(34, 197, 94, 0.45); }
+  .badge.warn { background: rgba(245, 158, 11, 0.16); color: #fbbf24; border-color: rgba(245, 158, 11, 0.4); }
+  h1 { margin: 4px 0 8px; font-size: 25px; }
+  h2 { font-size: 18px; margin: 0 0 14px; color: #e2e8f0; }
+  p.lead { margin: 0; color: #cbd5e1; max-width: 960px; }
+  main { padding: 24px 0 56px; }
+  .grid { display: grid; gap: 16px; margin-bottom: 20px; }
+  .cols-4 { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+  .cols-2 { grid-template-columns: repeat(auto-fit, minmax(440px, 1fr)); }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 18px 20px;
+    margin-bottom: 18px;
+  }
+  .kpi b { display: block; font-size: 24px; color: #4ade80; }
+  .kpi span { font-size: 13px; color: var(--muted); }
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; background: var(--panel-alt); }
+  code, pre.out {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 12.5px;
+  }
+  code { background: rgba(15, 23, 42, 0.65); padding: 2px 6px; border-radius: 5px; color: #7dd3fc; }
+  pre.out {
+    background: #0b1220; border: 1px solid var(--border); border-radius: 8px; padding: 12px;
+    color: #cbd5e1; overflow-x: auto; margin: 8px 0 0;
+  }
+  .diagram-box {
+    background: #0b1220; border: 1px solid var(--border); border-radius: 10px; padding: 16px; overflow-x: auto;
+  }
+  .pass { color: #4ade80; font-weight: 700; }
+  ul.tight { margin: 6px 0 0; padding-left: 18px; color: #cbd5e1; font-size: 14px; }
+  .sign-box {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin-top: 14px;
+  }
+  .sign-box input, .sign-box select {
+    width: 100%; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border);
+    background: #0b1220; color: var(--text); font-size: 13.5px;
+  }
+  .btn {
+    margin-top: 12px; background: #16a34a; color: #fff; border: 0; border-radius: 8px;
+    padding: 9px 16px; font-weight: 600; cursor: pointer;
+  }
+  .saved-note { margin-left: 10px; font-size: 13px; color: #4ade80; }
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <div class="badges">
+      <span class="badge">Slug: handoff-review-fixes</span>
+      <span class="badge ok">Result: VERIFIED</span>
+      <span class="badge ok">Regression Suite: 35 / 35 passed (31.96s)</span>
+      <span class="badge ok">Playwright E2E: PASS (0 XSS · 0 Console Errors)</span>
+    </div>
+    <h1>Báo cáo xác nhận khắc phục lỗi (Bug Verification Report)</h1>
+    <p class="lead">Kiểm chứng độc lập đầu-cuối cho 10 hạng mục sửa lỗi trên nhánh <code>001-profile-90-antispoof</code> đối chiếu với hợp đồng <code>./assessment.md</code>, bản vá <code>./fix.md</code> và đồ thị kiến trúc <code>docs/knowledge-graph.json</code>.</p>
+  </div>
+</header>
+<main class="wrap">
+  <div class="grid cols-4">
+    <div class="card kpi"><b>VERIFIED</b><span>Kết luận kiểm định tổng thể</span></div>
+    <div class="card kpi"><b>5 / 5 PASS</b><span>Nhóm kịch bản tái hiện lỗi gốc</span></div>
+    <div class="card kpi"><b>35 / 35 PASS</b><span>10 test mới + 25 test hồi quy sẵn có</span></div>
+    <div class="card kpi"><b>0 sửa đổi</b><span>Cây mã nguồn sạch nguyên vẹn</span></div>
+  </div>
+
+  <section class="card">
+    <h2>Chuỗi xác minh theo lớp kiến trúc (SpecKit Verification Matrix)</h2>
+    <div class="diagram-box">
+      <pre class="mermaid">
+flowchart LR
+  A["assessment.md<br/>(10 lỗi P0/P1/P2)"] --> F["fix.md<br/>(9 commits · 12 files)"]
+  F --> R1["Tái hiện Toán học & ONNX<br/>(#1, #4, #6, #7, #10)<br/>✅ ALL_REPRO_PASS"]
+  F --> R2["Tái hiện Luồng Đăng ký & Tracker<br/>(#2, #5, #8, #9)<br/>✅ 10/10 New Tests PASS"]
+  F --> R3["Playwright Browser E2E<br/>(#1 Feed/Events, #3 XSS & O'Neil)<br/>✅ 0 XSS · 0 Errors"]
+  F --> R4["Toàn bộ Suite Hồi quy & Cú pháp<br/>(pytest + compileall + node --check)<br/>✅ 35 passed in 31.96s"]
+  R1 & R2 & R3 & R4 --> V["VERIFIED<br/>Sẵn sàng đóng hồ sơ lỗi"]
+      </pre>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Chi tiết các phép kiểm chứng đã thực thi</h2>
+    <table>
+      <thead>
+        <tr><th>Hạng mục kiểm tra</th><th>Lệnh / Hành động thực thi</th><th>Kết quả</th><th>Bằng chứng ghi nhận</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><b>Tái hiện #1</b> (Spoof event &amp; render)</td>
+          <td>Chạy 2 chu kỳ <code>Pipeline._process</code> với <code>Liveness._mark_spoof</code> thật + kiểm tra DOM <code>#feed</code>, <code>#evBody</code></td>
+          <td class="pass">PASS</td>
+          <td><code>spoof_events = 1</code>, <code>verification_tier = "rejected_spoof"</code>, không ghi trùng ở chu kỳ 2, hiển thị đúng trên UI.</td>
+        </tr>
+        <tr>
+          <td><b>Tái hiện #2 &amp; #9</b> (Supplement &amp; Cross-pose)</td>
+          <td>Kiểm thử phiên <code>supplement_only</code> thiếu mẫu thẳng, mạo danh bước 0 / bước nghiêng và video ghép người</td>
+          <td class="pass">PASS</td>
+          <td>Trả HTTP 409 khi thiếu <code>frontal</code>; chặn mặt người B; giữ <code>active</code> khi sạch và hạ <code>pending</code> khi có cảnh báo.</td>
+        </tr>
+        <tr>
+          <td><b>Tái hiện #3</b> (Stored XSS &amp; <code>O'Neil</code>)</td>
+          <td>Playwright mở <code>http://127.0.0.1:18097</code>, bấm <code>+ Bổ sung góc 90°</code>, <code>Xóa</code> và gán nhãn sự kiện</td>
+          <td class="pass">PASS</td>
+          <td><code>window.__xss_bugtest === 0</code>, Console <code>0 errors / 0 warnings</code>, điền nguyên vẹn <code>Sean O'Neil</code> và chuỗi payload.</td>
+        </tr>
+        <tr>
+          <td><b>Tái hiện #4, #6, #7, #10</b> (Euler, Moiré, Parallax, Context)</td>
+          <td>Chạy trực tiếp ma trận xoay <code>Rx(8°)·Ry(85°)</code>, <code>Rx(15°)·Ry(88°)</code>, Moiré <code>15×0.0 + 1×0.70</code>, Homography phẳng có <code>z!=0</code>, điện thoại ngang ngực</td>
+          <td class="pass">PASS</td>
+          <td><code>euler85=(85.0°, 0.69°, -7.97°)</code>, <code>euler88=(88.1°, 0.52°, -14.99°)</code>, <code>par_flat_z=0.0000</code>, Moiré <code>live</code>, điện thoại ngực <code>None</code>.</td>
+        </tr>
+        <tr>
+          <td><b>Tái hiện #5 &amp; #8</b> (Hậu kiểm góc nghiêng &amp; Backfill nền)</td>
+          <td>Kiểm thử chuyển từ 3 frame <code>frontal</code> của A sang 4 frame <code>left_profile</code> của B; backfill ảnh trắng + kiểm tra <code>lifespan</code></td>
+          <td class="pass">PASS</td>
+          <td>Tách track sang <code>NVB</code> ngay khi đủ ngưỡng profile; bỏ qua ảnh trắng không mặt; <code>lifespan</code> trả quyền trước khi backfill xong.</td>
+        </tr>
+        <tr>
+          <td><b>10 bài test mới &amp; Toàn bộ Regression Suite</b></td>
+          <td><code>.venv/bin/python -m pytest -v</code></td>
+          <td class="pass">PASS</td>
+          <td><code>10 passed</code> (nhóm test mới trong <code>11.99s</code>) · <code>35 passed</code> toàn bộ dự án trong <code>31.94s</code>.</td>
+        </tr>
+        <tr>
+          <td><b>Kiểm tra cú pháp tĩnh Python &amp; JS</b></td>
+          <td><code>python -m compileall -q app tests scripts</code> &amp; <code>node --check app/static/*.js</code></td>
+          <td class="pass">PASS</td>
+          <td>Tất cả module Python và 4 tệp JavaScript biên dịch không lỗi.</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <div class="grid cols-2">
+    <section class="card">
+      <h2>Trích xuất kết quả chạy thật (Output Excerpts)</h2>
+      <pre class="out">ALL_REPRO_PASS: spoof_events=1, euler85=(85.0,0.69,-7.97), euler88=(88.1,0.52,-14.99), par_flat_z=0.0000
+
+Playwright E2E:
+{
+  "xssTriggered": 0,
+  "feedHasSpoof": true,
+  "eventsHasSpoof": true,
+  "labelSelected": true,
+  "oneilPrefill": { "code": "NV_ONEIL", "name": "Sean O'Neil" }
+}
+Console: Total messages: 0 (Errors: 0, Warnings: 0)
+
+Pytest:
+35 passed in 31.96s</pre>
+    </section>
+
+    <section class="card">
+      <h2>Rủi ro tồn dư &amp; Khuyến nghị đóng lỗi</h2>
+      <ul class="tight">
+        <li><b>Hiệu chỉnh thực địa (#7, #9)</b>: Ngưỡng <code>cross_pose_min_cosine: 0.22</code> và <code>min_depth_score: 0.55</code> nên được đo kiểm lại trên tập video cổng thật khi triển khai pilot.</li>
+        <li><b>Bố trí góc lắp camera (#10)</b>: Tránh chiếu thẳng trực diện vào màn hình TV quảng cáo khổng lồ ngay sau lưng lối đi để không rơi vào ca biên cả người lẫn mặt lọt trọn trong khung TV.</li>
+        <li><b>Khuyến nghị</b>: <b>Đóng hồ sơ lỗi (Verified End-to-End)</b> — nhánh <code>001-profile-90-antispoof</code> đạt chất lượng hợp nhất.</li>
+      </ul>
+    </section>
+  </div>
+
+  <section class="card">
+    <h2>Ký duyệt đóng hồ sơ lỗi (QA / Reviewer Final Sign-off)</h2>
+    <div class="sign-box">
+      <input id="approver" placeholder="Người ký duyệt (VD: QA / Tech Lead)">
+      <select id="decision">
+        <option value="close_verified">Đóng hồ sơ lỗi — Đã xác minh đầu-cuối (Verified)</option>
+        <option value="pilot_monitor">Đóng lỗi code — Theo dõi thêm ngưỡng khi pilot camera thật</option>
+      </select>
+      <input id="note" placeholder="Ghi chú nghiệm thu cuối (35 passed, E2E sạch)">
+    </div>
+    <button class="btn" type="button" onclick="saveTestSignoff()">Xác nhận đóng hồ sơ lỗi</button>
+    <span class="saved-note" id="savedMsg"></span>
+  </section>
+</main>
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({ startOnLoad: true, theme: "dark" });
+</script>
+<script>
+  function saveTestSignoff() {
+    const data = {
+      approver: document.getElementById("approver").value,
+      decision: document.getElementById("decision").value,
+      note: document.getElementById("note").value,
+      ts: new Date().toLocaleString("vi-VN")
+    };
+    localStorage.setItem("facegate_bug_test_handoff_signoff", JSON.stringify(data));
+    document.getElementById("savedMsg").textContent = "Đã lưu xác nhận lúc " + data.ts;
+  }
+</script>
+</body>
+</html>

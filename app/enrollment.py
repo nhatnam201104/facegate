@@ -1,9 +1,11 @@
 """Dang ky khuon mat tu video ngan hoac phien co huong dan (ho tro toi goc nghieng 90 do + backfill du lieu cu)."""
 from __future__ import annotations
 
+import json
 import logging
 import re
 import shutil
+import threading
 from pathlib import Path
 
 import cv2
@@ -14,6 +16,9 @@ from .pose3d import classify_pose_group
 from .quality import assess
 
 log = logging.getLogger("enroll")
+
+DEFAULT_CROSS_POSE_COS = 0.20
+MAX_OUTLIER_RATIO = 0.35
 
 
 class EnrollError(Exception):
@@ -181,10 +186,10 @@ def process_enrollment(frames: list[np.ndarray], code: str, name: str, ctx) -> d
 
     # Kiem tra nhat quan trong tung pose_group kem doi chieu cheo voi tam frontal
     out_cos = float(ecfg.get("outlier_min_cosine", 0.42))
-    cross_cos = float(ecfg.get("cross_pose_min_cosine", 0.22))
+    cross_cos = float(ecfg.get("cross_pose_min_cosine", DEFAULT_CROSS_POSE_COS))
     kept, outliers = filter_consistent_candidates(cands, out_cos, cross_cos)
 
-    if len(outliers) > 0.35 * (len(kept) + len(outliers)) or len(kept) < min_n:
+    if len(outliers) > MAX_OUTLIER_RATIO * (len(kept) + len(outliers)) or len(kept) < min_n:
         raise EnrollError("Các frame không nhất quán (có thể nhiều người trong video). Hãy quay lại chỉ một người.")
     cands = kept
 
@@ -254,15 +259,25 @@ def store_enrollment(
 
     emp = db.get_employee_by_code(code)
     folder = cfg["_paths"]["enroll"] / code
+    data_root = cfg["_paths"]["data"]
     if emp:
         emp_id = emp["id"]
         if supplement_only:
             updated_groups = tuple(sorted({c["pose_group"] for c in selected}))
             if updated_groups:
+                ph = ",".join("?" * len(updated_groups))
+                old_crops = db.q(
+                    f"SELECT crop_path FROM embeddings WHERE employee_id=? AND model_version=? AND pose_group IN ({ph})",
+                    (emp_id, engine.model_version, *updated_groups),
+                )
                 db.clear_embeddings(emp_id, engine.model_version, pose_groups=updated_groups)
+                for r in old_crops:
+                    cp = r.get("crop_path")
+                    if cp:
+                        (folder / Path(cp).name).unlink(missing_ok=True)
             if warnings:
-                db.x("UPDATE employees SET name=?, status='pending', approved_at=NULL WHERE id=?", (name, emp_id))
-            else:
+                db.x("UPDATE employees SET status='pending', approved_at=NULL WHERE id=?", (emp_id,))
+            elif emp.get("status") != "active":
                 db.x("UPDATE employees SET name=? WHERE id=?", (name, emp_id))
         else:
             db.x("UPDATE employees SET name=?, status='pending' WHERE id=?", (name, emp_id))
@@ -272,7 +287,15 @@ def store_enrollment(
         emp_id = db.create_employee(code, name)
 
     folder.mkdir(parents=True, exist_ok=True)
-    existing_idx = len(list(folder.glob("*.jpg"))) if supplement_only else 0
+    if supplement_only:
+        prefixes = [
+            int(m.group(1))
+            for p in folder.glob("*.jpg")
+            if (m := re.match(r"^(\d+)_", p.name))
+        ]
+        existing_idx = (max(prefixes) + 1) if prefixes else 0
+    else:
+        existing_idx = 0
     saved_crops = []
     src_tag = "enroll_supplement" if supplement_only else "enroll"
     for i, c in enumerate(selected):
@@ -317,29 +340,49 @@ def store_enrollment(
     return report
 
 
-def _record_backfill_warning(db, emp_id: int, model_version: str, reason: str, skipped_no_face: int = 0) -> None:
+def _parse_report(raw) -> dict | None:
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, str) and raw:
+        try:
+            obj = json.loads(raw)
+            return obj if isinstance(obj, dict) else None
+        except ValueError:
+            return None
+    return None
+
+
+def _record_backfill_warning(
+    db, emp_id: int, model_version: str, reason: str,
+    skipped_no_face: int = 0, prev_report: dict | None = None,
+) -> None:
+    base = dict(prev_report) if isinstance(prev_report, dict) else {}
+    prev_warnings = [w for w in (base.get("warnings") or []) if w != reason]
     db.add_enrollment(emp_id, {
-        "frames_total": 0,
-        "frames_good": 0,
-        "frames_selected": 0,
-        "no_face": skipped_no_face,
-        "multi_face": 0,
-        "rejected": {},
-        "outliers": 0,
-        "bins": {},
-        "pose_groups": [],
+        "frames_total": base.get("frames_total", 0),
+        "frames_good": base.get("frames_good", 0),
+        "frames_selected": base.get("frames_selected", 0),
+        "no_face": base.get("no_face", skipped_no_face),
+        "multi_face": base.get("multi_face", 0),
+        "rejected": base.get("rejected", {}),
+        "outliers": base.get("outliers", 0),
+        "bins": base.get("bins", {}),
+        "pose_groups": base.get("pose_groups", []),
         "ready_90": False,
-        "min_pair_cosine": 0.0,
-        "warnings": [reason],
-        "model_version": model_version,
-        "guided": False,
-        "supplement_only": False,
-        "crops": [],
+        "min_pair_cosine": base.get("min_pair_cosine", 0.0),
+        "warnings": [*prev_warnings, reason],
+        "model_version": base.get("model_version", model_version),
+        "backfill_failed_model": model_version,
+        "guided": base.get("guided", False),
+        "supplement_only": base.get("supplement_only", False),
+        "crops": base.get("crops", []),
     })
 
 
-def backfill_legacy_embeddings(ctx) -> int:
+def backfill_legacy_embeddings(ctx, stop_event: threading.Event | None = None) -> int:
     """Tự động tái trích xuất embedding từ data/enroll/<code>/*.jpg cho nhân viên cũ khi đổi model_version."""
+    if stop_event is not None and stop_event.is_set():
+        return 0
     cfg, db, engine = ctx.cfg, ctx.db, ctx.engine
     pose_est = getattr(ctx, "pose", None)
     enroll_root: Path = cfg["_paths"]["enroll"]
@@ -353,13 +396,18 @@ def backfill_legacy_embeddings(ctx) -> int:
 
     ecfg = cfg.get("enrollment", {})
     out_cos = float(ecfg.get("outlier_min_cosine", 0.42))
-    cross_cos = float(ecfg.get("cross_pose_min_cosine", 0.22))
+    cross_cos = float(ecfg.get("cross_pose_min_cosine", DEFAULT_CROSS_POSE_COS))
     qcfg = dict(cfg.get("quality", {}))
     qcfg["max_yaw"] = max(float(qcfg.get("max_yaw", 90)), 90.0)
 
     migrated = 0
     for emp in missing_emps:
+        if stop_event is not None and stop_event.is_set():
+            break
         code, emp_id = emp["code"], int(emp["id"])
+        prev_rep = _parse_report(emp.get("report"))
+        if prev_rep and prev_rep.get("backfill_failed_model") == engine.model_version:
+            continue
         emp_dir = enroll_root / code
         if not emp_dir.is_dir():
             continue
@@ -371,6 +419,8 @@ def backfill_legacy_embeddings(ctx) -> int:
         skipped_no_face = 0
         rejected_q = 0
         for img_path in jpgs:
+            if stop_event is not None and stop_event.is_set():
+                return migrated
             img = cv2.imread(str(img_path))
             if img is None or img.size == 0:
                 continue
@@ -417,32 +467,55 @@ def backfill_legacy_embeddings(ctx) -> int:
                 "rel_crop": f"enroll/{code}/{img_path.name}",
             })
 
+        if stop_event is not None and stop_event.is_set():
+            break
+
         if not cands:
-            _record_backfill_warning(
-                db, emp_id, engine.model_version,
-                f"Backfill không trích xuất được khuôn mặt hợp lệ (bỏ qua {skipped_no_face} ảnh không thấy mặt, {rejected_q} ảnh chất lượng thấp) — cần đăng ký lại.",
-                skipped_no_face=skipped_no_face,
-            )
+            with db.lock:
+                still_missing = db.q(
+                    "SELECT id FROM employees WHERE id=? AND NOT EXISTS (SELECT 1 FROM embeddings WHERE employee_id=? AND model_version=?)",
+                    (emp_id, emp_id, engine.model_version),
+                )
+                if still_missing:
+                    _record_backfill_warning(
+                        db, emp_id, engine.model_version,
+                        f"Backfill không trích xuất được khuôn mặt hợp lệ (bỏ qua {skipped_no_face} ảnh không thấy mặt, {rejected_q} ảnh chất lượng thấp) — cần đăng ký lại.",
+                        skipped_no_face=skipped_no_face, prev_report=prev_rep,
+                    )
             continue
 
         try:
             kept, outliers = filter_consistent_candidates(cands, out_cos, cross_cos)
-            if len(outliers) > 0.35 * (len(kept) + len(outliers)) or not kept:
+            if len(outliers) > MAX_OUTLIER_RATIO * (len(kept) + len(outliers)) or not kept:
                 raise EnrollError("Các ảnh mẫu cũ không nhất quán giữa các góc nhìn")
         except EnrollError as e:
             log.warning("Backfill tu choi nhan vien %s vi khong nhat quan (%s) -> can dang ky lai", code, e)
-            _record_backfill_warning(
-                db, emp_id, engine.model_version,
-                f"Ảnh mẫu cũ không nhất quán ({e}) — cần đăng ký lại.",
-                skipped_no_face=skipped_no_face,
-            )
+            with db.lock:
+                still_missing = db.q(
+                    "SELECT id FROM employees WHERE id=? AND NOT EXISTS (SELECT 1 FROM embeddings WHERE employee_id=? AND model_version=?)",
+                    (emp_id, emp_id, engine.model_version),
+                )
+                if still_missing:
+                    _record_backfill_warning(
+                        db, emp_id, engine.model_version,
+                        f"Ảnh mẫu cũ không nhất quán ({e}) — cần đăng ký lại.",
+                        skipped_no_face=skipped_no_face, prev_report=prev_rep,
+                    )
             continue
 
-        for c in kept:
-            db.add_embedding(
-                emp_id, c["emb"], engine.model_version, float(c["q"].score), c["bin"], c["rel_crop"],
-                source="backfill", pose_group=c["pose_group"], yaw=c["yaw"], pitch=c["pitch"],
+        # Kiểm tra nguyên tử trong db.lock: chỉ ghi nếu nhân viên chưa bị xóa và chưa được HR đăng ký mới trong lúc chờ
+        with db.lock:
+            still_missing = db.q(
+                "SELECT id FROM employees WHERE id=? AND NOT EXISTS (SELECT 1 FROM embeddings WHERE employee_id=? AND model_version=?)",
+                (emp_id, emp_id, engine.model_version),
             )
+            if not still_missing:
+                continue
+            for c in kept:
+                db.add_embedding(
+                    emp_id, c["emb"], engine.model_version, float(c["q"].score), c["bin"], c["rel_crop"],
+                    source="backfill", pose_group=c["pose_group"], yaw=c["yaw"], pitch=c["pitch"],
+                )
         migrated += 1
         log.info(
             "Backfill %d embedding (%s) cho nhan vien %s (bo qua khong mat=%d, lech=%d)",

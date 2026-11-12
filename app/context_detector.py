@@ -142,11 +142,15 @@ def evaluate_face_context(
             medium_nearby = True
             nearby_label = nearby_label or m_label
         if face_in_med >= screen_face_overlap:
-            body_outside_medium = (
+            # Chỉ miễn trừ khi vật chứa là màn hình TV lớn gắn tường phía sau: cơ thể trải dài ra ngoài TV
+            # VÀ bản thân chiếc TV cũng trải rộng vượt ra ngoài bề ngang thân người (loại trừ điện thoại/tablet cầm trước mặt).
+            background_wall_tv = (
                 coupled_person is not None
+                and m_label == "tv"
                 and _face_overlap_ratio(coupled_person, m_box) < 0.75
+                and _face_overlap_ratio(m_box, coupled_person) < 0.70
             )
-            if not body_outside_medium:
+            if not background_wall_tv:
                 return {
                     "medium_clean": False,
                     "medium_nearby": True,
