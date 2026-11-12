@@ -298,13 +298,18 @@ async def set_source(kind: str = Form(...), value: str = Form(""), file: UploadF
 
 # -------------------------------------------------------------- enrollment
 CODE_RE = re.compile(r"^[A-Za-z0-9_.\-]{1,32}$")
+CTRL_CHAR_RE = re.compile(r"[\x00-\x1f\x7f]")
+MAX_NAME_LEN = 120
 
 
 def _check(code: str, name: str):
     if not CODE_RE.match(code):
         raise HTTPException(400, "Mã nhân viên chỉ gồm chữ, số, - _ . (tối đa 32 ký tự)")
-    if not name.strip():
+    clean_name = name.strip()
+    if not clean_name:
         raise HTTPException(400, "Thiếu họ tên")
+    if len(clean_name) > MAX_NAME_LEN or CTRL_CHAR_RE.search(clean_name):
+        raise HTTPException(400, f"Họ tên không hợp lệ (tối đa {MAX_NAME_LEN} ký tự, không chứa ký tự điều khiển)")
 
 
 def _finish(report_fn):

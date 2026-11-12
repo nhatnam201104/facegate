@@ -340,10 +340,10 @@ async function loadEmployees() {
     <td>${e.n_emb} mẫu · ${badge90}</td>
     <td class="warn">${(e.report?.warnings || []).map(esc).join("<br>")}${e.n_emb === 0 ? "Không có embedding cho model hiện tại — cần đăng ký lại" : ""}</td>
     <td><div class="acts">
-      ${e.status !== "active" ? `<button onclick="empAct(${e.id},'approve')">Duyệt</button>` : ""}
-      ${!cov.ready_90 ? `<button onclick="jumpSupplement('${esc(e.code)}','${esc(e.name)}')">+ Bổ sung góc 90°</button>` : ""}
-      ${e.status === "active" ? `<button onclick="empAct(${e.id},'disable')">Khóa</button>` : ""}
-      <button onclick="empDel(${e.id},'${esc(e.code)}')">Xóa</button></div></td></tr>`;
+      ${e.status !== "active" ? `<button type="button" data-act="approve" data-id="${Number(e.id)}">Duyệt</button>` : ""}
+      ${!cov.ready_90 ? `<button type="button" class="js-supplement" data-code="${esc(e.code)}" data-name="${esc(e.name)}">+ Bổ sung góc 90°</button>` : ""}
+      ${e.status === "active" ? `<button type="button" data-act="disable" data-id="${Number(e.id)}">Khóa</button>` : ""}
+      <button type="button" class="js-emp-del" data-id="${Number(e.id)}" data-code="${esc(e.code)}">Xóa</button></div></td></tr>`;
   }).join("")
     : `<tr><td colspan="7" class="muted">Chưa có nhân viên. Sang tab Đăng ký.</td></tr>`;
 }
@@ -352,6 +352,13 @@ async function empDel(id, code) {
   if (!confirm(`Xóa nhân viên ${code} và toàn bộ dữ liệu khuôn mặt?\nCamera sẽ ngừng nhận diện ngay. Lịch sử chấm công vẫn được giữ.`)) return;
   await fetch(`/api/employees/${id}`, {method: "DELETE"}); loadEmployees();
 }
+$("#empBody").addEventListener("click", ev => {
+  const btn = ev.target.closest("button");
+  if (!btn) return;
+  if (btn.classList.contains("js-supplement")) jumpSupplement(btn.dataset.code || "", btn.dataset.name || "");
+  else if (btn.classList.contains("js-emp-del")) empDel(Number(btn.dataset.id), btn.dataset.code || "");
+  else if (btn.dataset.act) empAct(Number(btn.dataset.id), btn.dataset.act);
+});
 
 // ---------- events + metrics
 const LABELS_KNOWN = [["correct", "Đúng"], ["wrong", "Nhầm người"]];
@@ -396,10 +403,14 @@ async function loadEvents() {
       <td>${e.liveness != null ? Number(e.liveness).toFixed(2) : "—"}</td>
       <td>${known ? Math.round(e.latency_ms) + " ms" : "—"}</td>
       <td><span class="pill ${e.hrm_status}" title="${esc(e.hrm_response)}">${e.hrm_status}</span></td>
-      <td><div class="acts">${opts.map(([v, t]) => `<button class="${e.label === v ? "sel" : ""}" onclick="setLabel(${e.id},'${e.label === v ? "" : v}')">${t}</button>`).join("")}</div></td></tr>`;
+      <td><div class="acts">${opts.map(([v, t]) => `<button type="button" class="js-ev-label ${e.label === v ? "sel" : ""}" data-id="${Number(e.id)}" data-val="${esc(e.label === v ? "" : v)}">${t}</button>`).join("")}</div></td></tr>`;
   }).join("") : `<tr><td colspan="9" class="muted">Chưa có sự kiện.</td></tr>`;
 }
 async function setLabel(id, v) { const fd = new FormData(); fd.append("value", v); await fetch(`/api/events/${id}/label`, {method: "POST", body: fd}); loadEvents(); }
+$("#evBody").addEventListener("click", ev => {
+  const btn = ev.target.closest("button.js-ev-label");
+  if (btn) setLabel(Number(btn.dataset.id), btn.dataset.val || "");
+});
 $("#reloadEvents").onclick = loadEvents;
 if ($("#evTierFilter")) $("#evTierFilter").onchange = loadEvents;
 

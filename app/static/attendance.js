@@ -40,7 +40,7 @@ async function loadAttendance() {
     const noShow = !r.check_in;
     const [tLabel, tCls] = noShow ? ["—", ""] : (TIER_BADGE[r.verification_tier || "verified"] || ["Chính diện", "ok"]);
     const tierPill = noShow ? "—" : `<span class="pill ${tCls}">${tLabel}</span>`;
-    const hist = noShow ? "" : `<button class="btn" onclick="openHistory('${esc(r.code)}','${r.date}')">Xem clip</button>`;
+    const hist = noShow ? "" : `<button type="button" class="btn js-open-hist" data-code="${esc(r.code)}" data-date="${esc(r.date)}">Xem clip</button>`;
     return `<tr class="${noShow ? "absent" : ""}"><td>${day}</td><td>${esc(r.code)}</td><td>${esc(r.name)}</td>
       <td><b>${fmtHM(r.check_in)}</b></td><td class="${r.late_min ? "warn" : ""}">${r.late_min ? `${r.late_min} phút` : "—"}</td>
       <td><span class="pill ${cls}">${label}</span></td><td>${tierPill}</td><td>${hist}</td></tr>`;
@@ -53,5 +53,9 @@ async function loadAttendance() {
   f.querySelectorAll("[data-range]").forEach(b => b.onclick = () => { setRange(f, b.dataset.range); loadAttendance(); });
   f.onsubmit = ev => { ev.preventDefault(); loadAttendance(); };
   f.code.onchange = loadAttendance;
+  $("#attBody").addEventListener("click", ev => {
+    const btn = ev.target.closest("button.js-open-hist");
+    if (btn) openHistory(btn.dataset.code || "", btn.dataset.date || "");
+  });
   tabHooks.attendance = loadAttendance;
 })();

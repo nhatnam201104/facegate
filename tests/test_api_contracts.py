@@ -94,3 +94,30 @@ def test_events_appearances_tier_filters_and_timesheet_propagation(tmp_path):
     assert len(ts["rows"]) == 1
     assert ts["rows"][0]["verification_tier"] == "profile_verified"
     assert ts["rows"][0]["pose_group"] == "left_profile"
+
+
+def test_employee_tab_no_inline_onclick_xss_and_name_validation():
+    import re
+    from pathlib import Path
+    import pytest
+    from fastapi import HTTPException
+    from app.main import _check
+
+    static_dir = Path(__file__).resolve().parent.parent / "app" / "static"
+    for js_name in ("app.js", "attendance.js"):
+        src = (static_dir / js_name).read_text(encoding="utf-8")
+        # Không được nội suy dữ liệu người dùng vào bên trong thuộc tính onclick="..."
+        inline_handlers = re.findall(r'onclick="[^"]*\$\{[^"]*\}[^"]*"', src)
+        assert not inline_handlers, f"{js_name} còn chứa inline onclick nội suy biến động: {inline_handlers}"
+
+    # Tên có dấu nháy đơn hợp lệ (như O'Neil) vẫn được phép đăng ký
+    _check("NV_ONEIL", "Sean O'Neil")
+
+    # Từ chối tên chứa ký tự điều khiển hoặc vượt quá giới hạn độ dài hợp lý
+    with pytest.raises(HTTPException) as exc_ctrl:
+        _check("NV_CTRL", "Nguyen\x00Van A")
+    assert exc_ctrl.value.status_code == 400
+
+    with pytest.raises(HTTPException) as exc_long:
+        _check("NV_LONG", "A" * 150)
+    assert exc_long.value.status_code == 400
