@@ -103,6 +103,69 @@ def test_planar_vs_3d_parallax_discrimination():
     assert score_flat < 0.35, f"Ảnh phẳng 2D phải bị phát hiện thiếu thị sai 3D, nhận: {score_flat}"
 
 
+def test_planar_homography_with_nonzero_3ddfa_z_still_scores_below_spoof_threshold():
+    import cv2
+    from app.config import load_config
+    from app.liveness import create_liveness
+    from app.tracker import Track
+
+    cfg = load_config()
+    min_depth = float(cfg["liveness"]["parallax"]["min_depth_score"])
+    spoof_cut = min_depth * 0.65
+
+    rng = np.random.default_rng(77)
+    # Mô phỏng 3DDFA luôn tái dựng z != 0 (sống mũi cao 28, viền hàm -35) ngay cả trên ảnh in phẳng
+    pts3d = rng.uniform(-40.0, 40.0, size=(68, 3)).astype(np.float32)
+    pts3d[:17, 2] = -35.0
+    pts3d[27:36, 2] = 28.0
+    base_2d = (pts3d[:, :2] + np.array([220.0, 180.0], np.float32)).astype(np.float32)
+
+    # Chuỗi 2D biến đổi thuần túy bằng phép chiếu homography phẳng (ảnh in nghiêng/quét ngang trước ống kính), kèm z != 0 của 3DDFA
+    src_quad = np.array([[180, 140], [260, 140], [260, 220], [180, 220]], np.float32)
+    homography_seq = []
+    for i in range(7):
+        dx = i * 22.0
+        dst_quad = np.array([
+            [180 + dx, 140 + i * 0.8],
+            [260 + dx - i * 1.5, 142 + i * 1.2],
+            [260 + dx - i * 1.2, 222 - i * 0.9],
+            [180 + dx + i * 0.5, 220 + i * 0.6],
+        ], np.float32)
+        H = cv2.getPerspectiveTransform(src_quad, dst_quad)
+        warped_xy = cv2.perspectiveTransform(base_2d[None, :, :], H)[0]
+        # Thêm dao động sub-pixel nhỏ (~0.15 px) của detector thực tế trên ảnh phẳng
+        jitter = rng.normal(0.0, 0.12, size=warped_xy.shape).astype(np.float32)
+        homography_seq.append(np.column_stack([warped_xy + jitter, pts3d[:, 2].copy()]).astype(np.float32))
+
+    score_planar_with_z = planar_parallax_score(homography_seq)
+    assert score_planar_with_z < spoof_cut, (
+        f"Ảnh phẳng biến đổi homography dù có z!=0 từ 3DDFA vẫn phải < {spoof_cut:.3f}, nhận {score_planar_with_z}"
+    )
+
+    # Nhánh dự phòng 5 điểm (không có model 3DDFA ONNX) không có dữ liệu thị sai 68 điểm thật -> Nhánh B phải trả 'checking', không duyệt 'live'
+    est_fallback = PoseEstimator3D(models_dir=None)
+    liv = create_liveness(cfg)
+    tr_fb = Track(99, np.array([120.0, 90.0, 200.0, 190.0], np.float32), 50.0, 50.0)
+    tr_fb.matched_group = "left_profile"
+    blank = np.full((360, 640, 3), 130, dtype=np.uint8)
+    for i in range(7):
+        cx = 140.0 + i * 20.0
+        fb = np.array([cx - 40, 90.0, cx + 40, 190.0], np.float32)
+        kps = np.array([[cx - 18, 125], [cx + 18, 125], [cx - 32, 148], [cx - 14, 168], [cx + 12, 168]], np.float32)
+        f = Face(fb, 0.95, kps)
+        p_res = est_fallback.estimate(blank, f)
+        tr_fb.bbox = fb
+        tr_fb.pose_history.append((50.0 + i * 0.2, p_res.yaw, p_res.pitch, p_res.roll, (cx, 140.0), p_res.landmarks3d))
+        tr_fb.context_history.append({
+            "yaw": p_res.yaw,
+            "medium_clean": True,
+            "body_coupled": True,
+            "spoof_reason": None,
+            "moire_score": 0.05,
+        })
+    assert liv.evaluate_track(tr_fb, frame_shape=blank.shape) == "checking"
+
+
 def test_real_3ddfa_onnx_inference_shapes():
     est = PoseEstimator3D(MODELS_DIR)
     img = np.full((360, 480, 3), 140, dtype=np.uint8)

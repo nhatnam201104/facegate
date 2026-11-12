@@ -146,39 +146,49 @@ def _fallback_landmarks_from_5pt(bbox: np.ndarray, kps: np.ndarray) -> tuple[flo
     xs = np.linspace(x1, x2, 17)
     pts68[:17, 0] = xs
     pts68[:17, 1] = np.linspace(eye_mid[1], y2, 17)
-    pts68[:17, 2] = -15.0
-    pts68[IDX_CHIN] = [(x1 + x2) / 2.0, y2, -10.0]
-    pts68[IDX_LEFT_EYE] = [le[0], le[1], 5.0]
-    pts68[IDX_RIGHT_EYE] = [re[0], re[1], 5.0]
-    pts68[27:36] = [nose[0], nose[1], 22.0]
-    pts68[48:68] = [(lm[0] + rm[0]) / 2.0, (lm[1] + rm[1]) / 2.0, 10.0]
-    pts68[IDX_MOUTH_LEFT] = [lm[0], lm[1], 8.0]
-    pts68[IDX_MOUTH_RIGHT] = [rm[0], rm[1], 8.0]
+    pts68[IDX_CHIN] = [(x1 + x2) / 2.0, y2, 0.0]
+    pts68[IDX_LEFT_EYE] = [le[0], le[1], 0.0]
+    pts68[IDX_RIGHT_EYE] = [re[0], re[1], 0.0]
+    pts68[27:36] = [nose[0], nose[1], 0.0]
+    pts68[48:68] = [(lm[0] + rm[0]) / 2.0, (lm[1] + rm[1]) / 2.0, 0.0]
+    pts68[IDX_MOUTH_LEFT] = [lm[0], lm[1], 0.0]
+    pts68[IDX_MOUTH_RIGHT] = [rm[0], rm[1], 0.0]
+    # Cột z toàn 0 đánh dấu đây là nhánh 5 điểm dự phòng (không có lưới 68 điểm 3D thật để tính parallax)
     return yaw, pitch, roll, pts68
 
 
+def has_valid_parallax_landmarks(landmarks_seq: list[np.ndarray]) -> bool:
+    """Kiểm tra chuỗi landmark có đủ mật độ lưới 68 điểm 2D thực (loại nhánh 5 điểm dự phòng chỉ có ~23 điểm rời rạc)."""
+    if len(landmarks_seq) < 3:
+        return False
+    valid = 0
+    for lm in landmarks_seq:
+        if lm is not None and lm.ndim == 2 and lm.shape[0] >= 68 and lm.shape[1] >= 2:
+            unique_xy = len(np.unique(np.round(lm[:, :2], 1), axis=0))
+            if unique_xy >= 35:
+                valid += 1
+    return valid >= len(landmarks_seq)
+
+
 def planar_parallax_score(landmarks_seq: list[np.ndarray]) -> float:
-    """Đánh giá mức độ thị sai chuyển động 3D thật (0..1) so với một mặt phẳng cứng 2D.
+    """Đánh giá mức độ thị sai chuyển động 3D thật (0..1) dựa thuần túy trên phần dư homography 2D.
 
     Ảnh in hoặc màn hình điện thoại quét ngang qua ống kính biến đổi toàn bộ điểm theo
-    phép chiếu phẳng (planar homography / affine phẳng) -> sai số khớp phẳng gần bằng 0
-    và biến thiên độ sâu 3D bằng 0. Đầu người 3D thật khi bước ngang tạo ra độ lệch phi phẳng
-    giữa sống mũi nhô cao và viền tai/má ở sâu.
+    phép chiếu phẳng (planar homography) -> phần dư khớp phẳng gần bằng 0, bất kể mô hình
+    morphable 3DDFA có gán tọa độ z giả định hay không. Đầu người 3D thật khi bước ngang
+    tạo ra phần dư phi phẳng lớn giữa sống mũi nhô cao và viền tai/má ở sâu.
     """
     if len(landmarks_seq) < 3:
         return 0.0
     p0 = landmarks_seq[0]
     pts0 = p0[:, :2].astype(np.float32)
     face_scale = float(np.linalg.norm(pts0.max(axis=0) - pts0.min(axis=0))) + 1e-6
+    if face_scale < 8.0:
+        return 0.0
 
-    # So sánh frame đầu, giữa và cuối của chuỗi quỹ đạo
+    # So sánh frame đầu với frame giữa và cuối của chuỗi quỹ đạo
     indices = [len(landmarks_seq) // 2, len(landmarks_seq) - 1]
     rel_residuals = []
-    depth_spans = []
-    for lm in landmarks_seq:
-        if lm.shape[1] >= 3:
-            depth_spans.append(float(np.percentile(lm[:, 2], 90) - np.percentile(lm[:, 2], 10)))
-
     for idx in indices:
         ptsi = landmarks_seq[idx][:, :2].astype(np.float32)
         H, _ = cv2.findHomography(pts0, ptsi, method=0)
@@ -186,7 +196,6 @@ def planar_parallax_score(landmarks_seq: list[np.ndarray]) -> float:
             continue
         proj = cv2.perspectiveTransform(pts0[None, :, :], H)[0]
         err = np.linalg.norm(proj - ptsi, axis=1)
-        # Sống mũi (27..35) so với đường viền hàm (0..16)
         nose_err = float(np.mean(err[27:36]))
         all_err = float(np.percentile(err, 85))
         rel_residuals.append(max(nose_err, all_err) / face_scale)
@@ -194,12 +203,10 @@ def planar_parallax_score(landmarks_seq: list[np.ndarray]) -> float:
     if not rel_residuals:
         return 0.0
     parallax_2d = float(np.max(rel_residuals))
-    depth_ratio = (float(np.mean(depth_spans)) / face_scale) if depth_spans else 0.0
 
-    # Chuẩn hóa về 0..1: ảnh phẳng có parallax_2d ~ 0.000..0.002; đầu 3D thật bước ngang đạt >= 0.008..0.04
+    # Chuẩn hóa về 0..1 chỉ từ phần dư phi phẳng 2D (không cộng điểm từ tọa độ z của 3DDFA)
     s_par = min(1.0, parallax_2d / 0.012)
-    s_dep = min(1.0, depth_ratio / 0.25)
-    return float(round(0.65 * s_par + 0.35 * s_dep if depth_ratio > 0.02 else 0.4 * s_par, 4))
+    return float(round(s_par, 4))
 
 
 class PoseEstimator3D:

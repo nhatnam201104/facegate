@@ -84,7 +84,7 @@ liveness:                  # chong gia mao 4 lop dinh tuyen theo goc nhin
     enabled: true
     min_frames: 6          # can >= 6 frame di chuyen de kiem dinh thi sai 3D
     min_travel_ratio: 0.08 # dich chuyen ngang toi thieu = 8% chieu rong khung hinh
-    min_depth_score: 0.55  # vuot sai so chieu phang 2D (loai anh phang)
+    min_depth_score: 0.55  # diem phan du homography 2D (0..1, da bo cong diem depth_ratio gia; chua hieu chinh lai tren video that)
   moire:
     enabled: true
     max_screen_score: 0.65 # chan van luoi pixel man hinh phat video quay san

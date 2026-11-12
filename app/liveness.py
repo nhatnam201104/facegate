@@ -17,7 +17,7 @@ import cv2
 import numpy as np
 
 from .context_detector import evaluate_face_context
-from .pose3d import planar_parallax_score
+from .pose3d import has_valid_parallax_landmarks, planar_parallax_score
 from .quality import _visible_skin_roi
 
 log = logging.getLogger("liveness")
@@ -247,7 +247,20 @@ class Liveness:
             return "checking"
 
         lm_seq = [p[5] for p in list(track.pose_history)[-max(self.par_min_frames, 8):] if p[5] is not None]
-        par_score = planar_parallax_score(lm_seq) if self.par_enabled else 1.0
+        if self.par_enabled:
+            if not has_valid_parallax_landmarks(lm_seq):
+                track.liveness_detail = {
+                    "fas": None,
+                    "medium_clean": True,
+                    "body_coupled": True,
+                    "parallax_ok": None,
+                    "moire_ok": moire_ok,
+                    "reason": "insufficient_parallax_landmarks",
+                }
+                return "checking"
+            par_score = planar_parallax_score(lm_seq)
+        else:
+            par_score = 1.0
         par_ok = (not self.par_enabled) or (par_score >= self.par_min_depth)
         body_ok = (not recent_ctx) or (sum(1 for h in recent_ctx if h["body_coupled"]) >= len(recent_ctx) // 2 + 1)
 
