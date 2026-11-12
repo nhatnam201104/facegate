@@ -37,6 +37,21 @@ def test_euler_angles_cover_full_90_degree_range():
     assert abs(pitch_down - 22.0) < 1.0
 
 
+def test_euler_pitch_roll_stability_under_camera_tilt_and_large_yaw():
+    import pytest
+
+    for tilt in (0.0, 8.0, 15.0):
+        for target_yaw in (0.0, 45.0, 70.0, 85.0, 88.0):
+            for sign in (-1.0, 1.0):
+                y = sign * target_yaw
+                for R in (_rot_x(tilt) @ _rot_y(y), _rot_y(y) @ _rot_x(tilt)):
+                    yaw, pitch, roll = euler_from_relative_rotation(R)
+                    assert abs(yaw - y) <= 1.5, f"tilt={tilt}, y={y} -> yaw={yaw}"
+                    assert max(abs(pitch), abs(roll)) <= tilt + 1.0, (
+                        f"tilt={tilt}, y={y} -> pitch={pitch:.2f}, roll={roll:.2f}"
+                    )
+
+
 def test_pose_group_hysteresis_around_40_degrees():
     assert set(POSE_GROUPS) == {"frontal", "left_profile", "right_profile"}
     assert classify_pose_group(0.0) == "frontal"

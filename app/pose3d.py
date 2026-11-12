@@ -79,18 +79,17 @@ def _orthogonalize_rows(M: np.ndarray) -> np.ndarray:
 
 
 def euler_from_relative_rotation(R_rel: np.ndarray) -> tuple[float, float, float]:
-    """Trích góc Euler (yaw, pitch, roll) tính bằng độ từ ma trận xoay tương đối R_rel (3x3).
+    """Trích góc Euler (yaw, pitch, roll) tính bằng độ theo phân rã chuẩn Y-X-Z (R = Ry · Rx · Rz).
 
-    Dùng atan2(R[0,2], hypot(R[0,0], R[1,0])) kết hợp dấu R[2,2] để phủ mượt toàn dải [-90°, +90°].
+    Giữ ổn định pitch và roll ngay cả khi |yaw| tiến sát 90° dưới góc lắp camera nghiêng nhẹ.
     """
     yaw = math.degrees(math.atan2(float(R_rel[0, 2]), float(R_rel[2, 2])))
     yaw = max(-95.0, min(95.0, yaw))
-    cos_y = math.hypot(float(R_rel[0, 2]), float(R_rel[2, 2]))
-    if cos_y > 1e-4:
-        pitch = math.degrees(math.atan2(float(R_rel[2, 1]), float(R_rel[2, 2])))
-        roll = math.degrees(math.atan2(-float(R_rel[1, 0]), float(R_rel[0, 0])))
+    sin_p = max(-1.0, min(1.0, -float(R_rel[1, 2])))
+    pitch = math.degrees(math.asin(sin_p))
+    if abs(sin_p) < 0.9999:
+        roll = math.degrees(math.atan2(-float(R_rel[1, 0]), float(R_rel[1, 1])))
     else:
-        pitch = math.degrees(math.atan2(-float(R_rel[1, 2]), float(R_rel[1, 1])))
         roll = 0.0
     return float(yaw), float(pitch), float(roll)
 
