@@ -119,6 +119,7 @@ enrollment:
   per_bin: 3               # toi da so frame cho moi o goc nhin
   dedup_cosine: 0.95       # 2 frame giong nhau hon muc nay thi bo bot 1
   outlier_min_cosine: 0.42 # kiem tra nhat quan rieng trong tung pose_group
+  cross_pose_min_cosine: 0.22  # nguong than trong tam thoi giua tam frontal va tung frame profile
   keep_video: false        # mac dinh xoa video goc sau khi xu ly
   guided:                  # dang ky quay tu camera: 7 goc (5 chu thap + 2 nghieng suon ~80 do)
     enable_profile_90: true

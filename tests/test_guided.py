@@ -84,14 +84,23 @@ class FakeEngine:
         return img
 
     def embed_aligned(self, aligned):
-        # Mô phỏng đặc trưng góc nghiêng khác biệt với góc thẳng (nhưng nhất quán trong cùng nhóm góc)
+        # Mô phỏng đặc trưng cùng một người: góc nghiêng khác biệt nhưng vẫn chia sẻ thành phần danh tính (>= cross_pose_min_cosine)
+        person = getattr(self.cam, "person", "A")
         yaw = self.cam.pose[0]
-        if yaw < -40.0:
-            v = np.array([0.1, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float32)
-        elif yaw > 40.0:
-            v = np.array([0.1, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float32)
+        if person == "B":
+            if yaw < -40.0:
+                v = np.array([0.0, 0.0, 0.0, 0.25, 1.0, 0.0, 0.0, 0.0], dtype=np.float32)
+            elif yaw > 40.0:
+                v = np.array([0.0, 0.0, 0.0, 0.25, 0.0, 1.0, 0.0, 0.0], dtype=np.float32)
+            else:
+                v = np.array([0.0, 0.0, 0.0, 1.0, 0.05, 0.05, 0.0, 0.0], dtype=np.float32)
         else:
-            v = np.array([1.0, 0.05, 0.05, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float32)
+            if yaw < -40.0:
+                v = np.array([0.28, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float32)
+            elif yaw > 40.0:
+                v = np.array([0.28, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float32)
+            else:
+                v = np.array([1.0, 0.05, 0.05, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float32)
         return v / np.linalg.norm(v)
 
 
@@ -153,8 +162,9 @@ def test_full_seven_angles_with_deep_profile_90_and_supplement(env):
     assert emp_rows[0]["pose_coverage"]["ready_90"] is False
 
     gsup = GuidedSession(ctx, "NV010", "Le Thi Cu", profile_90=True, supplement_only=True).start()
-    assert gsup.snapshot()["total"] == 2
-    for i, st in enumerate(PROFILE_STEPS):
+    assert gsup.snapshot()["total"] == 3
+    sup_steps = [STEPS[0], *PROFILE_STEPS]
+    for i, st in enumerate(sup_steps):
         cam.pose = pose_for(st)
         assert wait(lambda: gsup.step > i or gsup.state != "running"), gsup.snapshot()
     assert wait(lambda: gsup.state == "done"), gsup.snapshot()
@@ -217,3 +227,129 @@ def test_cancel(env):
     g = GuidedSession(ctx, "NV004", "D").start()
     g.cancel()
     assert wait(lambda: g.state == "cancelled")
+
+
+def test_supplement_only_verifies_frontal_identity_and_409_when_missing(env, monkeypatch):
+    import asyncio
+    from fastapi import HTTPException
+    from app import main as app_main
+    from app.guided import PROFILE_STEPS
+
+    ctx, cam = env
+    monkeypatch.setattr(app_main, "ctx", ctx)
+
+    # 1. Nhân viên chưa tồn tại hoặc chưa có embedding frontal -> HTTP 409
+    with pytest.raises(HTTPException) as exc_missing:
+        asyncio.run(app_main.enroll_guided_start(code="NV_NO_FRONT", name="Chua Co Frontal", profile_90=True, supplement_only=True))
+    assert exc_missing.value.status_code == 409
+
+    # 2. Đăng ký nhân viên A đầy đủ và duyệt active
+    cam.person = "A"
+    g_a = GuidedSession(ctx, "NV_A", "Nhan Vien A", profile_90=True).start()
+    for i, st in enumerate(STEPS + PROFILE_STEPS):
+        cam.pose = pose_for(st)
+        assert wait(lambda: g_a.step > i or g_a.state != "running"), g_a.snapshot()
+    assert wait(lambda: g_a.state == "done")
+    emp_a = ctx.db.get_employee_by_code("NV_A")
+    ctx.db.set_status(emp_a["id"], "active")
+    before_left = [
+        r["vec"].copy()
+        for r in ctx.db.load_gallery(ctx.engine.model_version, statuses=("active",))
+        if r["code"] == "NV_A" and r["pose_group"] == "left_profile"
+    ]
+    assert len(before_left) == 1
+
+    # 3. Người B mở phiên supplement_only với mã của A -> bị chặn ngay bước xác minh chính diện, dữ liệu A không đổi
+    cam.person = "B"
+    cam.pose = (0.0, 0.0)
+    gsup_impostor = GuidedSession(ctx, "NV_A", "Nhan Vien A", profile_90=True, supplement_only=True).start()
+    assert wait(lambda: gsup_impostor.state == "failed", timeout=4.0), gsup_impostor.snapshot()
+    after_impostor = [
+        r["vec"].copy()
+        for r in ctx.db.load_gallery(ctx.engine.model_version, statuses=("active",))
+        if r["code"] == "NV_A" and r["pose_group"] == "left_profile"
+    ]
+    assert np.allclose(before_left[0], after_impostor[0])
+    assert ctx.db.get_employee_by_code("NV_A")["status"] == "active"
+
+    # 4. Người A xác minh bước 0 đúng, nhưng ở bước nghiêng người B nhảy vào -> _commit chặn không cho sang bước tiếp
+    cam.person = "A"
+    cam.pose = (0.0, 0.0)
+    gsup_swap = GuidedSession(ctx, "NV_A", "Nhan Vien A", profile_90=True, supplement_only=True).start()
+    assert wait(lambda: gsup_swap.step == 1), gsup_swap.snapshot()
+    cam.person = "B"
+    cam.pose = pose_for(PROFILE_STEPS[0])
+    assert wait(lambda: "không khớp" in gsup_swap.snapshot()["hint"].lower(), timeout=2.0), gsup_swap.snapshot()
+    assert gsup_swap.step == 1
+    # Đưa người A quay lại -> hoàn tất cả 2 góc nghiêng và giữ trạng thái active khi không có cảnh báo
+    cam.person = "A"
+    assert wait(lambda: gsup_swap.step == 2), gsup_swap.snapshot()
+    cam.pose = pose_for(PROFILE_STEPS[1])
+    assert wait(lambda: gsup_swap.state == "done"), gsup_swap.snapshot()
+    assert ctx.db.get_employee_by_code("NV_A")["status"] == "active"
+
+    # 5. Nếu có cảnh báo trùng mặt nhân viên khác ở góc nghiêng -> chuyển status về 'pending' để HR duyệt lại
+    emp_other = ctx.db.create_employee("NV_DUP", "Nguoi Trung Goc Nghieng")
+    ctx.db.set_status(emp_other, "active")
+    v_dup_left = np.array([0.28, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float32)
+    v_dup_left /= np.linalg.norm(v_dup_left)
+    ctx.db.add_embedding(emp_other, v_dup_left, ctx.engine.model_version, 0.9, "nghieng-sau-trai", None, pose_group="left_profile", yaw=-78.0)
+
+    cam.person = "A"
+    gsup_warn = GuidedSession(ctx, "NV_A", "Nhan Vien A", profile_90=True, supplement_only=True).start()
+    for i, st in enumerate([STEPS[0], *PROFILE_STEPS]):
+        cam.pose = pose_for(st)
+        assert wait(lambda: gsup_warn.step > i or gsup_warn.state != "running"), gsup_warn.snapshot()
+    assert wait(lambda: gsup_warn.state == "done"), gsup_warn.snapshot()
+    assert gsup_warn.snapshot()["report"]["warnings"]
+    assert ctx.db.get_employee_by_code("NV_A")["status"] == "pending"
+
+
+def test_video_enrollment_enforces_cross_pose_consistency(env):
+    from app.enrollment import EnrollError, process_enrollment
+
+    ctx, cam = env
+    frames = [cam.img.copy() for _ in range(6)]
+
+    class SequenceEngine:
+        model_version = "seq-v1"
+
+        def __init__(self, seq):
+            self.seq = list(seq)
+            self.idx = 0
+            self._cur = None
+
+        def detect(self, img):
+            yaw, person = self.seq[self.idx]
+            self.idx += 1
+            self._cur = (yaw, person)
+            le, re = np.array([100.0, 100.0]), np.array([140.0, 100.0])
+            nose = np.array([120.0 + yaw / 90.0 * 40.0, 122.0])
+            kps = np.array([le, re, nose, [105, 140], [135, 140]], dtype=np.float32)
+            return [Face(bbox=np.array([70.0, 60.0, 170.0, 180.0]), score=0.99, kps=kps)]
+
+        def align(self, img, face, pose=None, pose_group=None):
+            return img
+
+        def embed_aligned(self, aligned):
+            yaw, person = self._cur
+            cam.pose = (yaw, 0.0)
+            cam.person = person
+            return FakeEngine(cam).embed_aligned(aligned)
+
+    # Cùng người A ở cả frontal lẫn profile (kể cả nhóm profile chỉ có 1 frame) -> thành công
+    ctx.engine = SequenceEngine([(0.0, "A"), (-15.0, "A"), (15.0, "A"), (0.0, "A"), (-78.0, "A"), (78.0, "A")])
+    rep_ok = process_enrollment(frames, "NV_VID_OK", "Video Cung Nguoi", ctx)
+    assert set(rep_ok["pose_groups"]) == {"frontal", "left_profile", "right_profile"}
+
+    # 4 frame frontal của A + 2 frame đơn lẻ profile của B (33% bị loại < 35%, nhưng 2 frame của B phải bị loại sạch)
+    ctx.engine = SequenceEngine([(0.0, "A"), (-15.0, "A"), (15.0, "A"), (0.0, "A"), (-78.0, "B"), (78.0, "B")])
+    ctx.cfg["enrollment"]["min_frames"] = 4
+    rep_filtered = process_enrollment(frames, "NV_VID_FILTER", "Video Loc Nguoi La", ctx)
+    assert rep_filtered["pose_groups"] == ["frontal"]
+    assert rep_filtered["outliers"] == 2
+
+    # Tỉ lệ frame profile người lạ vượt ngưỡng 35% -> EnrollError
+    ctx.engine = SequenceEngine([(0.0, "A"), (-15.0, "A"), (15.0, "A"), (-78.0, "B"), (-80.0, "B"), (78.0, "B")])
+    with pytest.raises(EnrollError):
+        process_enrollment(frames, "NV_VID_BAD", "Video Nhieu Nguoi", ctx)

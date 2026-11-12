@@ -25,6 +25,18 @@ from .state import bc
 log = logging.getLogger("guided")
 
 
+def load_employee_frontal_embeddings(db, code: str, model_version: str) -> list[np.ndarray]:
+    emp = db.get_employee_by_code(code)
+    if not emp:
+        return []
+    rows = db.q(
+        """SELECT vec, dim FROM embeddings
+           WHERE employee_id=? AND model_version=? AND (pose_group='frontal' OR pose_group IS NULL)""",
+        (emp["id"], model_version),
+    )
+    return [np.frombuffer(r["vec"], dtype=np.float32, count=r["dim"]).copy() for r in rows]
+
+
 @dataclass(frozen=True)
 class Step:
     bin: str          # ten o goc luu vao DB
@@ -32,6 +44,7 @@ class Step:
     v: int            # huong pitch can dat: -1 (ngang len) | 0 | +1 (cui)
     text: str         # cau huong dan hien tren man hinh
     pose_group: str = "frontal"
+    verify_only: bool = False
 
 
 # 5 goc chu thap co ban
@@ -43,7 +56,8 @@ STEPS: list[Step] = [
     Step("thang-cui", 0, +1, "Cúi đầu xuống", "frontal"),
 ]
 
-# 2 buoc nghieng suon sau (~75..85 do) phuc vu nhan dien goc 90 do
+# Buoc xac minh danh tinh chinh dien truoc khi quay bo sung goc nghieng (khong luu them mau frontal)
+VERIFY_FRONT_STEP = Step("xac-minh-thang", 0, 0, "Nhìn thẳng vào camera để xác minh danh tính", "frontal", verify_only=True)
 PROFILE_STEPS: list[Step] = [
     Step("nghieng-sau-trai", -2, 0, "Quay hẳn mặt sang phải (~80°)", "left_profile"),
     Step("nghieng-sau-phai", +2, 0, "Quay hẳn mặt sang trái (~80°)", "right_profile"),
@@ -128,10 +142,16 @@ class GuidedSession:
         self.ctx, self.code, self.name = ctx, code, name
         ecfg = ctx.cfg["enrollment"]
         self.p = {**DEFAULTS, **(ecfg.get("guided") or {})}
+        self.cross_pose_cos = float(ecfg.get("cross_pose_min_cosine", 0.22))
         use_90 = bool(self.p.get("enable_profile_90", True)) if profile_90 is None else bool(profile_90)
         self.supplement_only = bool(supplement_only)
+        self._verify_refs: list[np.ndarray] = []
+        self._verified_front_emb: np.ndarray | None = None
         if self.supplement_only:
-            self.steps = list(PROFILE_STEPS)
+            self._verify_refs = load_employee_frontal_embeddings(ctx.db, code, ctx.engine.model_version)
+            if not self._verify_refs:
+                raise EnrollError(f"Nhân viên {code} chưa có mẫu khuôn mặt chính diện cho model hiện tại. Hãy thực hiện đăng ký đầy đủ trước.")
+            self.steps = [VERIFY_FRONT_STEP, *PROFILE_STEPS]
         else:
             self.steps = list(STEPS) + (list(PROFILE_STEPS) if use_90 else [])
         self.qcfg = dict(ctx.cfg["quality"])
@@ -259,7 +279,7 @@ class GuidedSession:
                 prev_face_center = (float(face.bbox[0] + face.bbox[2]) * 0.5, float(face.bbox[1] + face.bbox[3]) * 0.5)
                 by, bp = self._baseline
                 dyaw, dpitch = q.yaw - by, q.pitch - bp
-                if self.step == 0 and not self.supplement_only:
+                if self.step == 0:
                     if abs(q.yaw) > p["front_max_abs_yaw"]:
                         ok, hint = False, "Nhìn thẳng vào camera"
                     elif abs(q.pitch) > p["front_max_abs_pitch"]:
@@ -281,12 +301,15 @@ class GuidedSession:
                 if prog < 1.0:
                     continue
                 err = self._commit(step, hold_best, hold_poses, front_emb)
+                if self.state != "running":
+                    return
                 if err:
                     hold_start, hold_best, hold_poses = None, None, []
+                    pause_until = time.time() + max(float(p["pause_seconds"]), 0.25)
                     self._set(ok=False, hold=0.0, hint=err)
                     continue
-                if self.step == 0 and not self.supplement_only:
-                    front_emb = self.picked[0]["emb"]
+                if self.step == 0:
+                    front_emb = self._verified_front_emb if step.verify_only else self.picked[0]["emb"]
                     self._baseline = tuple(np.mean(hold_poses, axis=0))
                 with self._lock:
                     self.done[self.step] = True
@@ -305,14 +328,31 @@ class GuidedSession:
         self._finish()
 
     def _commit(self, step: Step, best: dict, poses: list, front_emb) -> str | None:
-        """Tinh embedding theo khung can chinh cua step.pose_group."""
+        """Tinh embedding theo khung can chinh cua step.pose_group va doi chieu danh tinh."""
         ctx = self.ctx
         with ctx.engine_lock:
             aligned = ctx.engine.align(best["frame"], best["face"], pose=best.get("pose"), pose_group=step.pose_group)
             emb = ctx.engine.embed_aligned(aligned)
-        # Chỉ ép cosine trực tiếp với bước nhìn thẳng cho các bước cùng nhóm 'frontal'
+        if step.verify_only:
+            rc = ctx.cfg.get("recognition", {})
+            eng_name = getattr(ctx.engine, "name", "edgeface")
+            thr_cfg = (rc.get("thresholds") or {}).get(eng_name)
+            front_thr = float(getattr(ctx, "threshold", 0.40))
+            if isinstance(thr_cfg, dict) and "frontal" in thr_cfg:
+                front_thr = float(thr_cfg["frontal"])
+            best_sim = max((float(emb @ ref) for ref in self._verify_refs), default=-1.0)
+            if best_sim < front_thr:
+                self._fail(
+                    f"Khuôn mặt không khớp với hồ sơ chính diện của nhân viên {self.code} "
+                    f"(cosine {best_sim:.2f} < {front_thr:.2f}). Không thể bổ sung góc nghiêng."
+                )
+                return self.error
+            self._verified_front_emb = emb
+            return None
         if step.pose_group == "frontal" and front_emb is not None and float(emb @ front_emb) < self.p["min_identity_cos"]:
             return "Khuôn mặt không khớp với bước đầu, chỉ một người thực hiện đăng ký"
+        if step.pose_group != "frontal" and front_emb is not None and float(emb @ front_emb) < self.cross_pose_cos:
+            return "Khuôn mặt góc nghiêng không khớp với bước đầu, chỉ một người thực hiện đăng ký"
         self.picked.append({
             "emb": emb,
             "q": best["q"],
@@ -328,7 +368,7 @@ class GuidedSession:
             report = store_enrollment(
                 self.picked, self.code, self.name, self.ctx, self.stats,
                 n_good=len(self.picked), n_outliers=0,
-                bin_names=[s.bin for s in self.steps],
+                bin_names=[s.bin for s in self.steps if not s.verify_only],
                 guided=True, supplement_only=self.supplement_only,
             )
         except EnrollError as e:

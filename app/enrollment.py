@@ -69,6 +69,54 @@ def _resize_for_detect(frame: np.ndarray, width: int = 960):
     return (cv2.resize(frame, (int(w * s), int(h * s))) if s < 1 else frame), s
 
 
+def filter_consistent_candidates(
+    cands: list[dict],
+    out_cos: float,
+    cross_cos: float,
+) -> tuple[list[dict], list[dict]]:
+    """Lọc outlier trong từng pose_group và kiểm tra chéo với tâm frontal (không miễn trừ nhóm 1 frame)."""
+    by_grp: dict[str, list[dict]] = {}
+    for c in cands:
+        by_grp.setdefault(c["pose_group"], []).append(c)
+
+    has_profile = any(g != "frontal" for g in by_grp)
+    frontal_items = by_grp.get("frontal", [])
+    if has_profile and not frontal_items:
+        raise EnrollError("Video có góc nghiêng nhưng thiếu góc nhìn thẳng để đối chiếu danh tính. Hãy quay từ góc nhìn thẳng trước.")
+
+    kept_frontal: list[dict] = []
+    outliers: list[dict] = []
+    if frontal_items:
+        f_mean = np.mean([c["emb"] for c in frontal_items], axis=0)
+        f_mean /= np.linalg.norm(f_mean) + 1e-9
+        for c in frontal_items:
+            c["sim_center"] = float(c["emb"] @ f_mean)
+            (kept_frontal if (len(frontal_items) == 1 or c["sim_center"] >= out_cos) else outliers).append(c)
+
+    if has_profile and not kept_frontal:
+        raise EnrollError("Các frame góc nhìn thẳng không nhất quán. Hãy quay lại chỉ một người.")
+
+    front_center = None
+    if kept_frontal:
+        front_center = np.mean([c["emb"] for c in kept_frontal], axis=0)
+        front_center /= np.linalg.norm(front_center) + 1e-9
+
+    kept: list[dict] = list(kept_frontal)
+    for grp, items in by_grp.items():
+        if grp == "frontal":
+            continue
+        g_mean = np.mean([c["emb"] for c in items], axis=0)
+        g_mean /= np.linalg.norm(g_mean) + 1e-9
+        for c in items:
+            sim_grp = float(c["emb"] @ g_mean)
+            sim_front = float(c["emb"] @ front_center) if front_center is not None else 0.0
+            c["sim_center"] = round(min(sim_grp, sim_front) if len(items) > 1 else sim_front, 4)
+            intra_ok = (len(items) == 1) or (sim_grp >= out_cos)
+            cross_ok = (front_center is not None) and (sim_front >= cross_cos)
+            (kept if (intra_ok and cross_ok) else outliers).append(c)
+    return kept, outliers
+
+
 def process_enrollment(frames: list[np.ndarray], code: str, name: str, ctx) -> dict:
     """ctx cung cap: cfg, db, engine, engine_lock, gallery, threshold, (tuy chon) pose."""
     cfg, db, engine = ctx.cfg, ctx.db, ctx.engine
@@ -116,22 +164,10 @@ def process_enrollment(frames: list[np.ndarray], code: str, name: str, ctx) -> d
         raise EnrollError(f"Chỉ có {len(cands)} frame đạt chất lượng (cần ≥ {min_n}). "
                           f"Quay lại nơi đủ sáng, mặt to rõ, giữ máy ổn định. Chi tiết: {stats}")
 
-    # Kiem tra nhat quan TACH RIENG TRONG TUNG POSE_GROUP (khong loai nham mau 80° vi khac vector 0°)
+    # Kiem tra nhat quan trong tung pose_group kem doi chieu cheo voi tam frontal
     out_cos = float(ecfg.get("outlier_min_cosine", 0.42))
-    by_grp: dict[str, list] = {}
-    for c in cands:
-        by_grp.setdefault(c["pose_group"], []).append(c)
-    kept, outliers = [], []
-    for grp, items in by_grp.items():
-        if len(items) <= 1:
-            items[0]["sim_center"] = 1.0
-            kept.extend(items)
-            continue
-        mean = np.mean([c["emb"] for c in items], axis=0)
-        mean /= np.linalg.norm(mean) + 1e-9
-        for c in items:
-            c["sim_center"] = float(c["emb"] @ mean)
-            (kept if c["sim_center"] >= out_cos else outliers).append(c)
+    cross_cos = float(ecfg.get("cross_pose_min_cosine", 0.22))
+    kept, outliers = filter_consistent_candidates(cands, out_cos, cross_cos)
 
     if len(outliers) > 0.35 * (len(kept) + len(outliers)) or len(kept) < min_n:
         raise EnrollError("Các frame không nhất quán (có thể nhiều người trong video). Hãy quay lại chỉ một người.")
@@ -206,10 +242,13 @@ def store_enrollment(
     if emp:
         emp_id = emp["id"]
         if supplement_only:
-            # Giữ nguyên trạng thái duyệt nếu đang active, chỉ cập nhật nhóm góc vừa quay bổ sung
             updated_groups = tuple(sorted({c["pose_group"] for c in selected}))
-            db.clear_embeddings(emp_id, engine.model_version, pose_groups=updated_groups)
-            db.x("UPDATE employees SET name=? WHERE id=?", (name, emp_id))
+            if updated_groups:
+                db.clear_embeddings(emp_id, engine.model_version, pose_groups=updated_groups)
+            if warnings:
+                db.x("UPDATE employees SET name=?, status='pending', approved_at=NULL WHERE id=?", (name, emp_id))
+            else:
+                db.x("UPDATE employees SET name=? WHERE id=?", (name, emp_id))
         else:
             db.x("UPDATE employees SET name=?, status='pending' WHERE id=?", (name, emp_id))
             db.clear_embeddings(emp_id, engine.model_version)

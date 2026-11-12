@@ -352,6 +352,13 @@ async def enroll_guided_start(
         raise HTTPException(409, "Nguồn hiện tại là file video. Chuyển về webcam/RTSP ở tab Trực tiếp để đăng ký.")
     if not ctx.camera.connected:
         raise HTTPException(503, "Camera chưa kết nối")
+    if supplement_only:
+        from .guided import load_employee_frontal_embeddings
+        if not load_employee_frontal_embeddings(ctx.db, code, ctx.engine.model_version):
+            raise HTTPException(
+                409,
+                f"Nhân viên {code} chưa có mẫu khuôn mặt chính diện cho model hiện tại. Hãy thực hiện đăng ký đầy đủ.",
+            )
     old = getattr(ctx, "guided", None)
     if old is not None and old.state == "running":
         old.cancel()
