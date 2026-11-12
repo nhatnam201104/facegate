@@ -86,6 +86,23 @@ class Gallery:
                 "ready_90": set(POSE_GROUPS).issubset(groups),
             }
 
+    def employee_similarity(self, employee_id: int, emb: np.ndarray | None, pose_group: str) -> float | None:
+        """Trả về cosine tốt nhất giữa emb và các mẫu của đúng employee_id trong pose_group, hoặc None nếu chưa có mẫu."""
+        if emb is None:
+            return None
+        grp = pose_group if pose_group in POSE_GROUPS else "frontal"
+        with self.lock:
+            if grp not in self.coverage.get(employee_id, set()):
+                return None
+            mat = self.mats[grp]
+            owner = self.owners[grp]
+            if mat.shape[0] == 0 or mat.shape[1] != emb.size:
+                return None
+            mask = owner == employee_id
+            if not np.any(mask):
+                return None
+            return float(np.max(mat[mask] @ emb))
+
     def match(
         self,
         emb: np.ndarray | None,

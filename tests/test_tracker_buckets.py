@@ -126,3 +126,113 @@ def test_tracker_falls_back_to_profile_bucket_when_frontal_insufficient():
     grp, vec = t.select_best_bucket(min_frontal=2, min_profile=4)
     assert grp == "left_profile"
     assert float(vec @ v_left) > 0.99
+
+
+def test_reverification_on_current_pose_bucket_splits_when_profile_mismatches(tmp_path):
+    from types import SimpleNamespace
+    from app.config import load_config
+    from app.pipeline import Pipeline
+    from app.pose3d import PoseResult
+
+    cfg = load_config()
+    cfg["_paths"] = {**cfg["_paths"], "snapshots": tmp_path / "snapshots"}
+    cfg["liveness"]["enabled"] = False
+    db = DB(tmp_path / "reverify.db")
+    mv = "edgeface_reverify_v1"
+
+    emp_a = db.create_employee("NVA", "Nguyễn Văn A")
+    db.set_status(emp_a, "active")
+    emp_b = db.create_employee("NVB", "Trần Thị B")
+    db.set_status(emp_b, "active")
+
+    a_front = _unit([1.0, 0.0, 0.0, 0.0])
+    a_left = _unit([0.0, 1.0, 0.0, 0.0])
+    b_front = _unit([0.0, 0.0, 1.0, 0.0])
+    b_left = _unit([0.0, 0.0, 0.0, 1.0])
+
+    db.add_embedding(emp_a, a_front, mv, 0.9, "thang-giua", None, pose_group="frontal", yaw=0.0)
+    db.add_embedding(emp_a, a_left, mv, 0.85, "nghieng-sau-trai", None, pose_group="left_profile", yaw=-80.0)
+    db.add_embedding(emp_b, b_front, mv, 0.9, "thang-giua", None, pose_group="frontal", yaw=0.0)
+    db.add_embedding(emp_b, b_left, mv, 0.85, "nghieng-sau-trai", None, pose_group="left_profile", yaw=-80.0)
+
+    emp_c = db.create_employee("NVC", "Lê Văn C (chưa có góc nghiêng)")
+    db.set_status(emp_c, "active")
+    c_front = _unit([0.7, 0.7, 0.0, 0.0])
+    db.add_embedding(emp_c, c_front, mv, 0.9, "thang-giua", None, pose_group="frontal", yaw=0.0)
+
+    state = {"emb": a_front, "yaw": 0.0, "grp": "frontal"}
+    face = Face(
+        bbox=np.array([150.0, 80.0, 270.0, 220.0], np.float32),
+        score=0.95,
+        kps=np.array([[185, 130], [235, 130], [210, 165], [190, 195], [230, 195]], np.float32),
+    )
+
+    class ScriptedEngine:
+        name = "edgeface"
+        model_version = mv
+
+        def detect(self, img):
+            return [face]
+
+        def align(self, img, f, pose=None, pose_group=None):
+            return np.zeros((112, 112, 3), np.uint8)
+
+        def embed_aligned(self, aligned):
+            return state["emb"]
+
+    class ScriptedPose:
+        def estimate(self, frame, f, prev_group=None):
+            pts = np.zeros((68, 3), np.float32)
+            return PoseResult(state["yaw"], 0.0, 0.0, state["grp"], pts, face.kps, 0.85)
+
+    gal = Gallery(db, mv)
+    cam = SimpleNamespace(read=lambda: (0, None), idle=False, fps_in=15.0)
+    hrm = SimpleNamespace(notify=lambda: None)
+    pipe = Pipeline(
+        cfg, db, ScriptedEngine(), gal, cam, hrm, lambda m: None,
+        liveness=None, clips=None, pose_estimator=ScriptedPose(),
+    )
+    frame = np.random.default_rng(3).integers(60, 200, size=(360, 480, 3), dtype=np.uint8)
+
+    # 1. Nhận diện nhân viên A bằng 3 frame frontal
+    for i in range(3):
+        pipe._process(frame, 10.0 + i * 0.2)
+    t = next(iter(pipe.tracker.tracks.values()))
+    orig_tid = t.id
+    assert t.code == "NVA"
+
+    # Thêm 4 frame left_profile của chính nhân viên A -> giữ nguyên danh tính NVA và không tách track
+    state.update(emb=a_left, yaw=-80.0, grp="left_profile")
+    for i in range(4):
+        pipe._process(frame, 11.0 + i * 0.2)
+    t = next(iter(pipe.tracker.tracks.values()))
+    assert t.id == orig_tid and t.code == "NVA"
+
+    # 2. Mô phỏng track mới xác nhận A bằng 3 frame frontal, sau đó ghép nhầm 4 frame left_profile của B -> phải tách track / mất danh tính A
+    pipe.tracker.tracks.clear()
+    state.update(emb=a_front, yaw=0.0, grp="frontal")
+    for i in range(3):
+        pipe._process(frame, 20.0 + i * 0.2)
+    t_swap = next(iter(pipe.tracker.tracks.values()))
+    swap_tid = t_swap.id
+    assert t_swap.code == "NVA"
+
+    state.update(emb=b_left, yaw=-80.0, grp="left_profile")
+    for i in range(4):
+        pipe._process(frame, 21.0 + i * 0.2)
+    t_after = next(iter(pipe.tracker.tracks.values()))
+    assert t_after.code != "NVA" or t_after.id != swap_tid
+
+    # 3. Nhân viên C chưa có mẫu left_profile -> không tự ý hủy danh tính khi xoay sang left_profile
+    pipe.tracker.tracks.clear()
+    state.update(emb=c_front, yaw=0.0, grp="frontal")
+    for i in range(3):
+        pipe._process(frame, 30.0 + i * 0.2)
+    t_c = next(iter(pipe.tracker.tracks.values()))
+    assert t_c.code == "NVC"
+
+    state.update(emb=_unit([0.2, 0.2, 0.2, 0.9]), yaw=-80.0, grp="left_profile")
+    for i in range(4):
+        pipe._process(frame, 31.0 + i * 0.2)
+    t_c_after = next(iter(pipe.tracker.tracks.values()))
+    assert t_c_after.code == "NVC"

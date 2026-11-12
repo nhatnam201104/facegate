@@ -347,9 +347,16 @@ class Pipeline:
                 t.best_crop = crop_with_margin(frame, f.bbox)
             if self.liveness is not None and not t.spoof:
                 self._update_liveness_sample(t, f, frame, pose, ctx_scene, all_faces)
-            cand_grp, cand_vec = t.select_best_bucket(self.min_good, self.min_profile)
-            if cand_grp is not None and cand_vec is not None:
-                t = self._identify(t, now, cand_grp, cand_vec)
+            if t.employee_id is None:
+                cand_grp, cand_vec = t.select_best_bucket(self.min_good, self.min_profile)
+                if cand_grp is not None and cand_vec is not None:
+                    t = self._identify(t, now, cand_grp, cand_vec)
+            else:
+                cur_grp = pose.pose_group
+                min_req = self.min_good if cur_grp == "frontal" else self.min_profile
+                if len(t.buckets.get(cur_grp, [])) >= min_req:
+                    cur_vec = t.agg_embedding(cur_grp)
+                    t = self._reverify_current_bucket(t, f, now, cur_grp, cur_vec, pose)
         elif t.best_crop is None:
             t.best_crop = crop_with_margin(frame, f.bbox)
             if self.liveness is not None and not t.spoof and ctx_scene is not None:
@@ -443,6 +450,38 @@ class Pipeline:
                 else:
                     t.score, t.margin = m.score, m.margin
         return t
+
+    def _reverify_current_bucket(self, t: Track, f: Face, now: float, pose_group: str,
+                                 vec: np.ndarray | None, pose) -> Track:
+        """Hậu kiểm danh tính trên chính ngăn góc nhìn hiện tại để phát hiện ghép nhầm người khác."""
+        if vec is None or t.employee_id is None:
+            return t
+        emp_sim = self.gallery.employee_similarity(t.employee_id, vec, pose_group)
+        if emp_sim is None:
+            log.debug("Track %d: %s chua co mau gallery cho ngan %s -> giu nguyen danh tinh", t.id, t.code, pose_group)
+            return t
+        eff_thr = self.threshold if pose_group == "frontal" else self.profile_threshold
+        if emp_sim < eff_thr - VERIFY_SLACK:
+            log.info(
+                "Track %d: ngan %s khong khop %s (sim=%.3f < %.3f) -> tach track xac minh lai",
+                t.id, pose_group, t.code, emp_sim, eff_thr - VERIFY_SLACK,
+            )
+            saved_bucket = list(t.buckets.get(pose_group, []))
+            saved_yaws = list(t.bucket_yaws.get(pose_group, []))
+            t.buckets[pose_group] = []
+            t.bucket_yaws[pose_group] = []
+            self._on_track_end(t)
+            new_t = self.tracker.split(t, f, now)
+            new_t.buckets[pose_group] = saved_bucket
+            new_t.bucket_yaws[pose_group] = saved_yaws
+            new_t.good_frames = len(saved_bucket)
+            new_t.pose_group = pose_group
+            new_t.last_yaw = pose.yaw
+            new_t.min_abs_yaw = min((abs(y) for y in saved_yaws), default=abs(pose.yaw))
+            new_t.pose_history.append((now, pose.yaw, pose.pitch, pose.roll, new_t.center, pose.landmarks3d))
+            self._start_clip(new_t)
+            return self._identify(new_t, now, pose_group, vec)
+        return self._identify(t, now, pose_group, vec)
 
     def _merge_same_person(self, t: Track) -> Track:
         for o in self.tracker.tracks.values():

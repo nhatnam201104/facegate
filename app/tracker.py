@@ -206,7 +206,7 @@ class IoUTracker:
         limit = min(JUMP_MAX, JUMP_BASE + JUMP_PER_SEC * max(0.0, now - t.last_seen))
         if d <= limit:
             return d
-        if t.person_bbox is not None and f_pbox is not None and iou(t.person_bbox, f_pbox) >= 0.45:
+        if d <= JUMP_MAX and t.person_bbox is not None and f_pbox is not None and iou(t.person_bbox, f_pbox) >= 0.45:
             return d * 0.5
         return None
 
