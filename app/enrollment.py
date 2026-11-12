@@ -302,6 +302,27 @@ def store_enrollment(
     return report
 
 
+def _record_backfill_warning(db, emp_id: int, model_version: str, reason: str, skipped_no_face: int = 0) -> None:
+    db.add_enrollment(emp_id, {
+        "frames_total": 0,
+        "frames_good": 0,
+        "frames_selected": 0,
+        "no_face": skipped_no_face,
+        "multi_face": 0,
+        "rejected": {},
+        "outliers": 0,
+        "bins": {},
+        "pose_groups": [],
+        "ready_90": False,
+        "min_pair_cosine": 0.0,
+        "warnings": [reason],
+        "model_version": model_version,
+        "guided": False,
+        "supplement_only": False,
+        "crops": [],
+    })
+
+
 def backfill_legacy_embeddings(ctx) -> int:
     """Tự động tái trích xuất embedding từ data/enroll/<code>/*.jpg cho nhân viên cũ khi đổi model_version."""
     cfg, db, engine = ctx.cfg, ctx.db, ctx.engine
@@ -315,6 +336,12 @@ def backfill_legacy_embeddings(ctx) -> int:
     if not missing_emps:
         return 0
 
+    ecfg = cfg.get("enrollment", {})
+    out_cos = float(ecfg.get("outlier_min_cosine", 0.42))
+    cross_cos = float(ecfg.get("cross_pose_min_cosine", 0.22))
+    qcfg = dict(cfg.get("quality", {}))
+    qcfg["max_yaw"] = max(float(qcfg.get("max_yaw", 90)), 90.0)
+
     migrated = 0
     for emp in missing_emps:
         code, emp_id = emp["code"], int(emp["id"])
@@ -324,7 +351,10 @@ def backfill_legacy_embeddings(ctx) -> int:
         jpgs = sorted(emp_dir.glob("*.jpg"))
         if not jpgs:
             continue
-        added_for_emp = 0
+
+        cands: list[dict] = []
+        skipped_no_face = 0
+        rejected_q = 0
         for img_path in jpgs:
             img = cv2.imread(str(img_path))
             if img is None or img.size == 0:
@@ -333,29 +363,68 @@ def backfill_legacy_embeddings(ctx) -> int:
             bin_name = m.group(1) if m else "thang-giua"
             hint_grp, hint_yaw = _group_from_bin_name(bin_name)
 
+            # Đệm viền đủ rộng cho ảnh crop sát lề từ bản cũ để detector và bộ lọc biên ('cut') hoạt động chính xác
+            pad = max(24, int(max(img.shape[:2]) * 0.20))
+            padded = cv2.copyMakeBorder(img, pad, pad, pad, pad, cv2.BORDER_REPLICATE)
             with ctx.engine_lock:
-                faces = engine.detect(img)
-                if faces:
-                    faces.sort(key=lambda f: f.w * f.h, reverse=True)
-                    face = faces[0]
-                    pose = pose_est.estimate(img, face) if pose_est is not None else None
-                    grp = pose.pose_group if pose is not None else hint_grp
-                    yaw_val = float(pose.yaw) if pose is not None else hint_yaw
-                    pitch_val = float(pose.pitch) if pose is not None else 0.0
-                    aligned = engine.align(img, face, pose=pose, pose_group=grp)
-                else:
-                    # Ảnh crop sát mặt từ phiên bản cũ nếu detector không bắt lại khung -> resize trực tiếp
-                    grp, yaw_val, pitch_val = hint_grp, hint_yaw, 0.0
-                    aligned = cv2.resize(img, (112, 112))
+                faces = engine.detect(padded)
+                if not faces:
+                    skipped_no_face += 1
+                    log.warning("Backfill bo qua anh khong phat hien duoc mat: %s/%s", code, img_path.name)
+                    continue
+                faces.sort(key=lambda f: f.w * f.h, reverse=True)
+                face = faces[0]
+                pose = pose_est.estimate(padded, face) if pose_est is not None else None
+            q = assess(padded, face, qcfg, pose=pose)
+            if not q.ok:
+                rejected_q += 1
+                log.warning("Backfill bo qua anh chat luong thap (%s): %s/%s", q.reason, code, img_path.name)
+                continue
+            grp = pose.pose_group if pose is not None else hint_grp
+            yaw_val = float(pose.yaw) if pose is not None else hint_yaw
+            pitch_val = float(pose.pitch) if pose is not None else float(q.pitch if q else 0.0)
+            with ctx.engine_lock:
+                aligned = engine.align(padded, face, pose=pose, pose_group=grp)
                 emb = engine.embed_aligned(aligned)
+            cands.append({
+                "emb": emb,
+                "q": q,
+                "bin": bin_name,
+                "pose_group": grp,
+                "yaw": yaw_val,
+                "pitch": pitch_val,
+                "rel_crop": f"enroll/{code}/{img_path.name}",
+            })
 
-            rel_crop = f"enroll/{code}/{img_path.name}"
-            db.add_embedding(
-                emp_id, emb, engine.model_version, 0.75, bin_name, rel_crop,
-                source="backfill", pose_group=grp, yaw=yaw_val, pitch=pitch_val,
+        if not cands:
+            _record_backfill_warning(
+                db, emp_id, engine.model_version,
+                f"Backfill không trích xuất được khuôn mặt hợp lệ (bỏ qua {skipped_no_face} ảnh không thấy mặt, {rejected_q} ảnh chất lượng thấp) — cần đăng ký lại.",
+                skipped_no_face=skipped_no_face,
             )
-            added_for_emp += 1
-        if added_for_emp > 0:
-            migrated += 1
-            log.info("Backfill %d embedding (%s) cho nhan vien %s", added_for_emp, engine.model_version, code)
+            continue
+
+        try:
+            kept, outliers = filter_consistent_candidates(cands, out_cos, cross_cos)
+            if len(outliers) > 0.35 * (len(kept) + len(outliers)) or not kept:
+                raise EnrollError("Các ảnh mẫu cũ không nhất quán giữa các góc nhìn")
+        except EnrollError as e:
+            log.warning("Backfill tu choi nhan vien %s vi khong nhat quan (%s) -> can dang ky lai", code, e)
+            _record_backfill_warning(
+                db, emp_id, engine.model_version,
+                f"Ảnh mẫu cũ không nhất quán ({e}) — cần đăng ký lại.",
+                skipped_no_face=skipped_no_face,
+            )
+            continue
+
+        for c in kept:
+            db.add_embedding(
+                emp_id, c["emb"], engine.model_version, float(c["q"].score), c["bin"], c["rel_crop"],
+                source="backfill", pose_group=c["pose_group"], yaw=c["yaw"], pitch=c["pitch"],
+            )
+        migrated += 1
+        log.info(
+            "Backfill %d embedding (%s) cho nhan vien %s (bo qua khong mat=%d, lech=%d)",
+            len(kept), engine.model_version, code, skipped_no_face, len(outliers),
+        )
     return migrated

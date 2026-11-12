@@ -184,6 +184,7 @@ def test_full_seven_angles_with_deep_profile_90_and_supplement(env):
     assert g7.snapshot()["report"]["frames_selected"] == 7
 
     # 3. Đổi sang model_version mới -> backfill_legacy_embeddings tự động trích xuất lại từ ảnh lưu trong enroll/
+    cam.pose = (0.0, 0.0)
     ctx.engine.model_version = "edgeface-upgraded-v2"
     assert ctx.db.list_employees("edgeface-upgraded-v2")[0]["n_emb"] == 0
     n_backfilled = backfill_legacy_embeddings(ctx)
@@ -353,3 +354,118 @@ def test_video_enrollment_enforces_cross_pose_consistency(env):
     ctx.engine = SequenceEngine([(0.0, "A"), (-15.0, "A"), (15.0, "A"), (-78.0, "B"), (-80.0, "B"), (78.0, "B")])
     with pytest.raises(EnrollError):
         process_enrollment(frames, "NV_VID_BAD", "Video Nhieu Nguoi", ctx)
+
+
+def test_backfill_skips_no_face_validates_consistency_and_runs_in_background(env, monkeypatch):
+    import asyncio
+    import cv2
+    from app import main as app_main
+    from app.enrollment import backfill_legacy_embeddings
+
+    ctx, cam = env
+    enroll_root = ctx.cfg["_paths"]["enroll"]
+
+    # 1. Nhân viên có 1 ảnh có mặt hợp lệ + 1 ảnh trắng không có mặt -> chỉ lưu đúng 1 embedding với điểm chất lượng thật (!= 0.75 cứng)
+    emp1 = ctx.db.create_employee("NV_BF1", "Backfill Mot Mat")
+    dir1 = enroll_root / "NV_BF1"
+    dir1.mkdir(parents=True, exist_ok=True)
+    cv2.imwrite(str(dir1 / "00_thang-giua.jpg"), cam.img)
+    blank_white = np.full((180, 180, 3), 255, dtype=np.uint8)
+    cv2.imwrite(str(dir1 / "01_trai-giua.jpg"), blank_white)
+
+    # 2. Nhân viên có ảnh không nhất quán (1 ảnh thẳng người A + 2 ảnh nghiêng người B) -> không lưu và ghi cảnh báo cần đăng ký lại
+    emp2 = ctx.db.create_employee("NV_BF2", "Backfill Khong Nhat Quan")
+    dir2 = enroll_root / "NV_BF2"
+    dir2.mkdir(parents=True, exist_ok=True)
+    img_a = cam.img.copy()
+    img_b = cam.img.copy()
+    img_b[:16, :16] = 10   # dấu nhận biết người B bền vững qua nén JPEG và đệm viền
+    cv2.imwrite(str(dir2 / "00_thang-giua.jpg"), img_a)
+    cv2.imwrite(str(dir2 / "01_nghieng-sau-trai.jpg"), img_b)
+    cv2.imwrite(str(dir2 / "02_nghieng-sau-phai.jpg"), img_b)
+
+    class BackfillEngine:
+        name = "edgeface"
+        model_version = "bf-model-v2"
+
+        def detect(self, img):
+            if float(img.mean()) > 250.0:
+                return []
+            is_b = float(img[:8, :8].mean()) < 25.0
+            yaw = -78.0 if is_b else 0.0
+            self._cur = (yaw, "B" if is_b else "A")
+            h, w = img.shape[:2]
+            cx, cy = w * 0.5, h * 0.5
+            le, re = np.array([cx - 22.0, cy - 20.0]), np.array([cx + 22.0, cy - 20.0])
+            nose = np.array([cx + yaw / 90.0 * 28.0, cy + 4.0])
+            kps = np.array([le, re, nose, [cx - 16.0, cy + 26.0], [cx + 16.0, cy + 26.0]], dtype=np.float32)
+            return [Face(bbox=np.array([cx - 48.0, cy - 55.0, cx + 48.0, cy + 55.0]), score=0.98, kps=kps)]
+
+        def align(self, img, face, pose=None, pose_group=None):
+            return img
+
+        def embed_aligned(self, aligned):
+            yaw, person = self._cur
+            cam.pose = (yaw, 0.0)
+            cam.person = person
+            return FakeEngine(cam).embed_aligned(aligned)
+
+    ctx.engine = BackfillEngine()
+    migrated = backfill_legacy_embeddings(ctx)
+    assert migrated == 1
+    rows = {r["code"]: r for r in ctx.db.list_employees("bf-model-v2")}
+    assert rows["NV_BF1"]["n_emb"] == 1
+    q_stored = ctx.db.q("SELECT quality FROM embeddings WHERE employee_id=?", (emp1,))[0]["quality"]
+    assert q_stored != 0.75
+
+    assert rows["NV_BF2"]["n_emb"] == 0
+    rep2 = ctx.db.q("SELECT report FROM enrollments WHERE employee_id=? ORDER BY id DESC LIMIT 1", (emp2,))
+    assert rep2 and "đăng ký lại" in rep2[0]["report"].lower()
+
+    # 3. Kiểm tra lifespan trả quyền ngay trước khi tác vụ backfill nền hoàn tất
+    started = threading.Event()
+    release = threading.Event()
+    finished = threading.Event()
+
+    def slow_backfill(c):
+        started.set()
+        release.wait(timeout=3.0)
+        finished.set()
+        return 1
+
+    class DummyLifecycleObj:
+        def start(self):
+            return self
+        def stop(self):
+            pass
+        def close(self):
+            pass
+
+    dummy_pipe = SimpleNamespace(
+        start=lambda: dummy_pipe,
+        stop=lambda: None,
+        set_motion_zone=lambda z: None,
+        engine_lock=threading.Lock(),
+        threshold=0.4,
+    )
+    monkeypatch.setattr(app_main, "load_config", lambda: ctx.cfg)
+    monkeypatch.setattr(app_main, "DB", lambda p: ctx.db)
+    monkeypatch.setattr(app_main, "create_engine", lambda c: ctx.engine)
+    monkeypatch.setattr(app_main, "PoseEstimator3D", lambda *a, **k: None)
+    monkeypatch.setattr(app_main, "create_context_detector", lambda c: None)
+    monkeypatch.setattr(app_main, "backfill_legacy_embeddings", slow_backfill)
+    monkeypatch.setattr(app_main, "Gallery", lambda db, mv: SimpleNamespace(reload=lambda: None, version=1))
+    monkeypatch.setattr(app_main, "Camera", lambda *a, **k: DummyLifecycleObj())
+    monkeypatch.setattr(app_main, "HRMWorker", lambda *a, **k: DummyLifecycleObj())
+    monkeypatch.setattr(app_main, "ClipRecorder", lambda c: DummyLifecycleObj())
+    monkeypatch.setattr(app_main, "create_liveness", lambda c: None)
+    monkeypatch.setattr(app_main, "Pipeline", lambda *a, **k: dummy_pipe)
+
+    async def _check_lifespan_nonblocking():
+        async with app_main.lifespan(app_main.app):
+            assert not finished.is_set(), "lifespan bị chặn đồng bộ bởi backfill_legacy_embeddings"
+            release.set()
+            await asyncio.to_thread(finished.wait, 2.0)
+            assert finished.is_set()
+
+    asyncio.run(_check_lifespan_nonblocking())

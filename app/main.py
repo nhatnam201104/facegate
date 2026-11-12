@@ -59,7 +59,6 @@ async def lifespan(app: FastAPI):
     ctx.context_detector = create_context_detector(cfg)
     ctx.engine_lock = threading.Lock()
     ctx.threshold = float(rc["thresholds"][ctx.engine.name]["frontal"])
-    backfill_legacy_embeddings(ctx)
     ctx.gallery = Gallery(ctx.db, ctx.engine.model_version)
     ctx.camera = Camera(cfg["camera"]["source"], cfg["camera"].get("loop_file", True)).start()
     ctx.hrm = HRMWorker(cfg, ctx.db, on_update=lambda i, s: bc({"type": "hrm", "id": i, "status": s}))
@@ -78,8 +77,23 @@ async def lifespan(app: FastAPI):
             log.warning("Bo qua vung phat hien trong settings.json: %s", e)
     ctx.engine_lock = ctx.pipeline.engine_lock
     ctx.threshold = ctx.pipeline.threshold
+
+    async def _run_background_backfill() -> None:
+        try:
+            n_migrated = await asyncio.to_thread(backfill_legacy_embeddings, ctx)
+            if n_migrated:
+                ctx.gallery.reload()
+                bc({"type": "employees"})
+                bc({"type": "status", "status": ctx.pipeline.status()})
+        except Exception:  # noqa: BLE001
+            log.exception("Loi khi chay backfill nen")
+
+    backfill_task = asyncio.create_task(_run_background_backfill())
+    ctx.backfill_task = backfill_task
     log.info("FaceGate san sang: http://%s:%s", cfg["server"]["host"], cfg["server"]["port"])
     yield
+    if not backfill_task.done():
+        backfill_task.cancel()
     ctx.pipeline.stop()      # ket thuc cac track dang mo -> luu lich su
     ctx.clips.close()        # ghi xong cac clip con dang mo
     ctx.camera.stop()
