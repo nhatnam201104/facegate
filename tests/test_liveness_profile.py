@@ -42,11 +42,11 @@ def test_context_detector_onnx_and_spoof_medium_rules():
     sc = det.detect(blank)
     assert isinstance(sc, ContextScene)
 
-    # 1. Phát hiện điện thoại/màn hình bao quanh khuôn mặt -> screen_detected
+    # 1. Phát hiện điện thoại/màn hình bao trọn khuôn mặt và không có cơ thể người thật tương ứng -> screen_detected
     face_box = np.array([220.0, 120.0, 300.0, 220.0], np.float32)
     phone_box = np.array([190.0, 90.0, 330.0, 290.0], np.float32)
     person_box = np.array([150.0, 100.0, 380.0, 470.0], np.float32)
-    scene_phone = ContextScene(persons=[person_box], mediums=[(phone_box, "cell phone", 0.85)])
+    scene_phone = ContextScene(persons=[], mediums=[(phone_box, "cell phone", 0.85)])
     res = evaluate_face_context(face_box, scene_phone, [face_box])
     assert res["spoof_reason"] == "screen_detected"
     assert not res["medium_clean"]
@@ -269,3 +269,69 @@ def test_moire_keeps_true_zeros_and_uses_median_against_single_outlier():
     t_screen = _build_profile_track(12, [0.81, 0.83, 0.85, 0.82, 0.84, 0.86])
     st_scr = liv.evaluate_track(t_screen, frame_shape=frame_shape)
     assert st_scr == "spoof" and t_screen.spoof_reason == "moire_pattern"
+
+
+def test_normal_objects_near_face_or_tv_behind_person_do_not_trigger_permanent_spoof():
+    from app.context_detector import ContextScene, evaluate_face_context
+    from app.liveness import create_liveness
+
+    face_box = np.array([220.0, 110.0, 300.0, 210.0], np.float32)
+    person_box = np.array([150.0, 95.0, 370.0, 470.0], np.float32)
+
+    # 1. Người thật cầm điện thoại ngang ngực / dưới cằm (nằm trong vùng mở rộng 2.5x quanh mặt nhưng chồng lên mặt < 20%)
+    chest_phone = np.array([215.0, 225.0, 295.0, 330.0], np.float32)
+    res_chest = evaluate_face_context(face_box, ContextScene(persons=[person_box], mediums=[(chest_phone, "cell phone", 0.9)]), [face_box])
+    assert res_chest["spoof_reason"] is None
+    assert res_chest["body_coupled"] is True
+    assert res_chest.get("medium_nearby") is True
+
+    # 2. Mặt nằm trọn trong màn hình điện thoại và không gắn cơ thể phù hợp -> screen_detected
+    enclosing_phone = np.array([200.0, 90.0, 320.0, 260.0], np.float32)
+    distant_holder = np.array([40.0, 80.0, 210.0, 470.0], np.float32)
+    res_spoof_phone = evaluate_face_context(
+        face_box,
+        ContextScene(persons=[distant_holder], mediums=[(enclosing_phone, "cell phone", 0.92)]),
+        [face_box],
+    )
+    assert res_spoof_phone["spoof_reason"] == "screen_detected"
+    assert res_spoof_phone["medium_clean"] is False
+
+    # 3. TV lớn treo tường phía sau chứa hộp mặt, nhưng mặt gắn với thân người thật trải dài ra ngoài/trước TV -> không spoof
+    wall_tv = np.array([110.0, 60.0, 430.0, 280.0], np.float32)
+    res_tv_bg = evaluate_face_context(
+        face_box,
+        ContextScene(persons=[person_box], mediums=[(wall_tv, "tv", 0.88)]),
+        [face_box],
+    )
+    assert res_tv_bg["spoof_reason"] is None
+    assert res_tv_bg["body_coupled"] is True
+
+    # 4. Trong evaluate_track: cần >= 3/5 frame gần nhất báo screen_detected mới chốt spoof (2 hit rải rác không khóa spoof vĩnh viễn)
+    cfg = load_config()
+    liv = create_liveness(cfg)
+    t = Track(30, face_box, 10.0, 10.0)
+    t.live = [0.92, 0.91, 0.93, 0.94]
+    reasons = ["screen_detected", None, None, None, "screen_detected", None]
+    for r in reasons:
+        t.context_history.append({
+            "yaw": 0.0,
+            "medium_clean": r != "screen_detected",
+            "body_coupled": r is None,
+            "spoof_reason": r,
+            "moire_score": 0.05,
+        })
+    assert liv.evaluate_track(t) == "live"
+    assert not t.spoof
+
+    # Khi >= 3 trong 5 frame gần nhất là screen_detected -> chốt spoof cố định cho hết track
+    t2 = Track(31, face_box, 20.0, 20.0)
+    for r in ["screen_detected", None, "screen_detected", "screen_detected", None]:
+        t2.context_history.append({
+            "yaw": 0.0,
+            "medium_clean": r != "screen_detected",
+            "body_coupled": r is None,
+            "spoof_reason": r,
+            "moire_score": 0.05,
+        })
+    assert liv.evaluate_track(t2) == "spoof"
+    assert t2.spoof_reason == "screen_detected"

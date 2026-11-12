@@ -93,6 +93,9 @@ class Liveness:
         self.require_body = bool(cc.get("require_body_coupling", True))
         rb = cc.get("face_body_ratio", [0.12, 0.65])
         self.ratio_bounds = (float(rb[0]), float(rb[1]))
+        self.screen_overlap = float(cc.get("screen_face_overlap", 0.80))
+        self.screen_window = int(cc.get("screen_window", 5))
+        self.screen_min_hits = int(cc.get("screen_min_hits", 3))
 
         pc = lc.get("parallax", {})
         self.par_enabled = bool(pc.get("enabled", True))
@@ -135,7 +138,13 @@ class Liveness:
         vis_roi = _visible_skin_roi(crop, pose.yaw) if crop.size else crop
         m_score = moire_screen_score(vis_roi) if (self.moire_enabled and quality_ok and vis_roi.size) else None
 
-        ctx_info = {"medium_clean": True, "body_coupled": True, "spoof_reason": None, "medium_label": None}
+        ctx_info = {
+            "medium_clean": True,
+            "medium_nearby": False,
+            "body_coupled": True,
+            "spoof_reason": None,
+            "medium_label": None,
+        }
         if self.ctx_enabled and ctx_scene is not None:
             ctx_info = evaluate_face_context(
                 face.bbox,
@@ -143,11 +152,13 @@ class Liveness:
                 all_faces=all_faces,
                 require_body=self.require_body,
                 ratio_bounds=self.ratio_bounds,
+                screen_face_overlap=self.screen_overlap,
             )
 
         track.context_history.append({
             "yaw": float(pose.yaw),
             "medium_clean": ctx_info["medium_clean"],
+            "medium_nearby": ctx_info.get("medium_nearby", False),
             "body_coupled": ctx_info["body_coupled"],
             "spoof_reason": ctx_info["spoof_reason"],
             "moire_score": m_score,
@@ -164,10 +175,11 @@ class Liveness:
             return "spoof"
 
         hist = list(track.context_history)
-        # 1. Cổng tức thời: phát hiện màn hình điện thoại hoặc 2 mặt trên 1 thân người (>= 2 frame liên tiếp/tích lũy)
-        screen_hits = sum(1 for h in hist if h["spoof_reason"] == "screen_detected")
-        dual_hits = sum(1 for h in hist if h["spoof_reason"] == "multi_face_single_body")
-        if screen_hits >= 2 or (screen_hits >= 1 and len(hist) >= 2 and not hist[-1]["medium_clean"]):
+        # 1. Cổng ngữ cảnh: phát hiện mặt trong màn hình trên tỉ lệ đáng kể các frame gần nhất (vd >= 3/5) hoặc 2 mặt/1 thân
+        recent_scr = hist[-self.screen_window:] if hist else []
+        screen_hits = sum(1 for h in recent_scr if h["spoof_reason"] == "screen_detected")
+        dual_hits = sum(1 for h in hist[-self.screen_window:] if h["spoof_reason"] == "multi_face_single_body")
+        if screen_hits >= self.screen_min_hits:
             return self._mark_spoof(track, "screen_detected", 0.05, "context_parallax", medium_clean=False)
         if dual_hits >= 2:
             return self._mark_spoof(track, "multi_face_single_body", 0.08, "context_parallax", body_coupled=False)

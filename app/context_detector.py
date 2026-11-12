@@ -89,29 +89,19 @@ def evaluate_face_context(
     all_faces: list | None = None,
     require_body: bool = True,
     ratio_bounds: tuple[float, float] = (0.12, 0.65),
+    screen_face_overlap: float = 0.80,
 ) -> dict:
     """Đánh giá ngữ cảnh vật lý của một khuôn mặt trong khung hình."""
     if scene is None:
-        return {"medium_clean": True, "body_coupled": True, "spoof_reason": None, "medium_label": None}
+        return {
+            "medium_clean": True,
+            "medium_nearby": False,
+            "body_coupled": True,
+            "spoof_reason": None,
+            "medium_label": None,
+        }
 
-    # 1. Quét thiết bị màn hình / khung sách báo bao quanh vùng mở rộng 2.5x quanh hộp mặt
-    fw = float(face_box[2] - face_box[0])
-    fh = float(face_box[3] - face_box[1])
-    cx = float(face_box[0] + face_box[2]) * 0.5
-    cy = float(face_box[1] + face_box[3]) * 0.5
-    exp_box = np.array([cx - 1.25 * fw, cy - 1.25 * fh, cx + 1.25 * fw, cy + 1.25 * fh], np.float32)
-
-    for m_box, m_label, _ in scene.mediums:
-        # Mặt nằm lọt trong màn hình hoặc giao cắt đáng kể với vùng mở rộng quanh mặt
-        if _face_overlap_ratio(face_box, m_box) >= 0.20 or _face_overlap_ratio(m_box, exp_box) >= 0.35:
-            return {
-                "medium_clean": False,
-                "body_coupled": False,
-                "spoof_reason": "screen_detected",
-                "medium_label": m_label,
-            }
-
-    # 2. Kiểm tra gắn kết Đầu – Cơ thể và phát hiện 2 mặt trên cùng 1 người
+    # 1. Kiểm tra gắn kết Đầu – Cơ thể và phát hiện 2 mặt trên cùng 1 người trước
     raw_faces = [f.bbox if hasattr(f, "bbox") else np.asarray(f, np.float32) for f in (all_faces or [face_box])]
     coupled_person = None
     for p_box in scene.persons:
@@ -127,6 +117,7 @@ def evaluate_face_context(
                 if not explained_by_other:
                     return {
                         "medium_clean": True,
+                        "medium_nearby": False,
                         "body_coupled": False,
                         "spoof_reason": "multi_face_single_body",
                         "medium_label": None,
@@ -135,19 +126,50 @@ def evaluate_face_context(
                 coupled_person = p_box
                 break
 
+    # 2. Quét thiết bị màn hình / khung sách báo: chỉ coi là mặt trong màn hình khi hộp mặt nằm phần lớn
+    #    bên trong thiết bị (>= screen_face_overlap) VÀ không gắn với thân người nằm ngoài thiết bị.
+    fw = float(face_box[2] - face_box[0])
+    fh = float(face_box[3] - face_box[1])
+    cx = float(face_box[0] + face_box[2]) * 0.5
+    cy = float(face_box[1] + face_box[3]) * 0.5
+    exp_box = np.array([cx - 1.25 * fw, cy - 1.25 * fh, cx + 1.25 * fw, cy + 1.25 * fh], np.float32)
+
+    medium_nearby = False
+    nearby_label = None
+    for m_box, m_label, _ in scene.mediums:
+        face_in_med = _face_overlap_ratio(face_box, m_box)
+        if face_in_med >= 0.15 or _face_overlap_ratio(m_box, exp_box) >= 0.35:
+            medium_nearby = True
+            nearby_label = nearby_label or m_label
+        if face_in_med >= screen_face_overlap:
+            body_outside_medium = (
+                coupled_person is not None
+                and _face_overlap_ratio(coupled_person, m_box) < 0.75
+            )
+            if not body_outside_medium:
+                return {
+                    "medium_clean": False,
+                    "medium_nearby": True,
+                    "body_coupled": False,
+                    "spoof_reason": "screen_detected",
+                    "medium_label": m_label,
+                }
+
     if coupled_person is None and require_body:
         return {
             "medium_clean": True,
+            "medium_nearby": medium_nearby,
             "body_coupled": False,
             "spoof_reason": "unattached_face",
-            "medium_label": None,
+            "medium_label": nearby_label,
         }
 
     return {
         "medium_clean": True,
+        "medium_nearby": medium_nearby,
         "body_coupled": coupled_person is not None or not require_body,
         "spoof_reason": None,
-        "medium_label": None,
+        "medium_label": nearby_label,
     }
 
 

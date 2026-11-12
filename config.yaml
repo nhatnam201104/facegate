@@ -75,6 +75,9 @@ liveness:                  # chong gia mao 4 lop dinh tuyen theo goc nhin
     enabled: true
     person_conf: 0.45      # YOLOX-Nano: nguong tin cay phat hien co the nguoi
     medium_conf: 0.35      # nguong phat hien dien thoai / tablet / man hinh / khung anh
+    screen_face_overlap: 0.80  # ti le hop mat nam ben trong hop thiet bi de tinh la mat trong man hinh
+    screen_window: 5       # cua so frame gan nhat de kiem tra screen_detected
+    screen_min_hits: 3     # so frame toi thieu trong screen_window bao screen_detected moi chot spoof
     require_body_coupling: true
     face_body_ratio: [0.12, 0.65]
   parallax:
