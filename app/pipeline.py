@@ -356,8 +356,11 @@ class Pipeline:
                 self._update_liveness_sample(t, f, frame, pose, ctx_scene, all_faces, quality_ok=False)
 
         state = self._live_state(t, frame.shape)
-        if state == "spoof" and not t.spoof:
+        t.live_state = state
+        if state == "spoof":
             t.spoof = True
+        if t.spoof and not t.spoof_emitted:
+            t.spoof_emitted = True
             t.verification_tier = "rejected_spoof"
             log.warning("Track %d: nghi gia mao (ly do=%s, live=%s, giong %s) -> khong cham cong",
                         t.id, t.spoof_reason or "spoof", t.live_mean, t.claimed[1] if t.claimed else "?")
@@ -610,7 +613,7 @@ class Pipeline:
                 continue
             lm = t.live_mean
             ltxt = f" · thật {lm:.2f}" if self.liveness is not None and lm is not None else ""
-            state = self._live_state(t, frame.shape)
+            state = "live" if self.liveness is None else t.live_state
             if t.spoof:
                 r_vi = _SPOOF_VI.get(t.spoof_reason or "", "")
                 suffix = f" ({r_vi})" if r_vi else ""

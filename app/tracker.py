@@ -80,7 +80,9 @@ class Track:
     liveness_score: float | None = None             # diem tong hop (MiniFASNet hoac Context+Parallax)
     liveness_mode: str = "texture_fas"
     liveness_detail: dict = field(default_factory=dict)
+    live_state: str = "checking"
     spoof: bool = False
+    spoof_emitted: bool = False
     spoof_reason: str | None = None
     claimed: tuple | None = None                    # (employee_id, code, name) khop gan nhat
     # lich su
@@ -275,5 +277,6 @@ class IoUTracker:
         keep.last_reason = drop.last_reason
         if drop.best_quality > keep.best_quality:
             keep.best_quality, keep.best_crop = drop.best_quality, drop.best_crop
+        keep.live_state = drop.live_state
         keep.side, keep.vel = drop.side, drop.vel
         self.tracks.pop(drop.id, None)

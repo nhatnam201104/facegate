@@ -134,3 +134,93 @@ def test_pose_gated_liveness_routes_90_degree_real_and_blocks_planar_spoof():
 
     st_flat = liv.evaluate_track(t_flat, frame_shape=frame_shape)
     assert st_flat == "spoof" and t_flat.spoof_reason == "planar_no_parallax"
+
+
+def test_pipeline_emits_spoof_event_once_and_render_does_not_mutate_track(tmp_path):
+    from types import SimpleNamespace
+
+    from app.db import DB
+    from app.gallery import Gallery
+    from app.liveness import Liveness
+    from app.pipeline import Pipeline
+
+    cfg = load_config()
+    cfg["_paths"] = {**cfg["_paths"], "snapshots": tmp_path / "snapshots"}
+    db = DB(tmp_path / "spoof_emit.db")
+
+    face = Face(
+        bbox=np.array([180.0, 90.0, 300.0, 230.0], np.float32),
+        score=0.95,
+        kps=np.array([[210, 140], [270, 140], [240, 175], [218, 205], [262, 205]], np.float32),
+    )
+
+    class DummyEngine:
+        name = "edgeface"
+        model_version = "edgeface_spoof_test"
+
+        def detect(self, img):
+            return [face]
+
+        def align(self, img, f, pose=None, pose_group=None):
+            return np.zeros((112, 112, 3), np.uint8)
+
+        def embed_aligned(self, aligned):
+            v = np.ones(16, np.float32)
+            return v / np.linalg.norm(v)
+
+    class DummyPoseEstimator:
+        def estimate(self, frame, f, prev_group=None):
+            pts3d = _make_3d_pts(0.0, 240.0, 160.0, flat=True)
+            return PoseResult(0.0, 0.0, 0.0, "frontal", pts3d, face.kps, 0.9)
+
+    eval_calls = []
+
+    class RealMarkSpoofLiveness:
+        def observe(self, track, f, frame, pose, ctx_scene=None, all_faces=None, quality_ok=True):
+            pass
+
+        def evaluate_track(self, track, frame_shape=None):
+            eval_calls.append(track.id)
+            if track.spoof:
+                return "spoof"
+            return Liveness._mark_spoof(track, "screen_detected", 0.05, "context_parallax", medium_clean=False)
+
+    eng = DummyEngine()
+    gal = Gallery(db, eng.model_version)
+    cam = SimpleNamespace(read=lambda: (0, None), idle=False, fps_in=15.0)
+    hrm = SimpleNamespace(notify=lambda: None)
+    emitted_msgs = []
+    pipe = Pipeline(
+        cfg,
+        db,
+        eng,
+        gal,
+        cam,
+        hrm,
+        emitted_msgs.append,
+        liveness=RealMarkSpoofLiveness(),
+        clips=None,
+        pose_estimator=DummyPoseEstimator(),
+    )
+
+    rng = np.random.default_rng(11)
+    frame = rng.integers(50, 200, size=(360, 480, 3), dtype=np.uint8)
+
+    # Bước 1: evaluate_track gọi Liveness._mark_spoof thật -> phải ghi đúng 1 sự kiện spoof
+    pipe._process(frame, 100.0)
+    t = next(iter(pipe.tracker.tracks.values()))
+    spoof_events = db.list_events(50, tier="rejected_spoof")
+    assert len(spoof_events) == 1
+    assert spoof_events[0]["kind"] == "spoof"
+    assert t.verification_tier == "rejected_spoof"
+    assert len([m for m in emitted_msgs if m.get("type") == "event" and m["event"]["kind"] == "spoof"]) == 1
+
+    # _render không được gọi lại evaluate_track để tránh thay đổi trạng thái track ngoài luồng phát hiện
+    calls_before_render = len(eval_calls)
+    pipe._render(frame, 100.05)
+    assert len(eval_calls) == calls_before_render
+
+    # Bước 2 trên cùng track: không được ghi lặp sự kiện spoof lần thứ 2
+    pipe._process(frame, 100.25)
+    assert len(db.list_events(50, tier="rejected_spoof")) == 1
+    assert len([m for m in emitted_msgs if m.get("type") == "event" and m["event"]["kind"] == "spoof"]) == 1
