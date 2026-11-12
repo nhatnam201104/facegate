@@ -109,7 +109,16 @@ def filter_consistent_candidates(
         g_mean /= np.linalg.norm(g_mean) + 1e-9
         for c in items:
             sim_grp = float(c["emb"] @ g_mean)
-            sim_front = float(c["emb"] @ front_center) if front_center is not None else 0.0
+            cross_vec = c.get("cross_emb", c["emb"])
+            sim_front = (
+                max(
+                    float(cross_vec @ front_center),
+                    max((float(cross_vec @ fc["emb"]) for fc in kept_frontal), default=-1.0),
+                    float(c["emb"] @ front_center),
+                )
+                if front_center is not None
+                else 0.0
+            )
             c["sim_center"] = round(min(sim_grp, sim_front) if len(items) > 1 else sim_front, 4)
             intra_ok = (len(items) == 1) or (sim_grp >= out_cos)
             cross_ok = (front_center is not None) and (sim_front >= cross_cos)
@@ -150,9 +159,15 @@ def process_enrollment(frames: list[np.ndarray], code: str, name: str, ctx) -> d
         grp = pose.pose_group if pose is not None else classify_pose_group(q.yaw, frontal_max=frontal_max)
         with ctx.engine_lock:
             emb = engine.embed_aligned(engine.align(fr, f, pose=pose, pose_group=grp))
+            cross_emb = (
+                engine.embed_aligned(engine.align(fr, f, pose=pose, pose_group="frontal"))
+                if grp != "frontal"
+                else emb
+            )
         cands.append({
             "idx": idx,
             "emb": emb,
+            "cross_emb": cross_emb,
             "q": q,
             "pose_group": grp,
             "bin": _pose_bin(q.yaw, q.pitch),
@@ -386,8 +401,14 @@ def backfill_legacy_embeddings(ctx) -> int:
             with ctx.engine_lock:
                 aligned = engine.align(padded, face, pose=pose, pose_group=grp)
                 emb = engine.embed_aligned(aligned)
+                cross_emb = (
+                    engine.embed_aligned(engine.align(padded, face, pose=pose, pose_group="frontal"))
+                    if grp != "frontal"
+                    else emb
+                )
             cands.append({
                 "emb": emb,
+                "cross_emb": cross_emb,
                 "q": q,
                 "bin": bin_name,
                 "pose_group": grp,

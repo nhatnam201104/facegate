@@ -469,3 +469,81 @@ def test_backfill_skips_no_face_validates_consistency_and_runs_in_background(env
             assert finished.is_set()
 
     asyncio.run(_check_lifespan_nonblocking())
+
+
+def test_deep_profile_step_passes_when_profile_template_shifts_embedding_space(env):
+    """Mô phỏng thực tế EdgeFace-XS: align(pose_group='right_profile') dùng TEMPLATE_RIGHT_PROFILE
+    nên vector đầu ra gần trực giao với front_emb (~0.09 < cross_pose_min_cosine), trong khi
+    vector căn chỉnh về cùng hệ quy chiếu 'frontal' giữ được đặc trưng danh tính của cùng 1 người."""
+    from app.guided import PROFILE_STEPS
+
+    ctx, cam = env
+
+    class TemplateAwareEngine:
+        name = "edgeface"
+        model_version = "tpl-shift-v1"
+
+        def detect(self, img):
+            yaw, pitch = cam.pose
+            le, re = np.array([100.0, 100.0]), np.array([140.0, 100.0])
+            nose = np.array([120.0 + yaw / 90.0 * 40.0, 100.0 + (pitch / 100.0 + 0.55) * 40.0])
+            kps = np.array([le, re, nose, [105, 140], [135, 140]], dtype=np.float32)
+            return [Face(bbox=np.array([70.0, 60.0, 170.0, 180.0]), score=0.99, kps=kps)]
+
+        def align(self, img, face, pose=None, pose_group=None):
+            grp = pose_group or "frontal"
+            tag = np.zeros((112, 112, 3), dtype=np.uint8)
+            tag[0, 0, 0] = {"frontal": 1, "left_profile": 2, "right_profile": 3}[grp]
+            return tag
+
+        def embed_aligned(self, aligned):
+            tpl_id = int(aligned[0, 0, 0])
+            person = getattr(cam, "person", "A")
+            if person == "B":
+                # Người B khác hoàn toàn ở mọi hệ quy chiếu
+                v = np.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float32)
+                if tpl_id == 2:
+                    v = np.array([0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0], dtype=np.float32)
+                elif tpl_id == 3:
+                    v = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0], dtype=np.float32)
+            else:
+                if tpl_id == 1:
+                    # Cùng hệ quy chiếu TEMPLATE_FRONTAL: ở góc ~80° của cùng người A vẫn đạt ~0.48
+                    yaw = abs(cam.pose[0])
+                    v = np.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float32) if yaw < 45 else np.array([0.48, 0.87, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float32)
+                elif tpl_id == 2:
+                    # Hệ quy chiếu TEMPLATE_LEFT_PROFILE chỉ đạt cosine ~0.09 với front_emb
+                    v = np.array([0.09, 0.995, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float32)
+                else:
+                    # Hệ quy chiếu TEMPLATE_RIGHT_PROFILE (bước 7/7) chỉ đạt cosine ~0.08 với front_emb
+                    v = np.array([0.08, 0.0, 0.996, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float32)
+            return v / np.linalg.norm(v)
+
+    ctx.engine = TemplateAwareEngine()
+    cam.person = "A"
+    g7 = GuidedSession(ctx, "NV_REAL7", "Nguoi That Quay 7 Buoc", profile_90=True).start()
+    for i, st in enumerate(STEPS + PROFILE_STEPS):
+        cam.pose = pose_for(st)
+        assert wait(lambda: g7.step > i or g7.state != "running", timeout=3.0), (
+            f"Bị kẹt ở bước {i + 1}/7 ({st.bin}): {g7.snapshot()}"
+        )
+    assert wait(lambda: g7.state == "done", timeout=3.0), g7.snapshot()
+    # Vector lưu vào gallery ở nhóm profile vẫn phải là vector của TEMPLATE_PROFILE (không lưu nhầm vector frontal)
+    prof_rows = [
+        r for r in ctx.db.load_gallery(ctx.engine.model_version, statuses=("pending", "active"))
+        if r["code"] == "NV_REAL7" and r["pose_group"] == "right_profile"
+    ]
+    assert len(prof_rows) == 1 and float(prof_rows[0]["vec"][2]) > 0.95
+
+    # Đồng thời kẻ mạo danh B nhảy vào bước 7/7 vẫn phải bị chặn
+    cam.person = "A"
+    g_imp = GuidedSession(ctx, "NV_IMP7", "Chan Nguoi La Buoc 7", profile_90=True).start()
+    for i, st in enumerate(STEPS + [PROFILE_STEPS[0]]):
+        cam.pose = pose_for(st)
+        assert wait(lambda: g_imp.step > i or g_imp.state != "running", timeout=3.0)
+    cam.person = "B"
+    cam.pose = pose_for(PROFILE_STEPS[1])
+    assert wait(lambda: "không khớp" in g_imp.snapshot()["hint"].lower(), timeout=2.0), g_imp.snapshot()
+    assert g_imp.step == 6
+    g_imp.cancel()
+    assert wait(lambda: g_imp.state == "cancelled")

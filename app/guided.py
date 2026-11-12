@@ -351,8 +351,23 @@ class GuidedSession:
             return None
         if step.pose_group == "frontal" and front_emb is not None and float(emb @ front_emb) < self.p["min_identity_cos"]:
             return "Khuôn mặt không khớp với bước đầu, chỉ một người thực hiện đăng ký"
-        if step.pose_group != "frontal" and front_emb is not None and float(emb @ front_emb) < self.cross_pose_cos:
-            return "Khuôn mặt góc nghiêng không khớp với bước đầu, chỉ một người thực hiện đăng ký"
+        if step.pose_group != "frontal" and front_emb is not None:
+            # emb của bước profile được căn chỉnh theo TEMPLATE_PROFILE nên lệch hệ quy chiếu với front_emb (TEMPLATE_FRONTAL).
+            # Đối chiếu danh tính chéo góc trên cùng hệ quy chiếu 'frontal' với các mẫu frontal đã xác nhận (gồm cả bán nghiêng ±25°).
+            with ctx.engine_lock:
+                canon_aligned = ctx.engine.align(
+                    best["frame"], best["face"], pose=best.get("pose"), pose_group="frontal"
+                )
+                canon_emb = ctx.engine.embed_aligned(canon_aligned)
+            frontal_refs = [front_emb] + [c["emb"] for c in self.picked if c["pose_group"] == "frontal"]
+            if self.supplement_only and self._verify_refs:
+                frontal_refs.extend(self._verify_refs)
+            best_cross_sim = max(
+                max(float(canon_emb @ ref) for ref in frontal_refs),
+                float(emb @ front_emb),
+            )
+            if best_cross_sim < self.cross_pose_cos:
+                return "Khuôn mặt góc nghiêng không khớp với bước đầu, chỉ một người thực hiện đăng ký"
         self.picked.append({
             "emb": emb,
             "q": best["q"],
