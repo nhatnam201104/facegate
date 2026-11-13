@@ -19,6 +19,10 @@
   </nav>
   <div class="status" id="statusLine">Đang kết nối…</div>
 </header>
+<div id="healthBanner" class="health-banner" hidden role="alert">
+  <span id="healthText">⚠ Cảnh báo hệ thống: Đang chuyển sang chế độ chấm công dự phòng</span>
+  <button type="button" class="btn" onclick="document.querySelector('nav button[data-tab=attendance]').click()">Mở Nhập bù Dự phòng</button>
+</div>
 
 <main>
   <!-- LIVE -->
@@ -43,7 +47,9 @@
     </div>
     <div class="live">
       <div class="video">
+        <video id="webrtcVideo" autoplay playsinline muted hidden></video>
         <img id="video" alt="Video trực tiếp">
+        <canvas id="overlayCanvas" class="overlay-canvas"></canvas>
         <div class="placeholder" id="videoPh">Đang kết nối nguồn video…</div>
         <svg id="zoneSvg" hidden aria-label="Vùng phát hiện chuyển động"></svg>
         <div class="zonebar" id="zoneBar" hidden>
@@ -102,7 +108,23 @@
     <div class="card">
       <h3>Chi tiết theo ngày</h3>
       <table><thead><tr><th>Ngày</th><th>Mã</th><th>Họ tên</th><th>Giờ check-in</th><th>Đi muộn</th>
-        <th>Trạng thái</th><th></th></tr></thead><tbody id="attBody"></tbody></table>
+        <th>Trạng thái</th><th>Hạng / Sổ cái</th></tr></thead><tbody id="attBody"></tbody></table>
+    </div>
+    <div class="cols">
+      <form class="card" id="manualAttForm">
+        <h3>Chấm công Dự phòng / Nhập bù (Fail-safe có Kiểm toán)</h3>
+        <label>Mã nhân viên <input name="employee_code" required placeholder="VD: NV001"></label>
+        <label>Ngày công <input type="date" name="work_date" required></label>
+        <label>Giờ vào thực tế <input type="time" name="effective_time" step="1" value="07:55:00" required></label>
+        <label>Lý do nhập bù (bắt buộc lưu sổ cái) <input name="reason" required placeholder="VD: Mất tín hiệu camera lúc 07:55"></label>
+        <button type="submit" class="primary">Ghi sổ cái &amp; Đẩy HRM</button>
+        <div id="manualAttMsg" class="msg"></div>
+      </form>
+      <div class="card">
+        <h3>Hàng chờ Hậu kiểm Ngoại lệ (Audit-by-Exception · 5%)</h3>
+        <table><thead><tr><th>Ngày</th><th>Mã</th><th>Giờ</th><th>Lý do gắn cờ</th><th>Xử lý</th></tr></thead>
+          <tbody id="auditQueueBody"></tbody></table>
+      </div>
     </div>
   </section>
 
@@ -183,10 +205,17 @@
 <div id="player" hidden role="dialog" aria-label="Xem clip">
   <div class="player-box">
     <div class="player-head"><b id="playerTitle"></b><span class="muted" id="playerSub"></span>
-      <a class="btn" id="playerDl" download>Tải clip</a><button class="btn" id="playerClose">Đóng ✕</button></div>
-    <video id="playerVideo" controls autoplay playsinline></video>
+      <a class="btn" id="playerDl" download>Tải MP4 gốc</a>
+      <button class="btn" id="playerBurninBtn" type="button">Xuất MP4 đóng dấu</button>
+      <button class="btn" id="playerClose">Đóng ✕</button></div>
+    <div style="position:relative">
+      <video id="playerVideo" controls autoplay playsinline></video>
+      <canvas id="playerCanvas" class="overlay-canvas"></canvas>
+    </div>
   </div>
 </div>
+<script src="/static/whep_canvas.js"></script>
+<script src="/static/guided_wasm.js"></script>
 <script src="/static/app.js"></script>
 <script src="/static/attendance.js"></script>
 <script src="/static/history.js"></script>

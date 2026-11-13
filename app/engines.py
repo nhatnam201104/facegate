@@ -17,6 +17,14 @@ ARCFACE_TEMPLATE = np.array(
     [[38.2946, 51.6963], [73.5318, 51.5014], [56.0252, 71.7366],
      [41.5493, 92.3655], [70.7299, 92.2041]], dtype=np.float32)
 
+TEMPLATE_FRONTAL = ARCFACE_TEMPLATE
+TEMPLATE_LEFT_PROFILE = np.array(
+    [[48.0, 48.0], [88.0, 52.0], [24.0, 68.0],
+     [40.0, 90.0], [78.0, 94.0]], dtype=np.float32)
+TEMPLATE_RIGHT_PROFILE = np.array(
+    [[24.0, 52.0], [64.0, 48.0], [88.0, 68.0],
+     [34.0, 94.0], [72.0, 90.0]], dtype=np.float32)
+
 
 @dataclass
 class Face:
@@ -43,11 +51,28 @@ def _order_kps(kps: np.ndarray) -> np.ndarray:
     return k
 
 
-def align_face(img: np.ndarray, kps: np.ndarray, size: int = 112) -> np.ndarray:
-    M, _ = cv2.estimateAffinePartial2D(kps.astype(np.float32), ARCFACE_TEMPLATE, method=cv2.LMEDS)
+def align_face(img: np.ndarray, kps: np.ndarray, size: int = 112,
+               template: np.ndarray = TEMPLATE_FRONTAL) -> np.ndarray:
+    dst = template * (size / 112.0)
+    M, _ = cv2.estimateAffinePartial2D(kps.astype(np.float32), dst, method=cv2.LMEDS)
     if M is None:
-        M = cv2.getAffineTransform(kps[:3].astype(np.float32), ARCFACE_TEMPLATE[:3])
+        M = cv2.getAffineTransform(kps[:3].astype(np.float32), dst[:3])
     return cv2.warpAffine(img, M, (size, size), borderValue=0)
+
+
+def align_by_pose(img: np.ndarray, face: Face, pose=None,
+                  pose_group: str | None = None, size: int = 112) -> np.ndarray:
+    grp = pose_group or (pose.pose_group if pose is not None else "frontal")
+    if pose is not None and pose.landmarks3d is not None and len(pose.landmarks3d) == 68:
+        pts = pose.landmarks3d[:, :2].astype(np.float32)
+        if grp == "left_profile":
+            src = np.stack([pts[42:48].mean(axis=0), pts[15], pts[30], pts[54], pts[12]], axis=0)
+            return align_face(img, src, size=size, template=TEMPLATE_LEFT_PROFILE)
+        if grp == "right_profile":
+            src = np.stack([pts[1], pts[36:42].mean(axis=0), pts[30], pts[4], pts[48]], axis=0)
+            return align_face(img, src, size=size, template=TEMPLATE_RIGHT_PROFILE)
+        return align_face(img, pose.kps5, size=size, template=TEMPLATE_FRONTAL)
+    return align_face(img, face.kps, size=size, template=TEMPLATE_FRONTAL)
 
 
 def _l2n(v: np.ndarray) -> np.ndarray:
@@ -84,14 +109,20 @@ class OpenCVEngine:
             faces.append(Face(np.array([x, y, x + bw, y + bh], np.float32), float(r[14]), kps))
         return faces
 
-    def align(self, img: np.ndarray, face: Face) -> np.ndarray:
-        # Dung alignCrop cua SFace (dung template ma model duoc train)
+    def align(self, img: np.ndarray, face: Face, pose=None, pose_group: str | None = None) -> np.ndarray:
+        grp = pose_group or (pose.pose_group if pose is not None else "frontal")
+        if grp != "frontal":
+            return align_by_pose(img, face, pose=pose, pose_group=grp, size=112)
         x1, y1, x2, y2 = face.bbox
-        row = np.concatenate([[x1, y1, x2 - x1, y2 - y1], face.kps.ravel(), [face.score]]).astype(np.float32)
+        kps = pose.kps5 if pose is not None else face.kps
+        row = np.concatenate([[x1, y1, x2 - x1, y2 - y1], kps.ravel(), [face.score]]).astype(np.float32)
         return self.recognizer.alignCrop(img, row)
 
     def embed_aligned(self, aligned: np.ndarray) -> np.ndarray:
         return _l2n(self.recognizer.feature(aligned))
+
+    def embed_batch(self, aligned_list: list[np.ndarray]) -> list[np.ndarray]:
+        return [self.embed_aligned(a) for a in aligned_list]
 
 
 class OnnxEngine:
@@ -168,18 +199,90 @@ class OnnxEngine:
         return [Face(boxes[i].astype(np.float32), float(scores[i]), _order_kps(kpss[i])) for i in idx]
 
     # --- ArcFace ---
-    def align(self, img: np.ndarray, face: Face) -> np.ndarray:
-        return align_face(img, face.kps)
+    def align(self, img: np.ndarray, face: Face, pose=None, pose_group: str | None = None) -> np.ndarray:
+        return align_by_pose(img, face, pose=pose, pose_group=pose_group, size=112)
 
     def embed_aligned(self, aligned: np.ndarray) -> np.ndarray:
         blob = cv2.dnn.blobFromImage(aligned, 1 / 127.5, (112, 112), (127.5, 127.5, 127.5), swapRB=True)
         return _l2n(self.rec.run(None, {self.rec_in: blob})[0])
 
+    def embed_batch(self, aligned_list: list[np.ndarray]) -> list[np.ndarray]:
+        return [self.embed_aligned(a) for a in aligned_list]
+
+
+def _resolve_ort_providers(ep: str) -> list[str]:
+    import onnxruntime as ort
+    avail = set(ort.get_available_providers())
+    if ep == "openvino" and "OpenVINOExecutionProvider" in avail:
+        return ["OpenVINOExecutionProvider", "CPUExecutionProvider"]
+    return ["CPUExecutionProvider"]
+
+
+class EdgeFaceEngine:
+    """YuNet (Apache-2.0) + EdgeFace-XS (MIT) tren FP32 CPU/OpenVINO, ho tro batch 10 khuon mat (T016, T029)."""
+    name = "edgeface"
+    model_version = "yunet2023mar+edgeface_xs_gamma_06"
+
+    def __init__(self, models_dir: Path, det_score: float = 0.55, execution_provider: str = "cpu"):
+        import onnxruntime as ort
+
+        det = models_dir / "face_detection_yunet_2023mar.onnx"
+        rec = models_dir / "edgeface_xs_gamma_06.onnx"
+        for p in (det, rec):
+            if not p.exists():
+                raise FileNotFoundError(f"Thieu model {p.name}. Chay: python scripts/download_models.py")
+        self.detector = cv2.FaceDetectorYN.create(str(det), "", (320, 320), det_score, 0.3, 5000)
+        self._size = (0, 0)
+        so = ort.SessionOptions()
+        so.log_severity_level = 3
+        self.rec = ort.InferenceSession(str(rec), so, providers=_resolve_ort_providers(execution_provider))
+        self.rec_in = self.rec.get_inputs()[0].name
+
+    def detect(self, img: np.ndarray) -> list[Face]:
+        h, w = img.shape[:2]
+        if (w, h) != self._size:
+            self.detector.setInputSize((w, h))
+            self._size = (w, h)
+        _, rows = self.detector.detect(img)
+        if rows is None:
+            return []
+        out = []
+        for r in rows:
+            x, y, bw, bh = r[:4]
+            kps = _order_kps(r[4:14].reshape(5, 2))
+            out.append(Face(np.array([x, y, x + bw, y + bh], np.float32), float(r[14]), kps))
+        return out
+
+    def align(self, img: np.ndarray, face: Face, pose=None, pose_group: str | None = None) -> np.ndarray:
+        return align_by_pose(img, face, pose=pose, pose_group=pose_group, size=112)
+
+    def embed_aligned(self, aligned: np.ndarray) -> np.ndarray:
+        blob = cv2.dnn.blobFromImage(aligned, 1.0 / 127.5, (112, 112), (127.5, 127.5, 127.5), swapRB=True)
+        return _l2n(self.rec.run(None, {self.rec_in: blob})[0])
+
+    def embed_batch(self, aligned_list: list[np.ndarray]) -> list[np.ndarray]:
+        if not aligned_list:
+            return []
+        blobs = np.concatenate(
+            [cv2.dnn.blobFromImage(a, 1.0 / 127.5, (112, 112), (127.5, 127.5, 127.5), swapRB=True) for a in aligned_list],
+            axis=0,
+        )
+        try:
+            outs = self.rec.run(None, {self.rec_in: blobs})[0]
+            if outs.shape[0] == len(aligned_list):
+                return [_l2n(outs[i]) for i in range(len(aligned_list))]
+        except Exception:  # noqa: BLE001
+            pass
+        return [self.embed_aligned(a) for a in aligned_list]
+
 
 def create_engine(cfg: dict):
     backend = cfg["pipeline"]["backend"]
     models = cfg["_paths"]["models"]
-    score = cfg["pipeline"]["det_score"]
+    score = float(cfg["pipeline"]["det_score"])
+    ep = str(cfg["pipeline"].get("execution_provider", "cpu"))
+    if backend == "edgeface":
+        return EdgeFaceEngine(models, score, execution_provider=ep)
     if backend == "opencv":
         return OpenCVEngine(models, score)
     if backend == "onnx":

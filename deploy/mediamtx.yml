@@ -1,0 +1,32 @@
+# Cau hinh MediaMTX (MIT) cho FaceGate v4 tren TP-Link Tapo C310
+# Single RTSP Puller (H20) + Loc sach audio pcm_alaw (-an, H28) + WebRTC WHEP (P1) + tmpfs fMP4 (H24)
+
+rtspAddress: 127.0.0.1:8554
+webrtcAddress: :8889
+playback: yes
+playbackAddress: 127.0.0.1:9996
+
+paths:
+  gate1_main:
+    # Keo dung 1 ket noi /stream1 (2304x1296@15fps) va loai bo hoan toan audio G.711 pcm_alaw (-an)
+    runOnInit: >-
+      ffmpeg -hide_banner -loglevel warning -rtsp_transport tcp
+      -i rtsp://${CAM_USER}:${CAM_PASS}@${CAM_IP}:554/stream1
+      -map 0:v:0 -c:v copy -an -f rtsp rtsp://127.0.0.1:8554/gate1_main
+    runOnInitRestart: yes
+    # Vong dem fMP4 1s tren RAM tmpfs (${FACEGATE_RING_DIR}) tu xoa sau 10 phut (~300 MB/camera)
+    record: yes
+    recordPath: ${FACEGATE_RING_DIR}/%path/%Y-%m-%d_%H-%M-%S-%f
+    recordFormat: fmp4
+    recordPartDuration: 500ms
+    recordSegmentDuration: 1s
+    recordDeleteAfter: 10m
+
+  gate1_sub:
+    # Keo dung 1 ket noi /stream2 (640x360@15fps) chi phuc vu canh ngu ngoai gio cao diem
+    runOnInit: >-
+      ffmpeg -hide_banner -loglevel warning -rtsp_transport tcp
+      -i rtsp://${CAM_USER}:${CAM_PASS}@${CAM_IP}:554/stream2
+      -map 0:v:0 -c:v copy -an -f rtsp rtsp://127.0.0.1:8554/gate1_sub
+    runOnInitRestart: yes
+    record: no

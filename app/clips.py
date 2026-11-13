@@ -25,7 +25,6 @@ log = logging.getLogger("clips")
 # WebM/VP8,VP9 phat truc tiep tren trinh duyet (Linux/Windows); mp4 du phong
 FORMATS = (("webm", "VP80"), ("webm", "VP90"), ("mp4", "avc1"), ("mp4", "mp4v"))
 QUEUE_MAX = 900
-CLEANUP_EVERY = 3600.0
 
 
 class _Session:
@@ -177,11 +176,8 @@ class ClipRecorder:
 
     def _writer(self) -> None:
         state: dict[int, list] = {}   # sid -> [writer, file, n_frames]
-        last_cleanup = 0.0
+        # Khong tu don dep o day: cleanup_clips_safe (app/media_clips.py) la duong duy nhat va ton trong legal_hold (CR5).
         while not (self._stop.is_set() and self._q.empty()):
-            if time.time() - last_cleanup > CLEANUP_EVERY:
-                last_cleanup = time.time()
-                self._cleanup()
             try:
                 item = self._q.get(timeout=0.5)
             except queue.Empty:  # nguon video dung gui frame: van phai dong clip dung han
@@ -216,18 +212,3 @@ class ClipRecorder:
                 if ses.decided:
                     self._finish(ses)
 
-    def _cleanup(self) -> None:
-        """Xoa clip qua han luu tru (du lieu sinh trac hoc - khong giu vo thoi han)."""
-        if self.retention_days <= 0 or not self.dir.exists():
-            return
-        cutoff = time.time() - self.retention_days * 86400
-        n = 0
-        for f in self.dir.glob("*/*.*"):
-            if f.stat().st_mtime < cutoff:
-                f.unlink(missing_ok=True)
-                n += 1
-        for d in self.dir.iterdir():
-            if d.is_dir() and not any(d.iterdir()):
-                d.rmdir()
-        if n:
-            log.info("Da xoa %d clip qua %g ngay", n, self.retention_days)

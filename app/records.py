@@ -8,12 +8,15 @@ import zipfile
 from datetime import date, datetime
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Body, HTTPException, Request
 from fastapi.responses import FileResponse, Response
 from starlette.background import BackgroundTask
 
 from .attendance import MAX_DAYS, day_range, timesheet, today_stats
-from .state import ctx
+from .ledger import list_audit_queue, record_manual_checkin, resolve_audit_item, revoke_checkin
+from .media_clips import render_burnin_mp4
+from .security import require_role
+from .state import bc, ctx
 
 router = APIRouter()
 
@@ -77,6 +80,74 @@ def attendance_today():
     return today_stats(ctx.db, ctx.shift)
 
 
+@router.get("/api/attendance/audit-queue")
+def attendance_audit_queue(request: Request, date_from: str | None = None, date_to: str | None = None):
+    require_role(request, ctx.cfg, min_role="hr")
+    return list_audit_queue(ctx.db, date_from, date_to)
+
+
+@router.post("/api/attendance/revoke")
+def attendance_revoke(request: Request, payload: dict = Body(...)):
+    actor = require_role(request, ctx.cfg, min_role="hr")
+    try:
+        lid = revoke_checkin(
+            ctx.db,
+            target_ledger_id=int(payload["target_ledger_id"]),
+            idempotency_key=str(payload.get("idempotency_key") or f"rev-{payload['target_ledger_id']}-{int(datetime.now().timestamp())}"),
+            reason=str(payload.get("reason") or ""),
+            actor=actor,
+            ip_addr=request.client.host if request.client else None,
+        )
+    except LookupError as e:
+        raise HTTPException(404, str(e))
+    except (KeyError, ValueError, TypeError) as e:
+        raise HTTPException(400, str(e))
+    ctx.hrm.notify()
+    bc({"type": "event", "event": {"kind": "revoked", "ts": datetime.now().timestamp()}})
+    return {"ok": True, "revoke_ledger_id": lid}
+
+
+@router.post("/api/attendance/manual")
+def attendance_manual(request: Request, payload: dict = Body(...)):
+    actor = require_role(request, ctx.cfg, min_role="hr")
+    try:
+        lid = record_manual_checkin(
+            ctx.db,
+            employee_code=str(payload["employee_code"]),
+            work_date=str(payload["work_date"]),
+            effective_time=str(payload["effective_time"]),
+            idempotency_key=str(payload.get("idempotency_key") or f"manual-{payload['employee_code']}-{payload['work_date']}"),
+            reason=str(payload.get("reason") or ""),
+            actor=actor,
+            ip_addr=request.client.host if request.client else None,
+        )
+    except LookupError as e:
+        raise HTTPException(404, str(e))
+    except (KeyError, ValueError, TypeError) as e:
+        raise HTTPException(400, str(e))
+    ctx.hrm.notify()
+    return {"ok": True, "ledger_id": lid}
+
+
+@router.post("/api/attendance/audit-resolve/{ledger_id}")
+def attendance_audit_resolve(ledger_id: int, request: Request, payload: dict = Body(...)):
+    actor = require_role(request, ctx.cfg, min_role="hr")
+    try:
+        res = resolve_audit_item(
+            ctx.db, ledger_id,
+            confirm=bool(payload.get("confirm", True)),
+            reason=str(payload.get("reason") or ""),
+            actor=actor,
+            ip_addr=request.client.host if request.client else None,
+        )
+    except LookupError as e:
+        raise HTTPException(404, str(e))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    ctx.hrm.notify()
+    return res
+
+
 # ---------------------------------------------------------- lich su xuat hien
 @router.get("/api/people")
 def people():
@@ -97,7 +168,52 @@ def _appearances(date_from, date_to, code, kind, limit) -> list[dict]:
     for r in rows:
         r["duration"] = round(r["end_ts"] - r["start_ts"], 1)
         r["clip_ok"] = bool(r["clip"]) and (data / r["clip"]).is_file()
+        sc_rel = r.get("sidecar_path") or (Path(r["clip"]).with_suffix(".meta.json").as_posix() if r.get("clip") else None)
+        r["sidecar_ok"] = bool(sc_rel) and (data / sc_rel).is_file()
+        r["sidecar"] = sc_rel if r["sidecar_ok"] else None
     return rows
+
+
+@router.post("/api/appearances/{app_id}/legal-hold")
+def toggle_appearance_legal_hold(app_id: int, request: Request, payload: dict = Body(...)):
+    actor = require_role(request, ctx.cfg, min_role="hr")
+    rows = ctx.db.q("SELECT id FROM appearances WHERE id=?", (app_id,))
+    if not rows:
+        raise HTTPException(404, "Không tìm thấy bản ghi lịch sử")
+    hold = bool(payload.get("hold", True))
+    reason = str(payload.get("reason") or "").strip() or None
+    if hold and not reason:
+        raise HTTPException(400, "Phải nhập lý do khi bật khóa bảo vệ clip (legal_hold)")
+    ctx.db.set_legal_hold(app_id, hold, reason)
+    ctx.db.add_audit_log(actor, "set_legal_hold", "appearances", str(app_id),
+                         {"hold": hold, "reason": reason}, ip_addr=request.client.host if request.client else None)
+    return {"ok": True, "id": app_id, "legal_hold": int(hold), "legal_hold_reason": reason}
+
+
+@router.post("/api/appearances/{app_id}/export-burnin")
+def export_appearance_burnin(app_id: int, request: Request):
+    actor = require_role(request, ctx.cfg, min_role="hr")
+    rows = ctx.db.q("SELECT * FROM appearances WHERE id=?", (app_id,))
+    if not rows or not rows[0].get("clip"):
+        raise HTTPException(404, "Không tìm thấy clip gốc cho lượt xuất hiện này")
+    r = rows[0]
+    data_root: Path = ctx.cfg["_paths"]["data"]
+    mp4_p = data_root / r["clip"]
+    sc_rel = r.get("sidecar_path") or Path(r["clip"]).with_suffix(".meta.json").as_posix()
+    sc_p = data_root / sc_rel
+    tmp_out = ctx.cfg["_paths"]["uploads"] / f"burnin_{app_id}_{int(datetime.now().timestamp())}.mp4"
+    try:
+        render_burnin_mp4(mp4_p, sc_p, tmp_out, cfg=ctx.cfg)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(500, f"Không thể kết xuất MP4 burn-in: {e}")
+    ctx.db.add_audit_log(actor, "export_burnin_mp4", "appearances", str(app_id),
+                         {"clip": r["clip"]}, ip_addr=request.client.host if request.client else None)
+    return FileResponse(
+        tmp_out, media_type="video/mp4", filename=f"bang_chung_{r.get('code') or r['kind']}_{app_id}.mp4",
+        background=BackgroundTask(lambda: tmp_out.unlink(missing_ok=True)),
+    )
 
 
 @router.get("/api/appearances")

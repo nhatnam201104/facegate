@@ -111,16 +111,25 @@ Chi tiết từng bước ở mục 7 của [docs/GIOI_THIEU_DU_AN.html](docs/GI
 
 ---
 
-## Công nghệ (tóm tắt)
+## Công nghệ & Kiến trúc v4 (Chuẩn hóa cho TP-Link Tapo C310 & Máy chủ)
 
-Python + FastAPI · OpenCV (YuNet phát hiện mặt, SFace nhận diện) · MiniFASNet chống giả mạo · SQLite · giao diện web HTML/JS thuần. Các model dùng mặc định có license Apache-2.0, **dùng thương mại được**. Bộ model InsightFace (SCRFD/ArcFace) trong repo chỉ dùng để so sánh vì license chỉ cho phép nghiên cứu.
+- **3 Mặt phẳng độc lập**:
+  1. **Media Plane (`deploy/mediamtx.yml`)**: `MediaMTX` (MIT) làm Single RTSP Puller, lọc bỏ hoàn toàn kênh âm thanh `pcm_alaw` (`-map 0:v:0 -c:v copy -an`), phát trực tiếp WebRTC (WHEP) kèm lớp phủ `<canvas>` đồng bộ `requestVideoFrameCallback`, và ghi vòng đệm `fMP4` 1 giây lên `tmpfs` RAM để trích xuất clip MP4 gốc kèm sidecar `.meta.json` ký `HMAC-SHA256` (có xuất MP4 burn-in theo yêu cầu).
+  2. **Perception Process (`app/worker_perception.py`)**: Chạy trong tiến trình riêng cô lập lỗi (`FACEGATE_ISOLATED_WORKER=1 ./run.sh`), giữ nóng giải mã `/stream1` 3MP theo **Lịch thức ca làm việc**, cắt ROI Đầu–Vai tỷ lệ 1:1 ngay trên cùng khung `2304×1296`, tích lũy điểm liên tục `LLR` 4 tham số tuân thủ rào cứng `threshold + margin μ(yaw)`, và kích hoạt `Crossing Quarantine` chống tráo tên khi mặc đồng phục đi giao cắt.
+  3. **Control & Business Plane (`app/main.py`, `app/ledger.py`, `app/security.py`)**: Sổ cái chấm công bất biến `attendance_ledger` (`checkin_created` / `checkin_revoked` / `checkin_manual`), hậu kiểm ngoại lệ 5%, đồng bộ tạo/hủy chứng từ hai chiều với ERPNext, bảo vệ clip khiếu nại `legal_hold`, cảnh báo Fail-safe `/api/health`, phân quyền RBAC 3 vai trò và mã hóa sinh trắc học ở trạng thái nghỉ `AES-256-GCM`.
+- Các mô hình vận hành mặc định (`YuNet`, `EdgeFace-XS`, `3DDFA_V2`, `YOLOX-Nano`, `MiniFASNet`) đều có giấy phép thương mại hóa được (**Apache-2.0 / MIT**).
 
 ## Cấu trúc tài liệu
 
 ```
-README.md                      ← bạn đang ở đây (tổng quan cho PM)
-docs/GIOI_THIEU_DU_AN.html     ← giới thiệu đầy đủ: kiến trúc, công nghệ, so với đề xuất, rủi ro
-docs/HUONG_DAN_KY_THUAT.md     ← cài đặt, cấu hình, kịch bản demo, cấu trúc mã nguồn
-config.yaml                    ← mọi thông số (ngưỡng, giờ vào ca, nguồn video…)
-app/                           ← mã nguồn
+README.md                                    ← tổng quan hệ thống & kiến trúc v4
+deploy/vlan-ntp-chrony.md                    ← trình tự lắp đặt Tapo C310 (RJ45, Day Mode, VLAN + chrony NTP)
+deploy/mediamtx.yml                          ← cấu hình MediaMTX Single Puller, lọc -an & tmpfs fMP4
+docs/BAO_CAO_K0_5_PM.md                      ← khung báo cáo số liệu K0 & 4 câu hỏi chốt với PM tại K0.5
+docs/PHAN_BIEN_KIEN_TRUC.md                  ← biên bản 6 vòng phản biện kiến trúc đóng 35/35 lỗ hổng
+docs/GIOI_THIEU_DU_AN.html                   ← giới thiệu nghiệp vụ, so sánh phương án, giới hạn PoC
+docs/HUONG_DAN_KY_THUAT.html                 ← hướng dẫn cài đặt, benchmark, vận hành & cấu trúc mã nguồn
+specs/003-clean-slate-architecture-v4/       ← hồ sơ SpecKit đầy đủ (spec, plan, research, data-model, tasks)
+config.yaml                                  ← cấu hình trung tâm
+app/                                         ← mã nguồn chính
 ```

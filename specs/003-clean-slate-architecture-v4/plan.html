@@ -1,0 +1,368 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FaceGate SpecKit Plan v4 · Tái Kiến trúc Toàn diện (Tapo C310 & Multi-Plane)</title>
+<style>
+  :root {
+    --bg: #0f172a;
+    --panel: #1e293b;
+    --panel-alt: #162033;
+    --border: #334155;
+    --text: #f1f5f9;
+    --muted: #94a3b8;
+    --accent: #38bdf8;
+    --ok: #22c55e;
+    --warn: #f59e0b;
+    --danger: #ef4444;
+    --purple: #a78bfa;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, Ubuntu, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+  }
+  header {
+    background: linear-gradient(135deg, #0f172a 0%, #1e293b 52%, #0c4a6e 100%);
+    border-bottom: 1px solid var(--border);
+    padding: 28px 24px;
+  }
+  .wrap { max-width: 1220px; margin: 0 auto; padding: 0 20px; }
+  .badges { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+  .badge {
+    font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: 999px;
+    background: rgba(56, 189, 248, 0.14); color: var(--accent); border: 1px solid rgba(56, 189, 248, 0.35);
+  }
+  .badge.ok { background: rgba(34, 197, 94, 0.15); color: #4ade80; border-color: rgba(34, 197, 94, 0.35); }
+  .badge.warn { background: rgba(245, 158, 11, 0.15); color: #fbbf24; border-color: rgba(245, 158, 11, 0.35); }
+  .badge.purple { background: rgba(167, 139, 250, 0.15); color: #c4b5fd; border-color: rgba(167, 139, 250, 0.35); }
+  h1 { margin: 4px 0 8px; font-size: 25px; }
+  h2 { font-size: 18.5px; margin: 0 0 14px; color: #e2e8f0; display: flex; align-items: center; gap: 8px; }
+  h3 { font-size: 15px; margin: 14px 0 6px; color: var(--accent); }
+  p.lead { margin: 0; color: #cbd5e1; max-width: 1040px; font-size: 14.5px; }
+  main { padding: 24px 0 56px; }
+  .grid { display: grid; gap: 18px; margin-bottom: 20px; }
+  .cols-4 { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+  .cols-2 { grid-template-columns: repeat(auto-fit, minmax(460px, 1fr)); }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 18px 20px;
+  }
+  .kpi b { display: block; font-size: 23px; color: var(--accent); }
+  .kpi span { font-size: 13px; color: var(--muted); }
+  table { width: 100%; border-collapse: collapse; font-size: 13.3px; }
+  th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; background: var(--panel-alt); }
+  code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 12px; background: rgba(15, 23, 42, 0.65); padding: 2px 6px; border-radius: 5px; color: #7dd3fc;
+  }
+  .diagram-box {
+    background: #0b1220; border: 1px solid var(--border); border-radius: 10px; padding: 16px; overflow-x: auto;
+  }
+  .tag-new { color: #4ade80; font-weight: 600; }
+  .tag-mod { color: #fbbf24; font-weight: 600; }
+  .tag-pm { color: #c4b5fd; font-weight: 600; }
+  .phase-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(265px, 1fr)); gap: 14px; }
+  .phase { background: var(--panel-alt); border: 1px solid var(--border); border-radius: 10px; padding: 14px; }
+  .phase b { color: var(--accent); display: block; margin-bottom: 6px; font-size: 14px; }
+  .phase .est { font-size: 12px; color: #fbbf24; margin-bottom: 6px; display: block; }
+  .phase ul { margin: 0; padding-left: 18px; font-size: 13px; color: #cbd5e1; }
+  .check-row { display: flex; align-items: flex-start; gap: 10px; padding: 8px 0; border-bottom: 1px dashed var(--border); font-size: 13.8px; }
+  .check-row:last-child { border-bottom: 0; }
+  .sign-box {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; margin-top: 14px;
+  }
+  .sign-box input, .sign-box select {
+    width: 100%; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border);
+    background: #0b1220; color: var(--text); font-size: 13.5px;
+  }
+  .btn {
+    margin-top: 12px; background: #0284c7; color: #fff; border: 0; border-radius: 8px;
+    padding: 9px 16px; font-weight: 600; cursor: pointer;
+  }
+  .btn:hover { background: #0369a1; }
+  .saved-note { margin-left: 10px; font-size: 13px; color: #4ade80; }
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <div class="badges">
+      <span class="badge">SpecKit Plan · 003-clean-slate-architecture-v4</span>
+      <span class="badge ok">Dual-Review Converged: 35/35 Issues Closed</span>
+      <span class="badge ok">Constitution Gate: 5/5 PASS</span>
+      <span class="badge warn">Hardware Profile: TP-Link Tapo C310 (3MP@15fps · RJ45)</span>
+      <span class="badge purple">KG Baseline: 5 Layers · 106 Nodes · 114 Edges</span>
+    </div>
+    <h1>Kế hoạch Tái Kiến trúc Toàn diện FaceGate v4 (Chuẩn hóa Tapo C310 &amp; Vận hành Máy chủ)</h1>
+    <p class="lead">
+      Tổng hợp hoàn chỉnh từ 6 vòng phản biện kỹ thuật (<code>docs/PHAN_BIEN_KIEN_TRUC.md</code>): tách hệ thống thành <b>3 Mặt phẳng độc lập</b> (<b>MediaMTX Passthrough</b> + <b>Fault-Isolated Perception Process</b> + <b>Append-Only Control Plane</b>), xử lý triệt để giới hạn vật lý của <b>TP-Link Tapo C310</b> (cắt ROI 1:1 cùng khung 3MP, lịch thức theo ca chống trễ GOP, lọc sạch audio <code>pcm_alaw</code>, khóa <code>Day Mode</code> + VLAN NTP) và sẵn sàng mở rộng sang Phase 2 nhận diện hàng hóa/SKU.
+    </p>
+  </div>
+</header>
+
+<main class="wrap">
+  <section class="grid cols-4">
+    <div class="card kpi"><b>35 / 35 Đã khóa</b><span>31 chốt kỹ thuật + 4 cổng quyết định PM tại K0/K0.5 (0 lỗ hổng mở)</span></div>
+    <div class="card kpi"><b>~0% Re-encode</b><span>WebRTC WHEP + cắt fMP4 từ tmpfs RAM, tách sạch audio G.711 (-an)</span></div>
+    <div class="card kpi"><b>3MP 1:1 ROI</b><span>Detect người &amp; cắt Đầu–Vai ngay trên cùng khung /stream1 (Δt = 0 ms)</span></div>
+    <div class="card kpi"><b>Append-Only HRM</b><span>Sổ cái tạo/thu hồi/nhập bù idempotent + khóa bảo vệ clip legal_hold</span></div>
+  </section>
+
+  <section class="card" style="margin-bottom:18px">
+    <h2>1. Sơ đồ Kiến trúc 3 Mặt phẳng Độc lập (Chuẩn hóa cho TP-Link Tapo C310)</h2>
+    <div class="diagram-box">
+      <pre class="mermaid">
+flowchart LR
+  subgraph HW["Hiện trường Cổng (VLAN Cô lập)"]
+    CAM["Tapo C310 (RJ45 · Day Mode · ≥250 lux)<br/>stream1: 2304x1296@15fps | stream2: 640x360"]
+    NTP_DNAT["Firewall DNAT UDP 123"]
+  end
+
+  subgraph MP["1. Media Plane (MediaMTX - MIT)"]
+    FF_ING["FFmpeg Ingest (-c:v copy -an)<br/>Loại bỏ 100% audio pcm_alaw"]
+    MTX["MediaMTX Core<br/>Single RTSP Puller"]
+    TMPFS["tmpfs RAM Ring-Buffer<br/>fMP4 1s · Tự xóa ≤ 10m (~300MB)"]
+  end
+
+  subgraph PP["2. Perception Process (Cô lập lỗi)"]
+    SCHED["Lịch thức theo ca (0ms chờ GOP)<br/>Ngủ ngoài giờ trên stream2"]
+    ROI["Resize 640px tìm người -> Cắt ROI 1:1<br/>trên cùng khung 3MP (Δt=0ms)"]
+    DEC["LLR Liên tục 4 tham số + Novelty Gate<br/>Threshold + Margin μ(yaw) + Quarantine"]
+  end
+
+  subgraph CP["3. Control & Business Plane (FastAPI)"]
+    API["WebSocket Relay + Health + RBAC"]
+    LEDGER["SQLite WAL / PG Append-Only Ledger<br/>(created / revoked / manual + legal_hold)"]
+    CLIP["Playback /get -> MP4 sạch + Sidecar HMAC<br/>+ Xuất Burn-in FFmpeg theo yêu cầu"]
+    HRM["HRM Outbox 2 chiều (ERPNext)"]
+  end
+
+  subgraph UI["Trình duyệt (HTML/JS Thuần)"]
+    VIEW["WebRTC WHEP Video (13-15 fps)<br/>+ Canvas 2D (receiveTime + offset)"]
+    WASM["Tab Đăng ký: MediaPipe WASM 0ms<br/>(Ảnh mẫu chụp từ Camera cổng)"]
+  end
+
+  CAM -->|RTSP TCP| FF_ING --> MTX
+  NTP_DNAT -.->|Đồng bộ giờ nội bộ| CP
+  MTX --> TMPFS
+  MTX -->|WebRTC WHEP| VIEW
+  MTX -->|Local RTSP| SCHED --> ROI --> DEC
+  DEC -->|NDJSON Socket: TrackedObject + Heartbeat| API
+  API -->|WS Metadata| VIEW
+  API --> LEDGER --> HRM
+  TMPFS -->|HTTP Playback| CLIP --> LEDGER
+  WASM -->|Gửi lệnh chụp mẫu gốc| API
+      </pre>
+    </div>
+  </section>
+
+  <div class="grid cols-2">
+    <section class="card">
+      <h2>2. Máy Trạng thái Quyết định &amp; Crossing Quarantine (<code>K2</code>–<code>K3</code>)</h2>
+      <div class="diagram-box">
+        <pre class="mermaid">
+stateDiagram-v2
+  [*] --> SEEN
+  SEEN --> COLLECTING: Đạt chất lượng &amp; Novelty Gate
+  COLLECTING --> QUARANTINED: Giao cắt hộp (IoU &gt; 0.25)
+  IDENTIFIED --> QUARANTINED: Giao cắt hộp (Xóa mẫu giao cắt)
+  QUARANTINED --> COLLECTING: Tách nhau (Xác thực lại từ đầu)
+  COLLECTING --> IDENTIFIED: LLR_1 &gt;= tau &amp; Margin &gt;= mu(yaw)
+  COLLECTING --> UNKNOWN: Hết track chưa vượt rào
+  IDENTIFIED --> LIVE_CONFIRMED: Vượt cổng Liveness
+  IDENTIFIED --> REJECTED_SPOOF: Phát hiện PAI / Spoof
+  LIVE_CONFIRMED --> COMMITTED: Ghi sổ cái + Cắt clip
+        </pre>
+      </div>
+      <p style="font-size:13px;color:var(--muted);margin:10px 0 0">
+        Tuân thủ chặt <b>Nguyên tắc I Constitution</b>: biên độ cách biệt <code>μ(yaw) = μ0 + μ1·|yaw|/90°</code> tự động siết chặt ở góc nghiêng mà xóa bỏ lỗi nhảy ngăn tại biên 40°. Khi hộp mặt chạm đáy ảnh (<code>y2 ≥ 0.80·H</code>), tự tắt phạt <code>unattached_face</code>.
+      </p>
+    </section>
+
+    <section class="card">
+      <h2>3. Bản đồ Tác động trên Knowledge Graph (5 Lớp · 106 Nodes)</h2>
+      <table>
+        <thead>
+          <tr><th>Lớp kiến trúc (<code>knowledge-graph.json</code>)</th><th>Mức độ thay đổi</th><th>Định hướng tái cấu trúc v4</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><b>Lớp Media Mới</b><br/><code>deploy/mediamtx.yml</code>, <code>app/media_clips.py</code></td>
+            <td><span class="tag-new">Thêm mới (K1)</span></td>
+            <td>Thay thế MJPEG &amp; <code>cv2.VideoWriter</code> bằng MediaMTX WHEP + <code>tmpfs</code> fMP4 Playback + lọc <code>-an</code> chặn <code>pcm_alaw</code> + sidecar ký HMAC.</td>
+          </tr>
+          <tr>
+            <td><b>Xử lý nhận diện</b><br/><code>worker_perception.py</code>, <code>decision.py</code>, <code>tracker.py</code></td>
+            <td><span class="tag-mod">Tách Process (K2–K4)</span></td>
+            <td>Tách khỏi process API; lịch thức theo ca; cắt ROI 1:1 cùng khung 3MP; hàm LLR liên tục; Crossing Quarantine chống đồng phục.</td>
+          </tr>
+          <tr>
+            <td><b>Nghiệp vụ &amp; Lưu trữ</b><br/><code>ledger.py</code>, <code>db.py</code>, <code>hrm.py</code></td>
+            <td><span class="tag-mod">Nâng cấp 2 chiều (K2)</span></td>
+            <td>Sổ cái <code>attendance_ledger</code> append-only, lưu <code>remote_doc_id</code> hủy chứng từ ERPNext, Audit-by-Exception 5%, bảo vệ clip <code>legal_hold</code>.</td>
+          </tr>
+          <tr>
+            <td><b>API &amp; Trạng thái chung</b><br/><code>main.py</code>, <code>ipc.py</code>, <code>enrollment.py</code></td>
+            <td><span class="tag-mod">Cô lập khóa (K2/K5)</span></td>
+            <td>Nhận <code>TrackedObject</code> + heartbeat qua IPC Socket; bỏ <code>engine_lock</code> chung; thêm <code>/api/health</code>, kênh dự phòng &amp; RBAC ở K5.</td>
+          </tr>
+          <tr>
+            <td><b>Giao diện Web</b><br/><code>whep_canvas.js</code>, <code>guided_wasm.js</code>, <code>app.js</code></td>
+            <td><span class="tag-mod">Giữ Vanilla JS (K1/K4)</span></td>
+            <td>Vẽ hộp tiếng Việt trên <code>&lt;canvas&gt;</code> khớp <code>receiveTime + overlay_offset_ms</code>; soi gương đăng ký bằng MediaPipe WASM 0 ms.</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+  </div>
+
+  <section class="card" style="margin-bottom:18px">
+    <h2>4. Lộ trình Thực thi K0 → K5 &amp; Cổng Nghiệm thu Định lượng</h2>
+    <div class="phase-list">
+      <div class="phase">
+        <b>K0 · Hiện trường C310 &amp; Baseline</b>
+        <span class="est">4–6 ngày (lạc quan) / 6–9 ngày (thận trọng)</span>
+        <ul>
+          <li>Ký consent (<code>H11</code>); cấu hình <code>Day Mode</code>, cắm <code>RJ45</code>, bỏ microSD, đèn ≥ 250–300 lux, VLAN + DNAT NTP</li>
+          <li>Đo GOP (<code>ffprobe</code>), px mặt theo mét (<code>H26</code>), độ nhòe 15 fps (<code>H32</code>) &amp; CPU decode 3MP</li>
+          <li>Quay 2 góc lắp + ≥ 20 lượt/PAI chuẩn ISO 30107-3; xuất gói Replay có lưu crop gốc</li>
+        </ul>
+      </div>
+      <div class="phase">
+        <b>K0.5 · Cổng Quyết định Chiến lược PM</b>
+        <span class="est">0.5 ngày (1 buổi họp chốt phạm vi)</span>
+        <ul>
+          <li>Trình bảng số liệu 2 góc lắp trên C310 &amp; báo giá thật</li>
+          <li>Chốt bố cục cổng đi thẳng ±40° hay đi ngang ±90° (<code>H2</code>)</li>
+          <li>Chọn phần cứng <b>A / B / C / C'</b> (<code>H6</code>, <code>H31</code>) &amp; quy chế bằng chứng HMAC (<code>H9</code>)</li>
+        </ul>
+      </div>
+      <div class="phase">
+        <b>K1 · Media Plane (MediaMTX + Canvas)</b>
+        <span class="est">3–4 ngày / 5–7 ngày công (song song K2)</span>
+        <ul>
+          <li>Single RTSP Puller + lọc <code>-c:v copy -an</code> có giám sát</li>
+          <li>WebRTC WHEP ≥ 90% fps nguồn (13–15 fps), trễ p90 &lt; 300 ms</li>
+          <li>Khớp <code>&lt;canvas&gt;</code> p90 ≤ 2 frame; cắt MP4 <code>tmpfs</code> + sidecar HMAC + FFmpeg burn-in</li>
+        </ul>
+      </div>
+      <div class="phase">
+        <b>K2 · Perception Process &amp; Sổ cái HRM</b>
+        <span class="est">4–5 ngày / 8–12 ngày công</span>
+        <ul>
+          <li>Tách process AI; lịch thức theo ca (<code>H34</code>) + ROI 1:1 cùng khung 3MP (<code>H35</code>)</li>
+          <li>State Machine LLR 4 tham số + Novelty Gate + rào <code>μ(yaw)</code>; cấm auto-enroll</li>
+          <li>Sổ cái append-only thu hồi ERPNext, Audit 5%, bảo vệ <code>legal_hold</code> &amp; kênh dự phòng</li>
+        </ul>
+      </div>
+      <div class="phase">
+        <b>K3 · Crossing Quarantine Tracking</b>
+        <span class="est">2–4 ngày / 3–5 ngày công (nếu giữ đi ngang)</span>
+        <ul>
+          <li>Cầu nối <code>YOLOX-Nano</code> + cách ly giao cắt nghiêm ngặt (0 ca tráo đồng phục)</li>
+          <li><code>Viewport-Aware</code> miễn phạt cắt khung khi đứng sát đáy ảnh</li>
+          <li>Đánh bại tracker hiện tại trên bộ Replay <code>K0</code></li>
+        </ul>
+      </div>
+      <div class="phase">
+        <b>K4–K5 · Runtime 10 Mặt, WASM &amp; Bảo mật</b>
+        <span class="est">5–8 ngày / 8–13 ngày công</span>
+        <ul>
+          <li>Tổng decode 3MP + AI &lt; 200 ms ở 10 mặt (VAAPI/OpenVINO EP FP32/FP16)</li>
+          <li>Đăng ký gương MediaPipe WASM 0 ms + chụp mẫu gốc từ camera cổng</li>
+          <li>Auth/RBAC, mã hóa sinh trắc học nghỉ, <code>audit_logs</code> &amp; PostgreSQL đa cổng</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="card" style="margin-bottom:18px">
+    <h2>5. Bốn Câu hỏi Chuyển Giao PM / Pháp chế Quyết định tại Cổng <code>K0</code> &amp; <code>K0.5</code></h2>
+    <table>
+      <thead>
+        <tr><th>Mã ID</th><th>Thời điểm</th><th>Nội dung trình quyết định &amp; Đánh đổi chi phí ẩn</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><span class="tag-pm">H11</span></td>
+          <td>Trước khi quay <code>K0</code></td>
+          <td><b>Phê duyệt mẫu đơn đồng ý dữ liệu sinh trắc học</b> cho tình nguyện viên quay thử nghiệm (cam kết không ghi âm <code>H28</code>, cô lập VLAN không qua cloud <code>H29</code>, hạn xóa video gốc và điều khoản lưu ảnh mẫu nếu chọn Phương án A).</td>
+        </tr>
+        <tr>
+          <td><span class="tag-pm">H2 + H26 + H32</span></td>
+          <td>Tại họp <code>K0.5</code></td>
+          <td><b>Chốt bố cục lối đi tại cổng</b> dựa trên số liệu đo thực tế của Tapo C310 ở <code>K0</code> (bề ngang mặt chỉ đạt 80–100 px ở cự ly 2.0–2.5 m và độ nhòe chuyển động ở 15 fps): dẫn hướng nhìn thẳng (±40°) hay bắt buộc đi ngang tự do (±90°)?</td>
+        </tr>
+        <tr>
+          <td><span class="tag-pm">H6 + H31</span></td>
+          <td>Tại họp <code>K0.5</code></td>
+          <td><b>Lựa chọn cấu hình phần cứng chính thức</b> (kèm báo giá thật):<br/>
+            • <b>A</b>: Đầu đọc chuyên dụng có cặp camera RGB+IR phần cứng (buộc dừng nhịp ngắn nhìn máy, phải lưu ảnh mặt gốc đẩy ISAPI) + FaceGate làm Middleware &amp; Phase 2 SKU.<br/>
+            • <b>B</b>: Giữ Tapo C310 + Yếu tố thứ 2 (Thẻ từ / QR).<br/>
+            • <b>C</b>: Giữ thuần Tapo C310 (dây RJ45, <code>Day Mode</code> + đèn ≥ 250–300 lux, chạy hậu kiểm ngoại lệ 5%).<br/>
+            • <b>C'</b>: Đổi sang Camera IP doanh nghiệp ống kính <code>4–6 mm</code>, <code>25–30 fps</code>, chỉnh được <code>GOP = 1 s</code> &amp; màn trập (tận dụng lại C310 cho giám sát chung).</td>
+        </tr>
+        <tr>
+          <td><span class="tag-pm">H9 + H22</span></td>
+          <td>Tại họp <code>K0.5</code></td>
+          <td><b>Xác nhận quy chế bằng chứng đối soát lương</b>: chấp nhận lưu MP4 H.264 gốc sạch + sidecar ký <code>HMAC-SHA256</code> hàng ngày kèm nút xuất MP4 burn-in bằng FFmpeg khi giải quyết khiếu nại và sổ cái thu hồi công có vết kiểm toán.</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section class="card">
+    <h2>6. Cổng Ký Duyệt Kế hoạch Kiến trúc v4 (Sign-off trước khi chạy <code>/speckit-tasks</code>)</h2>
+    <div class="check-row"><input type="checkbox" checked> <span>Xác nhận thực hiện <b>Pha K0 &amp; Cổng K0.5</b> (chuẩn bị Tapo C310 đúng thứ tự RJ45 + Day Mode + VLAN NTP, đo baseline &amp; trình PM 4 lựa chọn A/B/C/C') trước khi viết lại nhánh nhận diện sâu.</span></div>
+    <div class="check-row"><input type="checkbox" checked> <span>Đồng ý kiến trúc <b>3 Mặt phẳng</b>: <code>MediaMTX</code> (lọc <code>-an</code>, WebRTC WHEP, <code>tmpfs</code> fMP4) + <code>Perception Process</code> độc lập (Lịch thức ca + ROI 1:1 cùng khung 3MP) + <code>Append-Only HRM Ledger</code>.</span></div>
+    <div class="check-row"><input type="checkbox" checked> <span>Phê duyệt các mục trong <b>Complexity Tracking</b> theo Governance của Constitution (bổ sung binary <code>MediaMTX</code> MIT và tách tiến trình suy luận cô lập lỗi).</span></div>
+    <div class="sign-box">
+      <input id="approver" placeholder="Người duyệt (PM / Tech Lead)">
+      <select id="decision">
+        <option value="approved">Phê duyệt Kế hoạch v4 — Chuyển sang /speckit-tasks</option>
+        <option value="k0_only">Phê duyệt chạy trước Pha K0 &amp; K0.5 lấy số đo C310</option>
+        <option value="adjust">Cần điều chỉnh thêm</option>
+      </select>
+      <input id="hwChoice" placeholder="Ghi chú hướng phần cứng ưu tiên (A / B / C / C')">
+    </div>
+    <button class="btn" type="button" onclick="saveSignoff()">Lưu xác nhận duyệt</button>
+    <span class="saved-note" id="savedMsg"></span>
+  </section>
+</main>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({ startOnLoad: true, theme: "dark" });
+</script>
+<script>
+  function saveSignoff() {
+    const data = {
+      approver: document.getElementById("approver").value,
+      decision: document.getElementById("decision").value,
+      hwChoice: document.getElementById("hwChoice").value,
+      ts: new Date().toLocaleString("vi-VN")
+    };
+    localStorage.setItem("facegate_plan_003_v4_signoff", JSON.stringify(data));
+    document.getElementById("savedMsg").textContent = "Đã lưu trạng thái phê duyệt lúc " + data.ts;
+  }
+  const existing = localStorage.getItem("facegate_plan_003_v4_signoff");
+  if (existing) {
+    try {
+      const d = JSON.parse(existing);
+      if (d.approver) document.getElementById("approver").value = d.approver;
+      if (d.decision) document.getElementById("decision").value = d.decision;
+      if (d.hwChoice) document.getElementById("hwChoice").value = d.hwChoice;
+      if (d.ts) document.getElementById("savedMsg").textContent = "Bản lưu gần nhất: " + d.ts;
+    } catch (_) {}
+  }
+</script>
+</body>
+</html>

@@ -7,3 +7,6 @@ python-multipart>=0.0.9
 pyyaml>=6.0
 onnxruntime>=1.17
 pillow>=10.0
+cryptography>=42.0
+# Tuy chon khi gom >= 2 cong camera ve PostgreSQL (K5):
+# psycopg[binary]>=3.1

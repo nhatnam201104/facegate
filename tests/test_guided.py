@@ -164,3 +164,40 @@ def test_cancel(env):
     g = GuidedSession(ctx, "NV004", "D").start()
     g.cancel()
     assert wait(lambda: g.state == "cancelled")
+
+
+def test_seven_angles_with_profile_90_and_supplement_and_isolated_engine(env):
+    from app.enrollment import EnrollError, try_auto_enroll_from_gate
+    ctx, cam = env
+    # Tao enroll_engine rieng va khoa gate engine_lock de chung minh GuidedSession KHONG cham vao gate lock (P6, T026)
+    ctx.enroll_engine = FakeEngine(cam)
+    ctx.enroll_lock = threading.Lock()
+    ctx.engine_lock.acquire()
+    try:
+        g = GuidedSession(ctx, "NV005", "Hoàng Văn E", profile_90=True).start()
+        assert g.snapshot()["total"] == 7
+        for i, st in enumerate(g.steps):
+            if abs(st.h) == 2:
+                cam.pose = (-75.0 if st.h < 0 else 75.0, 0.0)
+            else:
+                cam.pose = pose_for(st, front=(0.0, 0.0))
+            assert wait(lambda: g.step > i or g.state != "running"), f"ket o buoc {i}: {g.snapshot()['hint']}"
+        assert wait(lambda: g.state == "done"), g.snapshot()
+        rep = g.snapshot()["report"]
+        assert rep["frames_selected"] == 7
+
+        # Kiem tra supplement_only (1 buoc xac minh thang + 2 buoc nghieng suon = 3 buoc, chi luu 2 mau nghieng moi)
+        gs = GuidedSession(ctx, "NV005", "Hoàng Văn E", supplement_only=True).start()
+        assert gs.snapshot()["total"] == 3
+        for i, st in enumerate(gs.steps):
+            cam.pose = (0.0, 0.0) if st.verify_only else (-76.0 if st.h < 0 else 76.0, 0.0)
+            assert wait(lambda: gs.step > i or gs.state != "running")
+        assert wait(lambda: gs.state == "done")
+        assert gs.snapshot()["report"]["supplement_only"] is True
+        assert gs.snapshot()["report"]["frames_selected"] == 2
+    finally:
+        ctx.engine_lock.release()
+
+    # Kiem tra cam tuyet doi auto_enroll_online (H17)
+    with pytest.raises(EnrollError):
+        try_auto_enroll_from_gate(ctx)

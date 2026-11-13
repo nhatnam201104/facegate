@@ -2,38 +2,79 @@
 # Sua file nay roi chay lai ./run.sh (Linux) hoac run.bat (Windows)
 
 camera:
-  # 0 (hoac /dev/video0 tren Linux) = webcam | duong dan file video (vd: data/test.mp4) | RTSP:
-  # rtsp://user:pass@192.168.1.64:554/Streaming/Channels/102   (102 = substream Hikvision)
+  # 0 (hoac /dev/video0 tren Linux) = webcam | duong dan file video | RTSP qua MediaMTX Single Puller
   source: 0
   name: gate-1
-  loop_file: true          # file video: phat lap lai de demo
+  id: gate-1
+  loop_file: true
+  model_profile: tapo_c310           # tapo_c310 | enterprise_rtsp | webcam
+  main_source: rtsp://127.0.0.1:8554/gate1_main
+  sub_source: rtsp://127.0.0.1:8554/gate1_sub
+  whep_url: /media/gate1_main/whep
+  playback_url: http://127.0.0.1:9996
+  overlay_offset_ms: 0
 
 pipeline:
-  # opencv : YuNet + SFace (OpenCV Zoo, Apache-2.0)  -> mac dinh, an toan license
-  # onnx   : SCRFD-500M + ArcFace MobileFaceNet (InsightFace, CHI dung nghien cuu/benchmark)
-  backend: opencv
-  detect_fps: 5            # so lan detect moi giay (3-5 la du)
-  det_score: 0.6           # nguong tin cay cua detector
-  max_faces: 3             # PoC: toi da 3 mat cung luc
-  stream_fps: 15           # fps video gui len trinh duyet
-  stream_width: 960        # resize khung hinh hien thi
+  # edgeface : YuNet + 3DDFA_V2 + EdgeFace-XS (Apache-2.0 / MIT) -> mac dinh v4, ho tro +-90 do tren CPU
+  # opencv   : YuNet + SFace (OpenCV Zoo, Apache-2.0)
+  # onnx     : SCRFD-500M + ArcFace MobileFaceNet (InsightFace, CHI dung nghien cuu/benchmark)
+  backend: edgeface
+  execution_provider: cpu            # cpu | openvino (chi bat sau khi vuot cong Replay K4)
+  detect_fps: 6
+  det_score: 0.55
+  max_faces: 10
+  stream_fps: 15
+  stream_width: 960
+  two_stage_roi: true                # resize chinh frame /stream1 ve 640px tim nguoi -> cat ROI 1:1 tren 3MP
+  fallback_det_width: 1280
 
 quality:
   min_face: 60             # canh ngan nho nhat cua mat (pixel)
-  min_blur: 40             # phuong sai Laplacian toi thieu (cang cao cang net)
+  min_blur: 35             # phuong sai Laplacian toi thieu tren vung da nhin thay
   min_brightness: 45
   max_brightness: 225
-  max_yaw: 35              # do, quay ngang qua muc nay thi bo qua frame
+  max_yaw: 90              # do, ho tro nhan dien toi goc nghieng suon +-90 do
+  max_pitch: 35
+  max_roll: 35
 
 recognition:
-  thresholds:              # nguong cosine theo backend - can hieu chinh bang footage that
-    opencv: 0.42
-    onnx: 0.40
-  margin: 0.06             # top1 - top2 (2 nguoi khac nhau) phai >= margin
-  min_good_frames: 2       # so frame dat chat luong toi thieu truoc khi chot ten
+  frontal_max_yaw: 40
+  pose_hysteresis: 5
+  thresholds:
+    edgeface:
+      frontal: 0.40
+      profile: 0.46
+    opencv:
+      frontal: 0.42
+      profile: 0.48
+    onnx:
+      frontal: 0.40
+      profile: 0.46
+  margin: 0.06
+  profile_margin: 0.08
+  min_good_frames: 2
+  min_profile_frames: 4
   max_track_embeddings: 10
-  track_max_age: 2.0       # giay: giu track (an khung) de noi lai khi mat bi che / quay di
-  split_cosine: 0.25       # frame moi khac khuon mat cua track duoi muc nay -> tach track (tranh tron 2 nguoi)
+  track_max_age: 2.0
+  split_cosine: 0.25
+
+decision:
+  novelty_min_dt_ms: 250
+  novelty_min_dyaw_deg: 8.0
+  llr_weights:
+    a_cos: 12.0
+    b_bias: -4.8
+    c_abs_yaw: -0.015
+    d_quality: 0.60
+  tau_threshold: 0.45
+  margin_base: 0.70
+  margin_yaw_slope: 0.30
+  auto_enroll_online: false          # CAM tuyet doi tu hoc mau online chong dau doc (H17)
+
+tracking:
+  crossing_face_iou: 0.25            # kich hoat Crossing Quarantine khi 2 hop mat giao cat (H3)
+  crossing_person_iou: 0.40
+  viewport_bottom_grace: 0.80        # y2 >= 0.80*H coi la cat khung hop le, tat phat unattached_face
 
 events:
   # Moi nhan vien chi check-in 1 lan/ngay; cac lan sau chi hien "Da cham cong luc ..."
@@ -68,8 +109,11 @@ clips:                     # clip video moi lan xuat hien (tab Lich su)
   retention_days: 30       # tu xoa clip cu (du lieu sinh trac hoc)
 
 
-power:                     # che do cho: tranh nhan dien lien tuc 24/7 khi khong co ai
+power:                     # che do cho & lich thuc theo ca (H34)
   sleep: true
+  active_windows:          # luon giu nong decode /stream1 0ms cho GOP trong gio vao/tan ca
+    - ["06:30", "09:30"]
+    - ["16:30", "18:30"]
   idle_seconds: 30         # khong thay mat / chuyen dong trong N giay -> vao che do cho
   motion_threshold: 0.01   # ti le diem anh thay doi de danh thuc (0.01 = 1%); tang neu hay tu bat vi nhieu sang
   sleep_check_fps: 4       # so lan do chuyen dong moi giay khi dang cho
@@ -81,17 +125,28 @@ power:                     # che do cho: tranh nhan dien lien tuc 24/7 khi khong
 enrollment:
   sample_fps: 10           # tach frame tu video dang ky
   min_frames: 5
-  max_frames: 15
+  max_frames: 21
   per_bin: 3               # toi da so frame cho moi o goc nhin
   dedup_cosine: 0.95       # 2 frame giong nhau hon muc nay thi bo bot 1
+  outlier_min_cosine: 0.42
+  cross_pose_min_cosine: 0.20
   keep_video: false        # mac dinh xoa video goc sau khi xu ly
-  guided:                  # dang ky quay tu camera: 5 goc chu thap co dinh, dat dung goc moi sang buoc tiep
+  guided:                  # dang ky quay tu camera: 7 goc (5 chu thap + 2 nghieng suon ~80 do)
+    enable_profile_90: true
     yaw_enter: 15          # do lech ngang (so voi luc nhin thang) de tinh la da quay
     yaw_center: 9          # trong khoang nay la "nhin thang"
+    profile_yaw_min: 65
+    profile_yaw_max: 88
     pitch_enter: 10        # do lech doc de tinh la da ngang/cui
     pitch_center: 8
     hold_seconds: 0.7      # phai giu dung goc lien tuc chung nay
     timeout_seconds: 240   # tong thoi gian toi da cua mot phien
+
+audit_and_safety:
+  profile_audit_sample_rate: 0.05
+  near_spoof_window_sec: 300
+  min_free_disk_gb: 2.0
+  heartbeat_timeout_sec: 5.0
 
 hrm:
   adapter: mock            # mock | erpnext
@@ -103,6 +158,7 @@ hrm:
 
 storage:
   data_dir: data
+  database_url: ""         # de trong = SQLite WAL; postgresql://... khi gom >= 2 cong (K5)
 
 server:
   host: 127.0.0.1          # doi thanh 0.0.0.0 neu chay tren Linux server va mo tu may khac trong LAN

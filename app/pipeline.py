@@ -65,12 +65,17 @@ def crop_with_margin(img: np.ndarray, bbox: np.ndarray, m: float = 0.25) -> np.n
 
 
 class Pipeline:
-    def __init__(self, cfg, db, engine, gallery, camera, hrm, broadcast, liveness=None, clips=None):
+    def __init__(self, cfg, db, engine, gallery, camera, hrm, broadcast, liveness=None, clips=None,
+                 recognize: bool = True):
         self.cfg, self.db, self.engine, self.gallery = cfg, db, engine, gallery
         self.camera, self.hrm, self.broadcast = camera, hrm, broadcast
         self.liveness, self.clips = liveness, clips
+        # recognize=False (che do isolated_worker): worker_perception nhan dien; o day chi render khung xem truoc,
+        # khong tao event/ledger/clip de tranh 2 bo nhan dien chay song song (CR2).
+        self.recognize = bool(recognize)
         rc = cfg["recognition"]
-        self.threshold = float(rc["thresholds"][engine.name])
+        thr_cfg = rc["thresholds"].get(engine.name, 0.42)
+        self.threshold = float(thr_cfg["frontal"]) if isinstance(thr_cfg, dict) else float(thr_cfg)
         self.margin = float(rc["margin"])
         self.min_good = int(rc["min_good_frames"])
         self.max_embs = int(rc["max_track_embeddings"])
@@ -146,6 +151,11 @@ class Pipeline:
                 continue
             last_fid = fid
             now = time.time()
+            if not self.recognize:
+                if now - last_st >= st_iv:
+                    last_st = now
+                    self._render(frame, now)
+                continue
             if self.sleeping:
                 if now - last_det < self.sleep_iv:
                     continue
@@ -444,6 +454,8 @@ class Pipeline:
             liveness=round(t.live_mean, 4) if t.live_mean is not None else None,
             snapshot=t.snapshot or self._save_snapshot(t), event_id=t.event_id,
             camera=self.cfg["camera"]["name"])
+        from .ledger import hold_clip_if_pending_audit
+        hold_clip_if_pending_audit(self.db, app_id, t.event_id)
         if self.clips is not None and self.clips.enabled:
             self.clips.stop(t.clip_sid, keep=True, on_done=lambda rel, a=app_id: self._clip_done(a, rel))
         self.broadcast({"type": "appearance", "id": app_id})
@@ -491,13 +503,27 @@ class Pipeline:
                   score=round(score, 4), margin=round(t.margin, 4), direction=direction,
                   latency_ms=round(latency, 1), frames=t.good_frames,
                   snapshot=t.snapshot or self._save_snapshot(t), model_version=self.engine.model_version,
-                  hrm_status="pending" if kind == "checkin" else "skipped", kind=kind, att_type=att,
+                  # Ledger la nguon duy nhat day len HRM; trang thai duoc phan chieu ve event sau khi sync.
+                  hrm_status="skipped", kind=kind, att_type=att,
                   liveness=round(t.live_mean, 4) if t.live_mean is not None else None)
         ev["id"] = self.db.add_event(**ev)
         if t.event_id is None or kind == "checkin":
             t.event_id = ev["id"]
         msg = {"type": "event", "event": ev}
         if kind == "checkin":
+            from .ledger import record_auto_checkin
+            record_auto_checkin(
+                self.db,
+                employee_id=int(eid),
+                code=str(code),
+                ts=now,
+                verification_tier=getattr(t, "verification_tier", None) or "verified",
+                score=float(score),
+                tau_threshold=float(self.cfg.get("decision", {}).get("tau_threshold", 0.45)),
+                camera_id=str(self.cfg["camera"].get("id", "gate-1")),
+                event_id=ev["id"],
+                audit_cfg=self.cfg.get("audit_and_safety"),
+            )
             self.hrm.notify()
             msg["greet"] = greeting(now, self.shift)
         self.broadcast(msg)

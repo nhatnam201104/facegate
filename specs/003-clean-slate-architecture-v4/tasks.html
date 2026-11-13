@@ -1,0 +1,333 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FaceGate SpecKit Tasks v4 · 003-clean-slate-architecture-v4</title>
+<style>
+  :root {
+    --bg: #0f172a;
+    --panel: #1e293b;
+    --panel-alt: #162033;
+    --border: #334155;
+    --text: #f1f5f9;
+    --muted: #94a3b8;
+    --accent: #38bdf8;
+    --p1: #4ade80;
+    --p2: #fbbf24;
+    --p3: #c084fc;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, Ubuntu, sans-serif;
+    background: var(--bg); color: var(--text); line-height: 1.55;
+  }
+  header {
+    background: linear-gradient(135deg, #0f172a 0%, #1e293b 58%, #164e63 100%);
+    border-bottom: 1px solid var(--border); padding: 26px 24px;
+  }
+  .wrap { max-width: 1200px; margin: 0 auto; padding: 0 20px; }
+  .badges { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+  .badge {
+    font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: 999px;
+    background: rgba(56, 189, 248, 0.14); color: var(--accent); border: 1px solid rgba(56, 189, 248, 0.35);
+  }
+  .badge.ok { background: rgba(74, 222, 128, 0.14); color: var(--p1); border-color: rgba(74, 222, 128, 0.35); }
+  .badge.warn { background: rgba(251, 191, 36, 0.14); color: var(--p2); border-color: rgba(251, 191, 36, 0.35); }
+  h1 { margin: 4px 0 8px; font-size: 24px; }
+  h2 { font-size: 18px; margin: 0 0 12px; color: #e2e8f0; }
+  p.lead { margin: 0; color: #cbd5e1; max-width: 1000px; font-size: 14.3px; }
+  main { padding: 22px 0 54px; }
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(215px, 1fr)); gap: 14px; margin-bottom: 18px; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; margin-bottom: 16px; }
+  .kpi b { display: block; font-size: 23px; color: var(--accent); }
+  .kpi span { font-size: 13px; color: var(--muted); }
+  .grid-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(440px, 1fr)); gap: 16px; margin-bottom: 16px; }
+  .diagram-box { background: #0b1220; border: 1px solid var(--border); border-radius: 10px; padding: 14px; overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--muted); background: var(--panel-alt); font-weight: 600; }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; align-items: center; }
+  .filter-btn {
+    background: var(--panel-alt); color: var(--text); border: 1px solid var(--border);
+    padding: 6px 12px; border-radius: 8px; font-size: 12.8px; cursor: pointer;
+  }
+  .filter-btn.active { background: #0284c7; border-color: #38bdf8; font-weight: 600; }
+  .prog-wrap { flex: 1; min-width: 220px; display: flex; align-items: center; gap: 10px; justify-content: flex-end; }
+  .prog-bar { width: 180px; height: 9px; background: #0b1220; border-radius: 99px; overflow: hidden; border: 1px solid var(--border); }
+  .prog-fill { height: 100%; background: var(--p1); width: 0%; transition: width 0.2s; }
+  .phase-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; background: var(--panel-alt); padding: 8px 12px; border-radius: 8px; }
+  .task-row {
+    display: flex; align-items: flex-start; gap: 10px; padding: 9px 8px;
+    border-top: 1px solid rgba(51, 65, 85, 0.65); font-size: 13.6px; cursor: pointer;
+  }
+  .task-row.done span.desc { text-decoration: line-through; color: var(--muted); }
+  .tid { font-family: ui-monospace, monospace; font-weight: 700; color: var(--accent); min-width: 44px; }
+  .pill { font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 6px; white-space: nowrap; }
+  .pill.p { background: rgba(56, 189, 248, 0.16); color: #7dd3fc; border: 1px solid rgba(56, 189, 248, 0.35); }
+  .pill.us1, .pill.us2 { background: rgba(74, 222, 128, 0.15); color: var(--p1); }
+  .pill.us3, .pill.us4 { background: rgba(251, 191, 36, 0.15); color: var(--p2); }
+  code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12px; background: rgba(15, 23, 42, 0.7); padding: 2px 6px; border-radius: 5px; color: #7dd3fc;
+  }
+  .sign-box {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; margin-top: 12px;
+  }
+  .sign-box input, .sign-box select {
+    width: 100%; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border);
+    background: #0b1220; color: var(--text); font-size: 13.5px;
+  }
+  .btn {
+    margin-top: 12px; background: #0284c7; color: #fff; border: 0; border-radius: 8px;
+    padding: 9px 16px; font-weight: 600; cursor: pointer;
+  }
+  .btn:hover { background: #0369a1; }
+  .saved-note { margin-left: 10px; font-size: 13px; color: var(--p1); }
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <div class="badges">
+      <span class="badge">Branch: 003-clean-slate-architecture-v4 (base: main@7789243)</span>
+      <span class="badge ok">32 Executable Tasks · 7 Phases</span>
+      <span class="badge warn">21 Parallelizable [P] Tasks</span>
+      <span class="badge">Tapo C310 Profile · KG Mapped</span>
+    </div>
+    <h1>Danh sách Tác vụ Triển khai Kiến trúc FaceGate v4 (<code>tasks.md</code>)</h1>
+    <p class="lead">
+      Phân rã chi tiết trên nhánh mới <code>003-clean-slate-architecture-v4</code> xuất phát sạch từ <code>main</code>: bắt đầu bằng <b>Pha K0 đo thực địa Tapo C310 &amp; Cổng PM K0.5</b>, cho phép chạy song song <b>US1 (MediaMTX + WebRTC Canvas)</b> với <b>US2 (Perception Process 3MP ROI + Crossing Quarantine)</b>, hoàn thiện <b>US3 (Append-Only HRM Ledger)</b>, <b>US4 (MediaPipe WASM)</b> và khóa bảo mật RBAC/AES-GCM.
+    </p>
+  </div>
+</header>
+
+<main class="wrap">
+  <section class="kpis">
+    <div class="card kpi"><b>32 Tác vụ</b><span>T001 → T032 theo đúng chuẩn checklist SpecKit</span></div>
+    <div class="card kpi"><b>21 Tác vụ [P]</b><span>Tối đa hóa làm việc song song giữa Media, AI và HRM</span></div>
+    <div class="card kpi"><b>US1 + US2 = MVP</b><span>Xem 13–15fps &lt;300ms, 0% re-encode + Nhận diện 3MP cô lập lỗi</span></div>
+    <div class="card kpi"><b>5 Lớp KG</b><span>Ánh xạ trực tiếp lên 106 nodes của <code>knowledge-graph.json</code></span></div>
+  </section>
+
+  <div class="grid-2">
+    <section class="card">
+      <h2>1. Đồ thị Phụ thuộc &amp; Luồng Thực thi Song song</h2>
+      <div class="diagram-box">
+        <pre class="mermaid">
+flowchart TD
+  P1["Phase 1: Setup (T001-T003)<br/>Cấu hình VLAN/DayMode C310 + Tải Model MIT/Apache"] --> P2["Phase 2: Foundational &amp; K0/K0.5 (T004-T008)<br/>IPC TrackedObject + DB Migration + Replay K0 + Họp PM"]
+  P2 --> US1["Phase 3: US1 [P1] 🎯 MVP (T009-T013)<br/>MediaMTX (-an, tmpfs) + WebRTC Canvas + HMAC Clip"]
+  P2 --> US2["Phase 4: US2 [P1] 🎯 MVP (T014-T020)<br/>Perception Process + 3MP ROI 1:1 + LLR + Quarantine"]
+  P2 --> US3["Phase 5: US3 [P2] (T021-T025)<br/>Append-Only Ledger + ERPNext Revoke + legal_hold"]
+  US1 --> US4["Phase 6: US4 [P2] (T026-T028)<br/>MediaPipe WASM 0ms + Chụp mẫu từ Camera cổng"]
+  US2 --> US4
+  US1 & US2 & US3 & US4 --> P7["Phase 7: K4 &amp; K5 Polish (T029-T032)<br/>10 Mặt &lt;200ms + RBAC + AES-256-GCM + PostgreSQL"]
+        </pre>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>2. Phân bổ Tác vụ theo Pha &amp; Lớp Kiến trúc (KG)</h2>
+      <table>
+        <thead>
+          <tr><th>Pha / User Story</th><th>Mã Task</th><th>Lớp Knowledge Graph</th><th>Cổng Kiểm chứng Độc lập</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><b>Phase 1: Setup</b></td>
+            <td><code>T001–T003</code> (3)</td>
+            <td>Cấu hình &amp; Công cụ</td>
+            <td>Đủ model MIT/Apache-2.0, hướng dẫn RJ45 + Day Mode + VLAN C310</td>
+          </tr>
+          <tr>
+            <td><b>Phase 2: Foundational (K0/K0.5)</b></td>
+            <td><code>T004–T008</code> (5)</td>
+            <td>API/IPC + Lưu trữ + Đo kiểm</td>
+            <td>Có bảng Baseline 2 góc C310, Replay chạy mượt &amp; Biên bản PM K0.5</td>
+          </tr>
+          <tr>
+            <td><b>Phase 3: US1 [P1] 🎯</b></td>
+            <td><code>T009–T013</code> (5)</td>
+            <td>Media Plane + Giao diện Web</td>
+            <td>13–15 fps, p90 &lt; 300ms, lệch Canvas ≤ 2 frame, 0 audio stream</td>
+          </tr>
+          <tr>
+            <td><b>Phase 4: US2 [P1] 🎯</b></td>
+            <td><code>T014–T020</code> (7)</td>
+            <td>Xử lý nhận diện (Process riêng)</td>
+            <td>FAR ≤ baseline, 0 tráo đồng phục, kill worker không sập API</td>
+          </tr>
+          <tr>
+            <td><b>Phase 5: US3 [P2]</b></td>
+            <td><code>T021–T025</code> (5)</td>
+            <td>Nghiệp vụ &amp; Lưu trữ HRM</td>
+            <td>Thu hồi ERPNext idempotent, không xóa nhầm clip <code>legal_hold=1</code></td>
+          </tr>
+          <tr>
+            <td><b>Phase 6: US4 [P2]</b></td>
+            <td><code>T026–T028</code> (3)</td>
+            <td>Giao diện Web + Đăng ký</td>
+            <td>Soi gương WASM 0ms trễ mạng, mẫu gốc chụp từ camera cổng</td>
+          </tr>
+          <tr>
+            <td><b>Phase 7: K4 &amp; K5</b></td>
+            <td><code>T029–T032</code> (4)</td>
+            <td>Toàn hệ thống &amp; Bảo mật</td>
+            <td>10 mặt &lt; 200ms, RBAC 3 quyền, mã hóa AES-256-GCM, <code>audit_logs</code></td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+  </div>
+
+  <section class="card">
+    <h2>3. Bảng Theo dõi Tiến độ Thực thi Tương tác (32 Tác vụ)</h2>
+    <div class="toolbar">
+      <button class="filter-btn active" onclick="filterTasks('all', this)">Tất cả (32)</button>
+      <button class="filter-btn" onclick="filterTasks('mvp', this)">🎯 MVP (Setup + Found + US1 + US2)</button>
+      <button class="filter-btn" onclick="filterTasks('parallel', this)">Song song [P] (21)</button>
+      <button class="filter-btn" onclick="filterTasks('US1', this)">[US1] Media (5)</button>
+      <button class="filter-btn" onclick="filterTasks('US2', this)">[US2] Perception (7)</button>
+      <button class="filter-btn" onclick="filterTasks('US3', this)">[US3] Ledger/HRM (5)</button>
+      <button class="filter-btn" onclick="filterTasks('US4', this)">[US4] Enroll WASM (3)</button>
+      <div class="prog-wrap">
+        <span id="progText" style="font-size:13px;color:var(--muted)">0 / 32 hoàn thành</span>
+        <div class="prog-bar"><div class="prog-fill" id="progFill"></div></div>
+      </div>
+    </div>
+    <div id="taskContainer"></div>
+  </section>
+
+  <section class="card">
+    <h2>4. Xác nhận Bàn giao Danh sách Tác vụ (Sẵn sàng cho <code>/speckit-implement</code>)</h2>
+    <div class="sign-box">
+      <input id="approver" placeholder="Người duyệt (PM / Tech Lead)">
+      <select id="decision">
+        <option value="ready_k0">Duyệt — Bắt đầu ngay từ Phase 1 &amp; Phase 2 (Đo K0 trên Tapo C310)</option>
+        <option value="ready_full">Duyệt toàn bộ 32 tác vụ — Triển khai tuần tự/song song</option>
+        <option value="adjust">Cần tinh chỉnh phân rã tác vụ</option>
+      </select>
+      <input id="note" placeholder="Ghi chú phân công kỹ sư (nếu có)">
+    </div>
+    <button class="btn" type="button" onclick="saveSignoff()">Lưu xác nhận duyệt Tasks</button>
+    <span class="saved-note" id="savedMsg"></span>
+  </section>
+</main>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({ startOnLoad: true, theme: "dark" });
+</script>
+<script>
+const PHASES = [
+  { title: "Phase 1: Setup — Hạ tầng Hiện trường Tapo C310, Mô hình & Cấu hình (K0 Prep)", mvp: true, tasks: [
+    { id: "T001", p: true, us: "", text: "Tạo hướng dẫn hạ tầng <code>deploy/vlan-ntp-chrony.md</code> (RJ45, Day Mode, ≥250 lux, không microSD, DNAT UDP 123 về chrony) & mẫu đơn đồng ý <code>deploy/consent-template-k0.md</code>" },
+    { id: "T002", p: true, us: "", text: "Cập nhật <code>requirements.txt</code> (thêm <code>cryptography&gt;=42.0</code> cho AES-256-GCM) &amp; nâng cấp <code>scripts/download_models.py</code> tải đủ <code>edgeface_xs_gamma_06.onnx</code>, <code>3ddfa_v2_mb1_120x120.onnx</code>, <code>yolox_nano_coco.onnx</code> trên nền <code>main</code>" },
+    { id: "T003", p: true, us: "", text: "Mở rộng <code>app/config.py</code> &amp; <code>config.yaml</code>: nâng <code>quality.max_yaw=90</code> từ <code>main</code>, thêm khối camera C310, two_stage_roi, decision LLR, crossing quarantine, active_windows, audit_and_safety" }
+  ]},
+  { title: "Phase 2: Foundational — Công cụ Replay K0, Cổng PM K0.5, IPC TrackedObject & DB Migration", mvp: true, tasks: [
+    { id: "T004", p: true, us: "", text: "Xây dựng <code>app/ipc.py</code> định nghĩa thực thể tổng quát <code>TrackedObject</code> (hỗ trợ cả Phase 2 SKU) và kênh giao tiếp NDJSON Unix/TCP Socket" },
+    { id: "T005", p: true, us: "", text: "Bổ sung migration tự động trong <code>app/db.py</code> trên nền <code>main</code>: tạo <code>attendance_ledger</code>, <code>audit_logs</code>; thêm <code>pose_group/yaw/pitch</code> trên <code>embeddings</code>, <code>verification_tier</code> trên <code>events</code> và <code>legal_hold/clip_sha256/sidecar_path</code> trên <code>appearances</code>" },
+    { id: "T006", p: true, us: "", text: "Xây dựng <code>scripts/record_k0_bundle.py</code> & <code>scripts/replay_eval.py</code> đo Baseline tuần tự, xuất gói Replay có lưu crop gốc, tính FAR kèm CI và APCER/BPCER chuẩn ISO/IEC 30107-3" },
+    { id: "T007", p: true, us: "", text: "Tạo bài kiểm thử nền tảng <code>tests/test_foundation_v4.py</code> cho IPC NDJSON, DB migration từ <code>main</code> không mất dữ liệu cũ, khóa chống trùng <code>idempotency_key</code> & gói Replay" },
+    { id: "T008", p: false, us: "", text: "Tổng hợp số liệu đo 2 bố cục trên Tapo C310 vào <code>docs/BAO_CAO_K0_5_PM.md</code> để họp cổng K0.5 chốt 4 quyết định PM và rẽ nhánh thực thi tương ứng (C/C'/B vs. ISAPI webhook A)" }
+  ]},
+  { title: "Phase 3: User Story 1 [P1] 🎯 MVP — MediaMTX Single Puller, WebRTC Canvas & Clip Gốc Ký HMAC (K1)", mvp: true, tasks: [
+    { id: "T009", p: true, us: "US1", text: "Viết kiểm thử <code>tests/test_media_plane_clips.py</code> xác minh cấu hình lọc <code>-an</code>, chữ ký <code>HMAC-SHA256</code> của sidecar <code>.meta.json</code> và xuất MP4 burn-in FFmpeg" },
+    { id: "T010", p: true, us: "US1", text: "Tạo <code>deploy/mediamtx.yml</code> (biến <code>${FACEGATE_RING_DIR}</code> đa nền tảng) &amp; cặp script <code>scripts/run_mediamtx.sh</code> / <code>run_mediamtx.bat</code> tách sạch audio <code>pcm_alaw</code> bằng <code>-c:v copy -an</code>" },
+    { id: "T011", p: true, us: "US1", text: "Xây dựng <code>app/media_clips.py</code> gọi MediaMTX Playback API cắt MP4 H.264 sạch không re-encode, ký <code>HMAC-SHA256</code> sidecar & hàm kết xuất burn-in theo yêu cầu" },
+    { id: "T012", p: true, us: "US1", text: "Tạo <code>app/static/whep_canvas.js</code> & cập nhật <code>index.html</code>, <code>history.js</code> vẽ hộp tiếng Việt trên <code>&lt;canvas&gt;</code> đồng bộ qua <code>requestVideoFrameCallback</code> (p90 ≤ 2 frame)" },
+    { id: "T013", p: false, us: "US1", text: "Cập nhật <code>app/main.py</code>, <code>app/records.py</code> & <code>app/static/app.js</code> đẩy metadata qua <code>/ws</code>, mở API <code>export-burnin</code> và tự đóng WHEP khi ẩn/đổi tab" }
+  ]},
+  { title: "Phase 4: User Story 2 [P1] 🎯 MVP — Perception Process Cô lập Lỗi, 3MP ROI 1:1, LLR Liên tục & Quarantine (K2–K3)", mvp: true, tasks: [
+    { id: "T014", p: true, us: "US2", text: "Viết kiểm thử <code>tests/test_decision_llr.py</code> cho <code>Novelty Gate</code>, hàm LLR liên tục 4 tham số và rào cứng kép <code>threshold + margin μ(yaw)</code> theo Nguyên tắc I" },
+    { id: "T015", p: true, us: "US2", text: "Viết kiểm thử <code>tests/test_crossing_quarantine.py</code> & <code>tests/test_ipc_fault_isolation.py</code> cho cách ly đồng phục giao cắt, miễn phạt đáy ảnh <code>y2 ≥ 0.80*H</code> và kill thử worker" },
+    { id: "T016", p: true, us: "US2", text: "Tích hợp <code>EdgeFaceEngine</code> trong <code>app/engines.py</code>, tạo <code>app/pose3d.py</code> (3DDFA_V2), nâng cấp <code>app/quality.py</code> (<code>max_yaw=90°</code> trên vùng da nhìn thấy) &amp; tạo <code>app/context_detector.py</code> (<code>Viewport-Aware</code>)" },
+    { id: "T017", p: true, us: "US2", text: "Xây dựng máy trạng thái quyết định <code>TrackDecisionState</code>, bộ tích lũy LLR liên tục & hàm hiệu chỉnh tham số từ cặp ghép chéo K0 trong <code>app/decision.py</code>" },
+    { id: "T018", p: false, us: "US2", text: "Nâng cấp <code>app/tracker.py</code> & <code>app/gallery.py</code> với cầu nối <code>person_bbox</code>, cơ chế <code>Crossing Quarantine</code> nghiêm ngặt và truy vấn <code>top1/top2</code> tốc độ cao" },
+    { id: "T019", p: false, us: "US2", text: "Xây dựng tiến trình độc lập <code>app/worker_perception.py</code>: Lịch thức theo ca (0ms chờ GOP) + thu nhỏ 640px tìm người & cắt ROI Đầu–Vai 1:1 trên cùng khung <code>/stream1</code> 3MP" },
+    { id: "T020", p: false, us: "US2", text: "Cập nhật <code>app/main.py</code>, <code>run.sh</code> & <code>run.bat</code> giám sát tự khởi động lại <code>worker_perception.py</code> và đồng bộ <code>reload_gallery</code> qua IPC không khóa" }
+  ]},
+  { title: "Phase 5: User Story 3 [P2] — Sổ cái Chấm công Append-Only, Hậu kiểm Ngoại lệ 5% & Khóa legal_hold (K2)", mvp: false, tasks: [
+    { id: "T021", p: true, us: "US3", text: "Viết kiểm thử <code>tests/test_ledger_and_hold.py</code> cho sổ cái bất biến, luật chọn mẫu hậu kiểm 5%, bảo vệ clip <code>legal_hold=1</code> khi đĩa &lt; 2 GB và hủy chứng từ ERPNext" },
+    { id: "T022", p: true, us: "US3", text: "Xây dựng <code>app/ledger.py</code> & nâng cấp <code>app/attendance.py</code> suy dẫn bảng công từ <code>attendance_ledger</code>, gắn <code>pending_audit</code> + bật/hạ <code>legal_hold</code> tự động" },
+    { id: "T023", p: true, us: "US3", text: "Nâng cấp <code>app/hrm.py</code> lưu <code>remote_doc_id</code> từ ERPNext, gửi <code>idempotency_key</code> chống trùng và thực thi hủy chứng từ khi có <code>checkin_revoked</code>" },
+    { id: "T024", p: false, us: "US3", text: "Bổ sung dọn đĩa tôn trọng <code>legal_hold</code> trong <code>app/media_clips.py</code> và mở API <code>revoke</code>, <code>manual</code>, <code>audit-queue</code>, <code>legal-hold</code>, <code>/api/health</code> trong <code>records.py</code> & <code>main.py</code>" },
+    { id: "T025", p: false, us: "US3", text: "Cập nhật <code>app/static/attendance.js</code>, <code>history.js</code> & <code>app.js</code> thêm hàng chờ Hậu kiểm, nút Thu hồi / Nhập bù công dự phòng, nút <code>legal_hold</code> và cảnh báo đỏ Fail-safe" }
+  ]},
+  { title: "Phase 6: User Story 4 [P2] — Đăng ký Khuôn mặt Phản hồi Gương MediaPipe WASM & Mẫu Chuẩn Cổng (K4)", mvp: false, tasks: [
+    { id: "T026", p: true, us: "US4", text: "Mở rộng <code>tests/test_guided.py</code> xác minh đăng ký 7 góc + <code>supplement_only</code> chạy trên session riêng không khóa cổng và chặn tuyệt đối <code>auto_enroll_online</code>" },
+    { id: "T027", p: true, us: "US4", text: "Tạo <code>app/static/guided_wasm.js</code> chạy MediaPipe Face Landmarker WASM cục bộ (Apache-2.0) phản hồi hướng dẫn góc đầu 0ms độ trễ mạng trên trình duyệt" },
+    { id: "T028", p: false, us: "US4", text: "Mở rộng <code>app/guided.py</code> trên nền <code>main</code> (lên 7 bước + <code>supplement_only</code>), nâng cấp <code>app/enrollment.py</code> (<code>pose_group</code> + backfill) &amp; <code>app/main.py</code> chụp mẫu gốc trực tiếp từ <code>gate1_main</code>" }
+  ]},
+  { title: "Phase 7: Polish & Cross-Cutting — Runtime 10 Mặt (K4) & Bảo mật RBAC, Mã hóa AES-GCM, Đa cổng (K5)", mvp: false, tasks: [
+    { id: "T029", p: true, us: "", text: "Tối ưu decode phần cứng VAAPI/QSV + tùy chọn OpenVINO EP (FP32/FP16) và gom batch 10 khuôn mặt (&lt; 200ms/chu kỳ) trong <code>app/worker_perception.py</code> & <code>scripts/benchmark.py</code>" },
+    { id: "T030", p: true, us: "", text: "Xây dựng <code>app/security.py</code> tích hợp đăng nhập RBAC (<code>viewer/hr/admin</code>), mã hóa <code>AES-256-GCM</code> cho embedding/ảnh mẫu nghỉ và ghi vết bắt buộc <code>audit_logs</code>" },
+    { id: "T031", p: true, us: "", text: "Bổ sung adapter <code>PostgreSQL</code> tùy chọn cho triển khai đa cổng trong <code>app/db.py</code> và cập nhật <code>README.md</code>, <code>docs/HUONG_DAN_KY_THUAT.html</code>" },
+    { id: "T032", p: false, us: "", text: "Chạy nghiệm thu tổng thể toàn bộ checklist tại <code>specs/003-clean-slate-architecture-v4/quickstart.md</code> (<code>pytest</code>, 0 audio stream, lệch Canvas ≤ 2 frame, 10 mặt &lt; 200ms)" }
+  ]}
+];
+
+const KEY = "facegate_tasks_003_v4_done";
+const ALL_IDS = Array.from({length: 32}, (_, i) => `T${String(i + 1).padStart(3, "0")}`);
+let doneSet = new Set(JSON.parse(localStorage.getItem(KEY) || JSON.stringify(ALL_IDS)));
+let currentFilter = "all";
+
+function toggleTask(id) {
+  if (doneSet.has(id)) doneSet.delete(id); else doneSet.add(id);
+  localStorage.setItem(KEY, JSON.stringify([...doneSet]));
+  render();
+}
+
+function filterTasks(mode, btn) {
+  currentFilter = mode;
+  document.querySelectorAll(".filter-btn").forEach(b => b.classList.toggle("active", b === btn));
+  render();
+}
+
+function render() {
+  const box = document.getElementById("taskContainer");
+  box.innerHTML = PHASES.map(ph => {
+    const items = ph.tasks.filter(t => {
+      if (currentFilter === "all") return true;
+      if (currentFilter === "mvp") return ph.mvp;
+      if (currentFilter === "parallel") return t.p;
+      return t.us === currentFilter;
+    });
+    if (!items.length) return "";
+    return `<div style="margin-bottom:16px">
+      <div class="phase-head"><b>${ph.title}</b><span style="font-size:12px;color:var(--muted)">${items.length} tác vụ</span></div>
+      ${items.map(t => {
+        const checked = doneSet.has(t.id);
+        const usBadge = t.us ? `<span class="pill ${t.us.toLowerCase()}">[${t.us}]</span>` : "";
+        return `<label class="task-row ${checked ? 'done' : ''}">
+          <input type="checkbox" ${checked ? "checked" : ""} onchange="toggleTask('${t.id}')">
+          <span class="tid">${t.id}</span>
+          ${t.p ? '<span class="pill p">[P]</span>' : ''}
+          ${usBadge}
+          <span class="desc">${t.text}</span>
+        </label>`;
+      }).join("")}
+    </div>`;
+  }).join("");
+  const total = 32, done = doneSet.size;
+  document.getElementById("progText").textContent = `${done} / ${total} hoàn thành`;
+  document.getElementById("progFill").style.width = `${Math.round(done / total * 100)}%`;
+}
+
+function saveSignoff() {
+  const data = {
+    approver: document.getElementById("approver").value,
+    decision: document.getElementById("decision").value,
+    note: document.getElementById("note").value,
+    ts: new Date().toLocaleString("vi-VN")
+  };
+  localStorage.setItem("facegate_tasks_003_v4_signoff", JSON.stringify(data));
+  document.getElementById("savedMsg").textContent = "Đã lưu xác nhận lúc " + data.ts;
+}
+
+render();
+</script>
+</body>
+</html>
