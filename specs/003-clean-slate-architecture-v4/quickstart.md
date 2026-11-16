@@ -56,3 +56,16 @@ ffprobe -hide_banner rtsp://127.0.0.1:8554/gate1_main
    - Gửi `kill -9` tới `Perception Process` khi hệ thống đang mở: xác nhận trang Bảng công không lỗi, `/api/health` chuyển trạng thái cảnh báo trong `≤ 5 giây`, tiến trình AI tự khởi động lại, các clip có `legal_hold = 1` không bị xóa khi giả lập ngưỡng đĩa `< 2 GB`, và lệnh `POST /api/attendance/revoke` đồng bộ hủy chính xác chứng từ trên HRM.
 3. **Kiểm chứng Crossing Quarantine & Tải 10 Người Đồng thời (`K3`–`K4`)**:
    - Chạy bộ Replay `K0` trên các đoạn 2 người mặc đồng phục đi chéo: xác nhận **0 ca chốt nhầm tên** và chu kỳ xử lý (gồm decode 3MP + cắt ROI 1:1 + suy luận) giữ **< 200 ms** ở tải 10 khuôn mặt.
+
+---
+
+## 4. Kiểm chứng Khắc phục Độ chính xác & Sẵn sàng ERP (v4.1)
+
+1. **Kiểm tra đồng nhất `TEMPLATE_FRONTAL` trên góc nghiêng (`align_by_pose`)**:
+   - Chạy kiểm thử trên ảnh/clip góc nghiêng (`|yaw| ∈ [40°, 80°]`): xác nhận `cos(profile, frontal) ≥ 0.50` với cùng một người (thay vì tụt xuống `0.04–0.34`), và `backfill_legacy_embeddings()` tự động tái trích xuất toàn bộ ảnh gốc trong `data/enroll/` sang `model_version` `*_v41`.
+2. **Kiểm tra thống nhất luồng chạy & chống miss/tráo track**:
+   - Chạy `./run.sh` ở cấu hình mặc định: xác nhận các sự kiện ghi nhận đều có `yaw` từ `3DDFA_V2` và chạy qua lõi `LLR` + `two_stage_roi` (cả RTSP `isolated_worker=true` lẫn ngoại lệ webcam USB).
+   - Kiểm thử kịch bản 2 người qua cổng khi `YOLOX` miss người B (vẫn bắt được nhờ fallback) và kịch bản A rời khung → B bước vào `< 2.0 s` (bắt buộc tách track qua `recognition.split_cosine`, **0 check-in nhầm cho A**).
+   - Kiểm thử `unattached_face` mất thân 1–2 frame không bị khóa `spoof` oan.
+3. **Hiệu chuẩn `LLR` & Báo cáo FAR/FRR đa nhân viên (`≥ 20` người)**:
+   - Chạy `python scripts/replay_eval.py <bundle_dir> --calibrate-llr --out calibration.json` trên tập ≥ 20 người thật + người lạ + ≥ 20 lượt/PAI giả mạo: kiểm tra báo cáo `FRR` theo dải `|yaw|`, chọn `tau` đạt `FAR_ci95_upper ≤ 0.1%` (cặp) / `≤ 1%` (sự kiện), `FRR / BPCER ≤ 5%`, `APCER ≤ 10%`, và cập nhật `calibration.json` vào `config.yaml`.

@@ -53,6 +53,8 @@ class Track:
     person_bbox: np.ndarray | None = None
     quarantine: bool = False                         # dang hoac vua giao cat -> cam chot check-in cho toi khi vuot lai Open-Set
     crossing_active: bool = False
+    unattached_streak: int = 0
+    spoof_reason: str | None = None
     verification_tier: str | None = None
     pose_group: str = "frontal"
     last_yaw: float = 0.0
@@ -252,5 +254,10 @@ class IoUTracker:
         keep.last_reason = drop.last_reason
         if drop.best_quality > keep.best_quality:
             keep.best_quality, keep.best_crop = drop.best_quality, drop.best_crop
+        if drop.decision_acc is not None:
+            keep.decision_acc = drop.decision_acc
+        keep.verification_tier = drop.verification_tier or keep.verification_tier
+        keep.pose_group, keep.last_yaw = drop.pose_group, drop.last_yaw
+        keep.min_abs_yaw = min(keep.min_abs_yaw, drop.min_abs_yaw)
         keep.side, keep.vel = drop.side, drop.vel
         self.tracks.pop(drop.id, None)

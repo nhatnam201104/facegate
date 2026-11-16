@@ -285,6 +285,31 @@ stateDiagram-v2
   </section>
 
   <section class="card" style="margin-bottom:18px">
+    <h2>4b. Kế hoạch Khắc phục v4.1 — 10 Vấn đề Độ chính xác Nhận diện &amp; Chuẩn bị ERP (2026-11-16)</h2>
+    <div class="diagram-box" style="margin-bottom:14px">
+      <pre class="mermaid">
+flowchart LR
+  P1["Đợt 1 · Align &amp; Enroll<br/>pose.kps5 + TEMPLATE_FRONTAL<br/>outlier/cross_pose config"] --> P2["Đợt 2 · Decision &amp; Worker<br/>split_cosine + unlock ID<br/>unattached_streak=4 + min_frames=4"]
+  P2 --> P3["Đợt 3 · Thống nhất Runtime<br/>Mặc định chạy lõi v4<br/>Fallback toàn khung người thứ 2"]
+  P3 --> P4["Đợt 4 · Calibrate ERP<br/>replay_eval + fit_llr 4-param<br/>Tập ≥20–50 NV (FAR≤0.1%, FRR≤5%)"]
+      </pre>
+    </div>
+    <table>
+      <thead>
+        <tr><th>Mức</th><th>Vấn đề đã xác nhận</th><th>Giải pháp khắc phục v4.1</th><th>Tệp tác động</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><span class="badge" style="background:rgba(239,68,68,.2);color:#fca5a5;border-color:rgba(239,68,68,.4)">P0</span></td><td>#1 Template profile tự chế cắt mép mũi/mắt (<code>cos</code> tụt <code>0.04–0.34</code>)</td><td>Luôn dùng <code>pose.kps5</code> căn vào <code>TEMPLATE_FRONTAL</code> chuẩn duy nhất (<code>cos</code> lên <code>0.54–0.73</code>).</td><td><code>app/engines.py</code>, <code>app/enrollment.py</code></td></tr>
+        <tr><td><span class="badge" style="background:rgba(239,68,68,.2);color:#fca5a5;border-color:rgba(239,68,68,.4)">P0</span></td><td>#4 Khóa ID không gỡ, thiếu <code>split_cosine</code> → nối nhầm A sang B</td><td>Tách track theo <code>split_cosine</code>, gỡ lock nếu mẫu sau rớt ngưỡng trước <code>COMMITTED</code>.</td><td><code>app/decision.py</code>, <code>app/worker_perception.py</code>, <code>app/tracker.py</code></td></tr>
+        <tr><td><span class="badge" style="background:rgba(239,68,68,.2);color:#fca5a5;border-color:rgba(239,68,68,.4)">P0</span></td><td>#5 Mặc định <code>isolated_worker=False</code> chạy nhầm <code>Pipeline</code> cũ</td><td>Thống nhất mọi chế độ chạy mặc định dùng lõi suy luận v4 (3DDFA + LLR + 2-stage ROI).</td><td><code>app/config.py</code>, <code>config.yaml</code>, <code>app/main.py</code>, <code>run.sh</code></td></tr>
+        <tr><td><span class="badge warn">P1</span></td><td>#2, #3 Bỏ sót người thứ 2 &amp; khóa spoof vĩnh viễn sau 1 frame miss thân</td><td>Chạy fallback toàn khung khi mặt &lt; <code>max_faces</code>; đếm <code>unattached_streak ≥ 4</code> mới khóa spoof.</td><td><code>app/worker_perception.py</code></td></tr>
+        <tr><td><span class="badge warn">P1</span></td><td>#6, #7, #8 Lỗi yaw 5 điểm, lọc outlier enroll 0.45 &amp; liveness 2 frame / bỏ qua &gt;40°</td><td>Dùng <code>min_frames=4</code>, <code>min_profile_frames=4</code>, thêm <code>require_frontal_for_checkin</code> cho ERP; nới <code>roll</code> góc nghiêng.</td><td><code>app/enrollment.py</code>, <code>app/quality.py</code>, <code>app/worker_perception.py</code></td></tr>
+        <tr><td><span class="badge">P2</span></td><td>#9, #10 Trọng số LLR đặt tay &amp; lỗi margin 1 người (<code>b_bias=-4.8</code>)</td><td>Đổi baseline 1 người thành <code>0.0</code>; nối <code>fit_llr_logistic_4param</code> vào <code>replay_eval.py</code> đo tập ≥20–50 NV.</td><td><code>app/decision.py</code>, <code>scripts/replay_eval.py</code></td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section class="card" style="margin-bottom:18px">
     <h2>5. Bốn Câu hỏi Chuyển Giao PM / Pháp chế Quyết định tại Cổng <code>K0</code> &amp; <code>K0.5</code></h2>
     <table>
       <thead>

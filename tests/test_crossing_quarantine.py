@@ -88,7 +88,8 @@ def test_viewport_aware_truncation_and_3mp_1to1_roi_and_shift_schedule():
     class _DummyEngine:
         def detect(self, img):
             seen_crop_widths.append(img.shape[1])
-            return [_face(100, 80, 190, 190)]
+            # Tren ROI 1:1 thi du pixel de bat mat; tren khung thu nho fallback thi khong bat duoc
+            return [_face(100, 80, 190, 190)] if img.shape[1] < 1000 else []
 
     class _DummyCtx:
         def detect(self, small_img):

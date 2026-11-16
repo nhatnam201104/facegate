@@ -144,6 +144,39 @@ description: "Danh sách tác vụ triển khai chi tiết cho Tái Kiến trúc
 
 ---
 
+## Phase 8: Khắc phục v4.1 — Độ chính xác Nhận diện & Sẵn sàng Áp dụng ERP (2026-11-16)
+
+**Purpose**: Khắc phục toàn bộ 10 vấn đề kỹ thuật đã đối chiếu thực nghiệm trên `data/enroll/NV002/`, `data/clips/20261116/` và `data/facegate.db` (`R9`–`R13` trong `research.md`), đồng nhất đường chạy mặc định về lõi v4 và hiệu chuẩn `LLR` đa nhân viên trước khi đưa vào ERP.
+
+### Tests First for v4.1 Fixes ⚠️
+
+- [X] T033 [P] [US2] Tạo bộ kiểm thử hồi quy `tests/test_accuracy_v4_1.py` xác minh trên dữ liệu & model thật: (1) `align_by_pose` luôn căn theo `pose.kps5 + TEMPLATE_FRONTAL` đạt `cos(profile, frontal) ≥ 0.50` trên ảnh nghiêng `NV002`; (2) `TrackDecisionAccumulator` dùng `single_gallery_baseline_llr = 0.0` (không dùng `b_bias = -4.8`) khi gallery có 1 người; (3) gỡ `locked_employee_id` về `COLLECTING` khi chuỗi mẫu mới rớt ngưỡng trước `COMMITTED` và tách track theo `recognition.split_cosine = 0.25` khi người B thay người A trong `< 2.0 s`
+- [X] T034 [P] [US2] Bổ sung các ca kiểm thử chống miss, chất lượng góc nghiêng & chống spoof oan trong `tests/test_accuracy_v4_1.py`: (1) `detect_faces_two_stage_3mp` vẫn phát hiện đủ người thứ 2 khi `YOLOX-Nano` chỉ trả về 1 hộp người (`always_fallback_unmatched = true`); (2) `unattached_streak` chịu được 1–3 frame miss thân người mà không gán `t.spoof = True` vĩnh viễn, chỉ khóa spoof khi `unattached_streak >= 4`; (3) áp đúng `liveness.min_frames = 4`, `recognition.min_profile_frames = 4` và chặn check-in thuần góc nghiêng khi `liveness.require_frontal_for_checkin = true`; (4) `assess()` trong `app/quality.py` nới `max_roll` thích ứng (`+15°`) khi `|yaw| > 40°`
+- [X] T035 [P] [US4] Bổ sung kiểm thử trong `tests/test_guided.py` cho `process_enrollment` tính tâm `mean` ưu tiên từ nhóm `frontal`, lọc outlier bằng `outlier_min_cosine (0.42)` cho frontal và `cross_pose_min_cosine (0.20)` cho profile đọc từ config, và xác minh `backfill_legacy_embeddings()` tái trích xuất embedding theo `model_version` mới
+
+### Implementation — Đợt 1: Alignment, Quality & Enrollment
+
+- [X] T036 [P] [US2] Sửa `align_by_pose()` và nâng hậu tố `EdgeFaceEngine.model_version` (`"yunet2023mar+edgeface_xs_gamma_06_v41"`) trong `app/engines.py`: bỏ sử dụng `TEMPLATE_LEFT_PROFILE` / `TEMPLATE_RIGHT_PROFILE` (và các điểm viền hàm `pts[15], pts[12], pts[1], pts[4]`), luôn dùng `pose.kps5` (từ `3DDFA_V2`) căn chỉnh affine về lưới chuẩn duy nhất `TEMPLATE_FRONTAL` (`ARCFACE_TEMPLATE`) cho mọi góc nhìn `frontal`, `left_profile`, `right_profile`
+- [X] T037 [P] [US2] Nâng cấp `assess()` trong `app/quality.py`: nới biên `max_roll` thích ứng (`max_roll + 15.0`) khi `|yaw| > 40°` để tránh loại oan các frame góc nghiêng hợp lệ do dao động `roll` của `3DDFA_V2`
+- [X] T038 [US4] Sửa `process_enrollment()` và `backfill_legacy_embeddings()` trong `app/enrollment.py`: căn chỉnh đồng nhất theo `pose.kps5 + TEMPLATE_FRONTAL`, tính vector trung tâm `mean` ưu tiên từ mẫu `frontal`, thay hằng số hardcode `0.45` bằng `outlier_min_cosine` (`0.42`) cho `frontal` và `cross_pose_min_cosine` (`0.20`) cho `profile` đọc từ `ecfg`, lưu đủ `yaw`/`pitch` khi backfill để `backfill_legacy_embeddings()` tự tái trích xuất toàn bộ ảnh gốc `data/enroll/` sang `model_version` `_v41`
+
+### Implementation — Đợt 2: Decision Core, Tracker & Liveness Đa Frame
+
+- [X] T039 [US2] Nâng cấp `LLRConfig` và `TrackDecisionAccumulator` trong `app/decision.py`: (1) đọc `recognition.min_profile_frames` (`4`) từ `cfg["recognition"]` và áp dụng khi mọi mẫu đã nạp đều có `|yaw| > frontal_max_yaw`; (2) thay `second_val = b_bias` bằng `single_gallery_baseline_llr` (`0.0`) khi `len(means) == 1`; (3) bổ sung cửa sổ trượt tái xác minh và cơ chế gỡ `locked_employee_id` về `COLLECTING` khi điểm LLR gần nhất tụt xuống dưới ngưỡng trước khi `COMMITTED`
+- [X] T040 [US2] Nâng cấp `app/tracker.py` (`Track.unattached_streak`, siết `_jump`) và `app/worker_perception.py`: (1) bỏ nhánh `if not collected:` cứng trong `detect_faces_two_stage_3mp()`, luôn chạy quét `fallback_det_width` khi `len(collected) < max_faces` (`always_fallback_unmatched`) và gộp theo `IoU > 0.55`; (2) đọc `recognition.split_cosine` (`0.25`) kiểm tra trên embedding trung bình của track để tách track ngay khi đổi người; (3) đổi `unattached_face` sang bộ đếm liên tiếp `unattached_streak >= unattached_confirm_frames (4)` mới bật `t.spoof = True`; (4) dùng `liveness.min_frames (4)` thống nhất cho cả trạng thái `"live"` lẫn `"spoof"` và thực thi `liveness.require_frontal_for_checkin`
+
+### Implementation — Đợt 3: Thống nhất Đường Chạy Mặc định
+
+- [X] T041 [US2] Cập nhật `app/config.py`, `config.yaml`, `app/main.py`, `run.sh` và `app/pipeline.py` theo hợp đồng `contracts/config-and-hrm-ledger.md`: bổ sung các khóa cấu hình v4.1 đúng section (`pipeline.always_fallback_unmatched`, `recognition.min_profile_frames`, `recognition.split_cosine`, `decision.single_gallery_baseline_llr`, `tracking.unattached_confirm_frames`, `liveness.require_frontal_for_checkin`), bật mặc định `isolated_worker: true` cho RTSP/file và đưa chế độ single-process webcam USB (ngoại lệ `FR-006`) dùng chung `PoseEstimator3D` + `TrackDecisionAccumulator` + `align_by_pose` thay vì thuật toán `Pipeline` cũ
+
+### Polish, Calibration & ERP Acceptance — Đợt 4
+
+- [X] T042 [P] Mở rộng `scripts/replay_eval.py`: đọc các mẫu `(sim, |yaw|, quality, label)` từ `observations.jsonl` (tạo cặp cùng người / khác người ghép chéo theo `subject_code`), tích hợp `fit_llr_logistic_4param` (từ `app/decision.py`), tính **FRR** theo dải `|yaw|` (`≤ 40°` và `> 40°`) và bổ sung cờ CLI `--calibrate-llr` tự chọn `tau_threshold` tại điểm `FAR_ci95_upper ≤ 0.001` rồi xuất JSON `llr_weights` đề xuất cùng báo cáo **FAR / FRR / APCER / BPCER**
+- [ ] T043 Thu thập gói kiểm định đa nhân viên (`≥ 20–50` nhân viên thật + người lạ + ≥ 20 lượt/PAI giả mạo tại cổng lắp đặt), chạy `python scripts/replay_eval.py <bundle_dir> --calibrate-llr --out calibration.json` và cập nhật bộ `llr_weights` vào `config.yaml` bảo đảm đạt **FAR ≤ 0.1% (cặp) / ≤ 1% (sự kiện)**, **FRR ≤ 5%**, **APCER ≤ 10%**, **BPCER ≤ 5%**
+- [X] T044 Chạy lại toàn bộ `.venv/bin/python -m pytest -v` và hoàn tất kiểm chứng mục 4 trong `specs/003-clean-slate-architecture-v4/quickstart.md` trước khi bàn giao sang triển khai ERP
+
+---
+
 ## Dependencies & Execution Order
 
 ### Phase Dependencies
@@ -154,6 +187,7 @@ description: "Danh sách tác vụ triển khai chi tiết cho Tái Kiến trúc
 - **Phase 5 (`US3` — Append-Only HRM Ledger)**: Phụ thuộc bảng `attendance_ledger` ở `T005`; có thể triển khai song song với cuối Phase 4 và khớp nối clip `legal_hold` với `T011` của `US1`.
 - **Phase 6 (`US4` — Đăng ký WASM & Camera Cổng)**: Phụ thuộc `T010` (luồng chuẩn `gate1_main` từ `MediaMTX`) và `T016` (`EdgeFaceEngine` + `pose3d.py`).
 - **Phase 7 — Polish, `K4` & `K5` (`T029`–`T032`)**: Thực hiện sau khi hoàn tất các User Story mục tiêu và trước khi mở cổng truy cập mạng nội bộ `0.0.0.0`.
+- **Phase 8 — Khắc phục Độ chính xác v4.1 & Chuẩn bị ERP (`T033`–`T044`)**: Phụ thuộc các file lõi đã dựng ở Phase 4 & 6. Trong đó `T033`–`T035` (Tests First) chạy song song `[P]`; sau đó `T036`–`T037` chạy song song `[P]` trước `T038`; `T039` → `T040` → `T041` chạy tuần tự để khóa logic worker & cấu hình mặc định; cuối cùng `T042` chạy `[P]` trước khi thực nghiệm đa nhân viên `T043` và kiểm định cuối `T044`.
 
 ### User Story Dependencies
 

@@ -26,6 +26,7 @@ pipeline:
   stream_fps: 15
   stream_width: 960
   two_stage_roi: true                # resize chinh frame /stream1 ve 640px tim nguoi -> cat ROI 1:1 tren 3MP
+  always_fallback_unmatched: true    # quet bo sung toan khung neu YOLOX miss nguoi thu 2
   fallback_det_width: 1280
 
 quality:
@@ -69,12 +70,14 @@ decision:
   tau_threshold: 0.45
   margin_base: 0.70
   margin_yaw_slope: 0.30
+  single_gallery_baseline_llr: 0.0
   auto_enroll_online: false          # CAM tuyet doi tu hoc mau online chong dau doc (H17)
 
 tracking:
   crossing_face_iou: 0.25            # kich hoat Crossing Quarantine khi 2 hop mat giao cat (H3)
   crossing_person_iou: 0.40
   viewport_bottom_grace: 0.80        # y2 >= 0.80*H coi la cat khung hop le, tat phat unattached_face
+  unattached_confirm_frames: 4       # chi khoa spoof unattached_face sau N frame miss lien tiep
 
 events:
   # Moi nhan vien chi check-in 1 lan/ngay; cac lan sau chi hien "Da cham cong luc ..."
@@ -90,8 +93,9 @@ liveness:                  # chong gia mao bang anh/man hinh (MiniFASNet, passiv
   enabled: true
   threshold: 0.70          # TB xac suat "nguoi that" >= muc nay moi duoc cham cong
   spoof_below: 0.35        # TB duoi muc nay = gia mao: canh bao, khong cham cong
-  min_frames: 4            # so frame tot toi thieu truoc khi ket luan
+  min_frames: 4            # so frame tot toi thieu truoc khi ket luan (ca live va spoof)
   window: 8                # lay trung binh tren N frame gan nhat cua track
+  require_frontal_for_checkin: true  # bat buoc qua MiniFASNet chinh dien (|yaw|<=40) truoc khi check-in ERP
 
 attendance:
   shift_start: "08:00"

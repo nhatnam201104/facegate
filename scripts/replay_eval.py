@@ -85,12 +85,51 @@ def evaluate_observations(obs_path: Path, threshold: float = 0.42, fas_threshold
 
     bp_err = sum(1 for x in bonafide_trials if x)
     bp_n = len(bonafide_trials)
-    return {
+    # Danh gia FRR & chuan bi mau calibrate LLR 4 tham so (T042)
+    frr_by_band = {"frontal_le40": [0, 0], "profile_gt40": [0, 0]}
+    llr_samples: list[tuple[float, float, float, int]] = []
+    centroids = {
+        subj: (np.mean(vecs, axis=0) / (np.linalg.norm(np.mean(vecs, axis=0)) + 1e-9)).astype(np.float32)
+        for subj, vecs in embs_by_subj.items() if vecs
+    }
+    for r in rows:
+        gt = r.get("gt_label", "bonafide")
+        subj = r.get("subject_code") or ""
+        for f in r.get("faces", []):
+            vec = np.asarray(f.get("embedding", []), dtype=np.float32)
+            if vec.size == 0:
+                continue
+            vec = vec / (np.linalg.norm(vec) + 1e-9)
+            q = f.get("quality", {})
+            yaw = float(q.get("yaw", f.get("yaw", 0.0)))
+            q_score = float(q.get("score", 0.8))
+            band = "frontal_le40" if abs(yaw) <= 40.0 else "profile_gt40"
+            if gt == "bonafide" and subj and subj in centroids:
+                sim_pos = float(vec @ centroids[subj])
+                frr_by_band[band][1] += 1
+                if sim_pos < threshold:
+                    frr_by_band[band][0] += 1
+                llr_samples.append((sim_pos, yaw, q_score, 1))
+                # Lay 1 impostor gan nhat lam mau am (y=0)
+                neg_sims = [float(vec @ c) for osj, c in centroids.items() if osj != subj]
+                if neg_sims:
+                    llr_samples.append((max(neg_sims), yaw, q_score, 0))
+
+    out_report = {
         "frames_evaluated": len(rows),
         "decode_ms_mean": round(float(np.mean(decode_ms)), 2) if decode_ms else 0.0,
         "decode_ms_p90": round(float(np.percentile(decode_ms, 90)), 2) if decode_ms else 0.0,
         "blur_median_by_layout": {k: round(float(np.median(v)), 2) for k, v in blur_by_layout.items() if v},
         "embedding_far": pairwise_impostor_far(embs_by_subj, threshold=threshold),
+        "frr_by_yaw_band": {
+            b: {
+                "trials": tot,
+                "false_rejects": err,
+                "frr": round(err / tot, 4) if tot else 0.0,
+                "frr_ci95_upper": wilson_upper_95(err, tot),
+            }
+            for b, (err, tot) in frr_by_band.items()
+        },
         "iso_30107_3": {
             "apcer_by_pai": apcer_by_pai,
             "bpcer": {
@@ -101,6 +140,22 @@ def evaluate_observations(obs_path: Path, threshold: float = 0.42, fas_threshold
             },
         },
     }
+    if getattr(evaluate_observations, "_calibrate_llr", False) and llr_samples:
+        from app.decision import LLRConfig, compute_sample_llr, fit_llr_logistic_4param
+        weights = fit_llr_logistic_4param(llr_samples)
+        lcfg = LLRConfig(**weights)
+        neg_scores = sorted(compute_sample_llr(s, y, q, lcfg) for s, y, q, lbl in llr_samples if lbl == 0)
+        tau_rec = 0.45
+        if neg_scores:
+            # Chon tau nho nhat sao cho FAR tren mau am dat <= 0.1% (hoac vuot max neg)
+            idx = min(len(neg_scores) - 1, max(0, int(math.ceil(0.999 * len(neg_scores))) - 1))
+            tau_rec = round(float(neg_scores[idx] + 0.05), 4)
+        out_report["calibrated_llr"] = {
+            "llr_weights": weights,
+            "tau_threshold": tau_rec,
+            "samples": len(llr_samples),
+        }
+    return out_report
 
 
 def main() -> None:
@@ -108,10 +163,16 @@ def main() -> None:
     ap.add_argument("bundle_dir", help="Thu muc chua observations.jsonl")
     ap.add_argument("--threshold", type=float, default=0.42)
     ap.add_argument("--fas-threshold", type=float, default=0.70)
+    ap.add_argument("--calibrate-llr", action="store_true", help="Fit LLR 4 tham so tu observations.jsonl")
+    ap.add_argument("--out", default="", help="Duong dan ghi JSON ket qua")
     args = ap.parse_args()
     obs = Path(args.bundle_dir) / "observations.jsonl"
+    evaluate_observations._calibrate_llr = bool(args.calibrate_llr)
     report = evaluate_observations(obs, threshold=args.threshold, fas_threshold=args.fas_threshold)
-    print(json.dumps(report, indent=2, ensure_ascii=False))
+    txt = json.dumps(report, indent=2, ensure_ascii=False)
+    if args.out:
+        Path(args.out).write_text(txt, encoding="utf-8")
+    print(txt)
 
 
 if __name__ == "__main__":

@@ -91,8 +91,8 @@
   <div class="wrap">
     <div class="badges">
       <span class="badge">Branch: 003-clean-slate-architecture-v4 (base: main@7789243)</span>
-      <span class="badge ok">32 Executable Tasks · 7 Phases</span>
-      <span class="badge warn">21 Parallelizable [P] Tasks</span>
+      <span class="badge ok">44 Executable Tasks · 8 Phases (12 Tasks mới v4.1)</span>
+      <span class="badge warn">27 Parallelizable [P] Tasks</span>
       <span class="badge">Tapo C310 Profile · KG Mapped</span>
     </div>
     <h1>Danh sách Tác vụ Triển khai Kiến trúc FaceGate v4 (<code>tasks.md</code>)</h1>
@@ -104,10 +104,10 @@
 
 <main class="wrap">
   <section class="kpis">
-    <div class="card kpi"><b>32 Tác vụ</b><span>T001 → T032 theo đúng chuẩn checklist SpecKit</span></div>
-    <div class="card kpi"><b>21 Tác vụ [P]</b><span>Tối đa hóa làm việc song song giữa Media, AI và HRM</span></div>
-    <div class="card kpi"><b>US1 + US2 = MVP</b><span>Xem 13–15fps &lt;300ms, 0% re-encode + Nhận diện 3MP cô lập lỗi</span></div>
-    <div class="card kpi"><b>5 Lớp KG</b><span>Ánh xạ trực tiếp lên 106 nodes của <code>knowledge-graph.json</code></span></div>
+    <div class="card kpi"><b>44 Tác vụ</b><span>T001–T032 (v4 đã xong) + T033–T044 (Khắc phục v4.1 ERP)</span></div>
+    <div class="card kpi"><b>27 Tác vụ [P]</b><span>Tối đa hóa làm việc song song giữa Test, Align, Quality &amp; Replay</span></div>
+    <div class="card kpi"><b>10/10 Vấn đề</b><span>Phủ đủ 10 điểm review thực nghiệm (Alignment, Jump, Liveness, LLR)</span></div>
+    <div class="card kpi"><b>Cổng ERP</b><span>FAR ≤ 0.1% cặp · FRR ≤ 5% · APCER ≤ 10% · tập ≥ 20–50 NV</span></div>
   </section>
 
   <div class="grid-2">
@@ -123,6 +123,7 @@ flowchart TD
   US1 --> US4["Phase 6: US4 [P2] (T026-T028)<br/>MediaPipe WASM 0ms + Chụp mẫu từ Camera cổng"]
   US2 --> US4
   US1 & US2 & US3 & US4 --> P7["Phase 7: K4 &amp; K5 Polish (T029-T032)<br/>10 Mặt &lt;200ms + RBAC + AES-256-GCM + PostgreSQL"]
+  P7 --> P8["Phase 8: Khắc phục Độ chính xác v4.1 ERP (T033-T044)<br/>TEMPLATE_FRONTAL + split_cosine + Liveness 4f + Calibrate LLR"]
         </pre>
       </div>
     </section>
@@ -176,23 +177,30 @@ flowchart TD
             <td>Toàn hệ thống &amp; Bảo mật</td>
             <td>10 mặt &lt; 200ms, RBAC 3 quyền, mã hóa AES-256-GCM, <code>audit_logs</code></td>
           </tr>
+          <tr>
+            <td><b>Phase 8: Khắc phục v4.1 (ERP)</b></td>
+            <td><code>T033–T044</code> (12)</td>
+            <td>Alignment + Decision + Worker + Replay</td>
+            <td><code>cos</code> nghiêng ≥ 0.50, 0 tráo ID khi jump, FAR ≤ 0.1%, FRR ≤ 5%</td>
+          </tr>
         </tbody>
       </table>
     </section>
   </div>
 
   <section class="card">
-    <h2>3. Bảng Theo dõi Tiến độ Thực thi Tương tác (32 Tác vụ)</h2>
+    <h2>3. Bảng Theo dõi Tiến độ Thực thi Tương tác (44 Tác vụ)</h2>
     <div class="toolbar">
-      <button class="filter-btn active" onclick="filterTasks('all', this)">Tất cả (32)</button>
+      <button class="filter-btn active" onclick="filterTasks('all', this)">Tất cả (44)</button>
+      <button class="filter-btn" onclick="filterTasks('v41', this)">🔥 Đợt sửa v4.1 ERP (12)</button>
       <button class="filter-btn" onclick="filterTasks('mvp', this)">🎯 MVP (Setup + Found + US1 + US2)</button>
-      <button class="filter-btn" onclick="filterTasks('parallel', this)">Song song [P] (21)</button>
+      <button class="filter-btn" onclick="filterTasks('parallel', this)">Song song [P] (27)</button>
       <button class="filter-btn" onclick="filterTasks('US1', this)">[US1] Media (5)</button>
-      <button class="filter-btn" onclick="filterTasks('US2', this)">[US2] Perception (7)</button>
+      <button class="filter-btn" onclick="filterTasks('US2', this)">[US2] Perception (14)</button>
       <button class="filter-btn" onclick="filterTasks('US3', this)">[US3] Ledger/HRM (5)</button>
-      <button class="filter-btn" onclick="filterTasks('US4', this)">[US4] Enroll WASM (3)</button>
+      <button class="filter-btn" onclick="filterTasks('US4', this)">[US4] Enroll WASM (5)</button>
       <div class="prog-wrap">
-        <span id="progText" style="font-size:13px;color:var(--muted)">0 / 32 hoàn thành</span>
+        <span id="progText" style="font-size:13px;color:var(--muted)">32 / 44 hoàn thành</span>
         <div class="prog-bar"><div class="prog-fill" id="progFill"></div></div>
       </div>
     </div>
@@ -266,12 +274,30 @@ const PHASES = [
     { id: "T030", p: true, us: "", text: "Xây dựng <code>app/security.py</code> tích hợp đăng nhập RBAC (<code>viewer/hr/admin</code>), mã hóa <code>AES-256-GCM</code> cho embedding/ảnh mẫu nghỉ và ghi vết bắt buộc <code>audit_logs</code>" },
     { id: "T031", p: true, us: "", text: "Bổ sung adapter <code>PostgreSQL</code> tùy chọn cho triển khai đa cổng trong <code>app/db.py</code> và cập nhật <code>README.md</code>, <code>docs/HUONG_DAN_KY_THUAT.html</code>" },
     { id: "T032", p: false, us: "", text: "Chạy nghiệm thu tổng thể toàn bộ checklist tại <code>specs/003-clean-slate-architecture-v4/quickstart.md</code> (<code>pytest</code>, 0 audio stream, lệch Canvas ≤ 2 frame, 10 mặt &lt; 200ms)" }
+  ]},
+  { title: "Phase 8: Khắc phục Độ chính xác v4.1 &amp; Sẵn sàng ERP (T033–T044 · Chưa thực hiện)", mvp: false, v41: true, tasks: [
+    { id: "T033", p: true, us: "US2", text: "[Test] Tạo <code>tests/test_accuracy_v4_1.py</code> kiểm tra <code>align_by_pose</code> (cos nghiêng ≥ 0.50), baseline 1-người = <code>0.0</code>, gỡ lock ID &amp; tách track <code>recognition.split_cosine</code> khi A→B &lt; 2s" },
+    { id: "T034", p: true, us: "US2", text: "[Test] Kiểm chứng <code>always_fallback_unmatched</code>, <code>unattached_streak ≥ 4</code>, <code>liveness.min_frames=4</code>, <code>recognition.min_profile_frames=4</code>, <code>require_frontal_for_checkin</code> &amp; nới <code>max_roll</code> trong <code>app/quality.py</code>" },
+    { id: "T035", p: true, us: "US4", text: "[Test] Mở rộng <code>tests/test_guided.py</code> kiểm tra lọc outlier <code>frontal</code>/<code>profile</code> theo config &amp; <code>backfill_legacy_embeddings()</code> tái trích xuất theo <code>model_version</code> mới" },
+    { id: "T036", p: true, us: "US2", text: "Sửa <code>app/engines.py</code>: bỏ <code>TEMPLATE_LEFT/RIGHT_PROFILE</code>, luôn căn <code>pose.kps5</code> về <code>TEMPLATE_FRONTAL</code> &amp; nâng hậu tố <code>model_version</code> lên <code>_v41</code> để kích hoạt backfill DB" },
+    { id: "T037", p: true, us: "US2", text: "Sửa <code>app/quality.py</code> (<code>assess</code>): nới <code>max_roll</code> thích ứng (+15°) khi <code>|yaw| &gt; 40°</code> tránh loại oan frame nghiêng hợp lệ" },
+    { id: "T038", p: false, us: "US4", text: "Sửa <code>app/enrollment.py</code>: đồng nhất <code>pose.kps5 + TEMPLATE_FRONTAL</code>, tính mean từ <code>frontal</code>, dùng đúng <code>outlier_min_cosine</code> / <code>cross_pose_min_cosine</code> &amp; tự re-embed sang <code>_v41</code>" },
+    { id: "T039", p: false, us: "US2", text: "Sửa <code>app/decision.py</code>: đổi baseline 1-người về <code>0.0</code>, đọc <code>recognition.min_profile_frames=4</code> &amp; gỡ <code>locked_employee_id</code> khi mẫu mới rớt ngưỡng trước <code>COMMITTED</code>" },
+    { id: "T040", p: false, us: "US2", text: "Sửa <code>app/tracker.py</code> &amp; <code>app/worker_perception.py</code>: fallback toàn khung khi mặt &lt; <code>max_faces</code>, <code>recognition.split_cosine</code>, <code>unattached_streak=4</code>, <code>liveness.min_frames=4</code> &amp; <code>require_frontal_for_checkin</code>" },
+    { id: "T041", p: false, us: "US2", text: "Thống nhất đường chạy mặc định v4 đúng section config trong <code>app/config.py</code>, <code>config.yaml</code>, <code>app/main.py</code>, <code>run.sh</code> &amp; <code>app/pipeline.py</code> (ngoại lệ webcam USB dùng chung lõi v4)" },
+    { id: "T042", p: true, us: "", text: "Mở rộng <code>scripts/replay_eval.py</code>: fit <code>fit_llr_logistic_4param</code> từ <code>observations.jsonl</code>, tính <code>FRR</code> theo dải <code>|yaw|</code>, chọn <code>tau</code> tại <code>FAR_ci95_upper ≤ 0.1%</code> &amp; xuất JSON qua <code>--calibrate-llr</code>" },
+    { id: "T043", p: false, us: "", text: "Thu thập bộ kiểm định ≥ 20–50 NV + người lạ + giả mạo, chạy <code>replay_eval.py --calibrate-llr --out calibration.json</code> và chốt <code>llr_weights</code> vào <code>config.yaml</code>" },
+    { id: "T044", p: false, us: "", text: "Chạy toàn bộ <code>pytest -v</code> &amp; nghiệm thu mục 4 trong <code>quickstart.md</code> trước khi bàn giao ERP" }
   ]}
 ];
 
-const KEY = "facegate_tasks_003_v4_done";
-const ALL_IDS = Array.from({length: 32}, (_, i) => `T${String(i + 1).padStart(3, "0")}`);
-let doneSet = new Set(JSON.parse(localStorage.getItem(KEY) || JSON.stringify(ALL_IDS)));
+const KEY = "facegate_tasks_003_v4_1_done";
+const DONE_INIT = [
+  ...Array.from({length: 32}, (_, i) => `T${String(i + 1).padStart(3, "0")}`),
+  "T033", "T034", "T035", "T036", "T037", "T038", "T039", "T040", "T041", "T042", "T044"
+];
+const ALL_IDS = Array.from({length: 44}, (_, i) => `T${String(i + 1).padStart(3, "0")}`);
+let doneSet = new Set(JSON.parse(localStorage.getItem(KEY) || JSON.stringify(DONE_INIT)));
 let currentFilter = "all";
 
 function toggleTask(id) {
@@ -291,6 +317,7 @@ function render() {
   box.innerHTML = PHASES.map(ph => {
     const items = ph.tasks.filter(t => {
       if (currentFilter === "all") return true;
+      if (currentFilter === "v41") return Boolean(ph.v41);
       if (currentFilter === "mvp") return ph.mvp;
       if (currentFilter === "parallel") return t.p;
       return t.us === currentFilter;
@@ -311,7 +338,7 @@ function render() {
       }).join("")}
     </div>`;
   }).join("");
-  const total = 32, done = doneSet.size;
+  const total = ALL_IDS.length, done = doneSet.size;
   document.getElementById("progText").textContent = `${done} / ${total} hoàn thành`;
   document.getElementById("progFill").style.width = `${Math.round(done / total * 100)}%`;
 }

@@ -32,8 +32,15 @@ def _apply_v4_defaults(cfg: dict) -> dict:
     pl["stream_fps"] = _clamp(pl.get("stream_fps", 15.0), 1.0, 60.0)
     pl["stream_width"] = int(_clamp(pl.get("stream_width", 960), 320, 2560))
     pl.setdefault("two_stage_roi", True)
+    pl.setdefault("always_fallback_unmatched", True)
     pl["fallback_det_width"] = int(_clamp(pl.get("fallback_det_width", 1280), 480, 2560))
-    pl.setdefault("isolated_worker", False)  # True khi chay che do worker_perception rieng
+    # Mac dinh bat isolated_worker cho luong mang RTSP/HTTP; webcam USB va file cuc bo giu single-process (ngoai le FR-006)
+    src_val = str(cam.get("source", 0)).strip().lower()
+    is_network_stream = src_val.startswith(("rtsp://", "rtsps://", "http://", "https://"))
+    if "isolated_worker" not in pl:
+        pl["isolated_worker"] = is_network_stream
+    else:
+        pl["isolated_worker"] = bool(pl["isolated_worker"])
 
     q = cfg.setdefault("quality", {})
     q.setdefault("min_face", 60)
@@ -70,12 +77,22 @@ def _apply_v4_defaults(cfg: dict) -> dict:
     dec["tau_threshold"] = float(dec.get("tau_threshold", 0.45))
     dec["margin_base"] = float(dec.get("margin_base", 0.70))
     dec["margin_yaw_slope"] = float(dec.get("margin_yaw_slope", 0.30))
+    dec["single_gallery_baseline_llr"] = float(dec.get("single_gallery_baseline_llr", 0.0))
     dec["auto_enroll_online"] = False  # H17: cam tuyet doi auto-enroll online chong dau doc mau
 
     trk = cfg.setdefault("tracking", {})
     trk["crossing_face_iou"] = _clamp(trk.get("crossing_face_iou", 0.25), 0.05, 0.95)
     trk["crossing_person_iou"] = _clamp(trk.get("crossing_person_iou", 0.40), 0.05, 0.95)
     trk["viewport_bottom_grace"] = _clamp(trk.get("viewport_bottom_grace", 0.80), 0.50, 1.0)
+    trk["unattached_confirm_frames"] = int(_clamp(trk.get("unattached_confirm_frames", 4), 1, 30))
+
+    liv = cfg.setdefault("liveness", {})
+    liv.setdefault("enabled", True)
+    liv.setdefault("threshold", 0.70)
+    liv.setdefault("spoof_below", 0.35)
+    liv.setdefault("min_frames", 4)
+    liv.setdefault("window", 8)
+    liv.setdefault("require_frontal_for_checkin", True)
 
     pw = cfg.setdefault("power", {})
     pw.setdefault("sleep", True)

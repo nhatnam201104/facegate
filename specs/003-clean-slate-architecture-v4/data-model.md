@@ -70,10 +70,13 @@ Mỗi hành trình khuôn mặt trong `Perception Process` vận hành theo máy
                                                       [COMMITTED]
 ```
 
-- **Quy tắc Tích lũy Điểm & Khử Tương quan (`Novelty Gate` — `H4`, `H25`)**:
+- **Quy tắc Tích lũy Điểm & Khử Tương quan (`Novelty Gate` — `H4`, `H25`, cập nhật v4.1)**:
   - Mẫu khung hình mới tại thời điểm $t$ chỉ được cộng vào bộ tích lũy khi cách mẫu được chấp nhận gần nhất $\Delta t \ge 250\text{ ms}$ **hoặc** góc đầu xoay thêm $|\Delta\text{yaw}| \ge 8^\circ$.
-  - Điểm đóng góp của mẫu đối với ứng viên $k$: $\ell_k(t) = a \cdot s_k(t) + b + c \cdot |\text{yaw}(t)| + d \cdot q(t)$ với $a > 0$.
-  - Điều kiện bắt buộc để chuyển sang `IDENTIFIED`: $\overline{\text{LLR}}_{\text{top1}} \ge \tau$ **và** $\overline{\text{LLR}}_{\text{top1}} - \overline{\text{LLR}}_{\text{top2}} \ge \mu_0 + \mu_1 \cdot \frac{|\overline{\text{yaw}}|}{90^\circ}$.
+  - Điểm đóng góp của mẫu đối với ứng viên $k$: $\ell_k(t) = a \cdot s_k(t) + b + c \cdot |\text{yaw}(t)| + d \cdot q(t)$ với $a > 0$, tính trên embedding căn chỉnh đồng nhất theo **`pose.kps5 + TEMPLATE_FRONTAL`** (không dùng template profile tự chế).
+  - Yêu cầu số mẫu tối thiểu theo góc nhìn: `min_samples = min_good_frames` (`2`) nếu có ít nhất 1 mẫu `|yaw| <= frontal_max_yaw`, hoặc `min_profile_frames` (`4`) nếu toàn bộ mẫu đều ở góc nghiêng.
+  - Điều kiện bắt buộc để chuyển sang `IDENTIFIED`: $\overline{\text{LLR}}_{\text{top1}} \ge \tau$ **và** $\overline{\text{LLR}}_{\text{top1}} - \overline{\text{LLR}}_{\text{top2}} \ge \mu_0 + \mu_1 \cdot \frac{|\overline{\text{yaw}}|}{90^\circ}$ (khi gallery chỉ có 1 ứng viên, $\overline{\text{LLR}}_{\text{top2}}$ lấy baseline trung lập `single_gallery_baseline_llr = 0.0` thay vì `b_bias = -4.8`).
+  - **Cơ chế Bảo toàn Track & Tái Xác minh (`split_cosine` & Unlock)**: Track duy trì `agg_embedding` trượt và `unattached_streak`. Nếu embedding mới có `cosine < split_cosine (0.25)` so với `agg_embedding` → tách thành track mới ngay; nếu các mẫu mới trước `COMMITTED` làm rớt ngưỡng hoặc đổi top-1 → gỡ `locked_employee_id` về `COLLECTING`. Chỉ kết luận `unattached_face` spoof khi `unattached_streak >= unattached_confirm_frames (4)`.
+  - **Cổng Liveness Đa Frame & ERP (`require_frontal_for_checkin`)**: `live_status == "live"` chỉ kích hoạt khi `len(t.live) >= liveness.min_frames (4)` và `mean(t.live) >= threshold (0.70)`; khi `liveness.require_frontal_for_checkin = true`, mọi lượt `COMMITTED` bắt buộc có tối thiểu `min_frames` xác thực `MiniFASNet` ở `|yaw| <= frontal_max_yaw`.
 
 ---
 

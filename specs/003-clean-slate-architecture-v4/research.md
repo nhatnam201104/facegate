@@ -106,3 +106,39 @@
   - **Phương án C (Pure C310 Optimized)**: Giữ thuần Tapo C310 (dây RJ45, `Day Mode` + đèn ≥ 250–300 lux, chạy Audit-by-Exception `H7`).
   - **Phương án C' (Upgrade Enterprise IP Camera — `H31`)**: Đổi sang Camera IP doanh nghiệp phổ thông ống kính `4–6 mm`, `25–30 fps`, khóa được tốc độ màn trập, chỉnh được `GOP = 1 s` & tắt audio từ nguồn (tận dụng lại C310 cho giám sát chung).
 - **Rationale**: Phá vỡ vòng lặp phụ thuộc giữa vị trí lắp và thiết kế phần mềm (`H23`), đo lường trung thực bằng giao thức **ISO/IEC 30107-3** (`APCER` từng loại PAI ≥ 20 lượt, `BPCER`, và cận trên khoảng tin cậy `FAR` ghép chéo `H12`), giúp PM ra quyết định đầu tư dựa trên số liệu thật thay vì cảm tính.
+
+---
+
+## Bổ sung Phase v4.1 (2026-11-16) — Kết quả Nghiên cứu Khắc phục 10 Vấn đề Độ chính xác Nhận diện & Sẵn sàng ERP
+
+Các quyết định dưới đây giải quyết triệt để 10 phát hiện kỹ thuật đã được kiểm chứng thực nghiệm trên `data/enroll/NV002/`, `data/clips/20261116/` và `data/facegate.db`.
+
+### R9. Chuẩn hóa Căn chỉnh Đa góc về Duy nhất `TEMPLATE_FRONTAL` (`app/engines.py`)
+- **Decision**: Xóa bỏ việc dùng `TEMPLATE_LEFT_PROFILE` / `TEMPLATE_RIGHT_PROFILE` và thay điểm hàm (`pts[15]`, `pts[12]`, `pts[1]`, `pts[4]`) trong `align_by_pose()`; luôn sử dụng 5 điểm mốc mắt–mũi–miệng `pose.kps5` từ `3DDFA_V2` để biến đổi affine về lưới chuẩn duy nhất **`TEMPLATE_FRONTAL` (`ARCFACE_TEMPLATE`)** trước khi đưa vào `EdgeFace-XS` / `SFace` / `ArcFace`, đồng thời re-embed lại toàn bộ mẫu cũ từ ảnh gốc `data/enroll/`.
+- **Rationale**: Đo thực nghiệm trên `NV002` và clip `134148_3.webm` (`yaw = 36°..77°`) chứng minh 2 template nghiêng tự chế cắt sát mép mũi/mắt và tạo `33.5%` viền đen, kéo tụt cosine xuống `0.038–0.338`. Khi dùng `pose.kps5 + TEMPLATE_FRONTAL`, cosine góc nghiêng tăng vọt lên **`0.536–0.732`** ở mọi frame.
+- **Alternatives considered**: *Huấn luyện lại / fine-tune EdgeFace với template nghiêng riêng* — loại bỏ vì tốn dữ liệu lớn và phá vỡ tương thích trọng số chuẩn.
+
+### R10. Hợp nhất Đường Suy luận Mặc định & Chống Bỏ sót Người Thứ Hai (`app/main.py`, `app/config.py`, `app/worker_perception.py`)
+- **Decision**:
+  1. Hợp nhất để **mọi chế độ chạy mặc định** (kể cả khi `isolated_worker=false` dùng webcam USB) đều đi qua cùng một lõi suy luận v4 (`detect_faces_two_stage_3mp` + `PoseEstimator3D` + `TrackDecisionAccumulator`), đặt `isolated_worker: true` cho cấu hình camera IP/RTSP mặc định.
+  2. Sửa `detect_faces_two_stage_3mp()`: bỏ điều kiện `if not collected:` cứng; luôn chạy lượt quét `fallback_det_width` khi số khuôn mặt thu được từ ROI ít hơn `max_faces` (hoặc luôn hợp nhất kết quả theo IoU `> 0.55` nếu tổng độ trễ vẫn `< 100 ms`), đảm bảo người thứ 2 bị `YOLOX-Nano` miss vẫn được `YuNet` dò ra.
+- **Rationale**: Dữ liệu `data/facegate.db` (`yaw=None` ở ngày `2026-11-16`) cho thấy chế độ mặc định trước đây chạy nhầm `Pipeline` cũ (chỉ bắt `50%` frame trên `134406_10.webm` so với `97.7%` của `two_stage_roi`, và `yaw` 5 điểm nhảy tới `-108°/163°`).
+- **Alternatives considered**: *Giữ song song 2 bộ nhận diện khác thuật toán* — loại bỏ vì gây sai lệch khi benchmark/demo cho ERP.
+
+### R11. Chống Dính ID Sau Khóa Danh tính & Chống Khóa Spoof Oan Sau 1 Frame (`app/decision.py`, `app/tracker.py`, `app/worker_perception.py`)
+- **Decision**:
+  1. Trong `PerceptionWorker`, khôi phục kiểm tra tách track theo `split_cosine` (`0.25`) trên embedding trung bình của track; bổ sung cơ chế **trượt/gỡ khóa danh tính** trong `TrackDecisionAccumulator` (đánh giá trên cửa sổ N mẫu mới nhất, nếu embedding sau khi khóa không còn khớp `locked_employee_id` hoặc `top1_llr < tau - slack` trước khi `COMMITTED`, buộc reset danh tính; nếu đã `COMMITTED` thì đóng track cũ và tạo track mới khi vượt `split_cosine`).
+  2. Chuyển `unattached_face` từ gán `t.spoof = True` vĩnh viễn sau 1 frame sang bộ đếm liên tiếp `unattached_streak >= unattached_confirm_frames` (mặc định `4` frame); chỉ khi miss thân người liên tục mới kết luận spoof, còn nếu YOLOX bắt lại được thân ở frame kế tiếp thì reset bộ đếm.
+- **Rationale**: Loại bỏ rủi ro chí tử khi người A rời khung và người B bước vào trong vòng `track_max_age = 2.0s` bị `_jump` gán nhầm ID của A để ghi check-in sai công ERP, đồng thời triệt tiêu cảnh báo giả oan do `YOLOX-Nano` nháy mất 1 frame.
+
+### R12. Siết Cổng Liveness Đa Frame & An Toàn Cho Chấm Công Tính Lương ERP (`app/worker_perception.py`, `app/enrollment.py`, `app/quality.py`)
+- **Decision**:
+  1. Dùng thống nhất `liveness.min_frames` (mặc định `4`) cho cả nhánh kết luận `"live"` lẫn `"spoof"`, bỏ hardcode `>= 2` tại `worker_perception.py:226`.
+  2. Thực thi `recognition.min_profile_frames` (`4`) trong `TrackDecisionAccumulator` khi track chỉ toàn góc nghiêng (`min_abs_yaw > frontal_max_yaw`).
+  3. Thêm cờ cấu hình `liveness.require_frontal_for_checkin` (mặc định `true` cho ERP dùng 1 camera RGB thường): không cho phép chốt `COMMITTED` thuần bằng nhánh `|yaw| > 40°` khi chưa qua `MiniFASNet` ở góc nhìn chính diện (`±40°`).
+  4. Trong `app/enrollment.py`, dùng chuẩn `pose.kps5 + TEMPLATE_FRONTAL`, tính vector trung tâm lọc outlier ưu tiên trên nhóm `frontal` và áp đúng `outlier_min_cosine` (`0.42`) cho frontal / `cross_pose_min_cosine` (`0.20`) cho profile; trong `app/quality.py`, nới `max_roll` thích ứng khi `|yaw| > 40°` (`max_roll + 15°`) để tránh loại oan frame nghiêng hợp lệ.
+
+### R13. Sửa Lỗ hổng Margin 1-Người & Hiệu chuẩn `LLR` Đa Nhân viên (`app/decision.py`, `scripts/replay_eval.py`)
+- **Decision**:
+  1. Trong `TrackDecisionAccumulator._evaluate_identity()`, khi `len(means) == 1`, thay thế `second_val = self.cfg.b_bias` (`-4.8`) bằng baseline trung lập `single_gallery_baseline_llr` (mặc định `0.0`), buộc người duy nhất vẫn phải vượt `max(tau_threshold, 0.0 + req_margin)` thay vì tự động cộng margin ảo `~5.0`.
+  2. Tích hợp `fit_llr_logistic_4param` và thống kê `FRR` / `TAR@FAR=0.1%` / `APCER` / `BPCER` vào `scripts/replay_eval.py` để calibrate lại `llr_weights`, `tau_threshold`, `margin_base` trên tập dữ liệu thật `≥ 20–50` nhân viên + người lạ trước khi nghiệm thu ERP.

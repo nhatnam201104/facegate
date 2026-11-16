@@ -75,11 +75,12 @@ def detect_faces_two_stage_3mp(
     context_detector=None,
     fallback_det_width: int = 1280,
     max_faces: int = 10,
+    always_fallback_unmatched: bool = True,
 ) -> tuple[list[Face], ContextScene | None]:
-    """Giai phap H33 + H35:
+    """Giai phap H33 + H35 + v4.1:
     1. Resize chinh frame /stream1 ve <=640px chay YOLOX-Nano (<1ms resize, Δt = 0ms giua person box va frame 3MP).
     2. Cat ROI Dau-Vai 1:1 tren cung frame 3MP goc dua vao YuNet -> giu 100% mat do pixel o cu ly 2.0-3.2m.
-    3. Fallback quet o fallback_det_width (1280px) khi dung qua sat camera khong bat duoc than nguoi.
+    3. Quet bo sung o fallback_det_width (1280px) khi khong co mat hoac con suat de tranh bo sot nguoi thu 2 bi YOLOX miss.
     """
     h, w = frame.shape[:2]
     scene: ContextScene | None = None
@@ -101,11 +102,27 @@ def detect_faces_two_stage_3mp(
             if not any(iou(gb, prev.bbox) > 0.55 for prev in collected):
                 collected.append(Face(gb, f.score, gk))
 
-    if not collected:
+    if not collected or (always_fallback_unmatched and len(collected) < max_faces):
         sf = min(1.0, float(fallback_det_width) / max(w, 1))
         fb_img = cv2.resize(frame, (int(w * sf), int(h * sf))) if sf < 1.0 else frame
         for f in engine.detect(fb_img):
-            collected.append(Face(f.bbox / sf, f.score, f.kps / sf) if sf < 1.0 else f)
+            gf = Face(f.bbox / sf, f.score, f.kps / sf) if sf < 1.0 else f
+            cx = float(gf.bbox[0] + gf.bbox[2]) * 0.5
+            cy = float(gf.bbox[1] + gf.bbox[3]) * 0.5
+            in_scanned_roi = any(rx1 <= cx <= rx2 and ry1 <= cy <= ry2 for rx1, ry1, rx2, ry2 in rois)
+            is_dup = any(
+                iou(gf.bbox, prev.bbox) > 0.45
+                or (
+                    in_scanned_roi
+                    and np.hypot(
+                        cx - float(prev.bbox[0] + prev.bbox[2]) * 0.5,
+                        cy - float(prev.bbox[1] + prev.bbox[3]) * 0.5,
+                    ) < 1.15 * max(prev.w, gf.w)
+                )
+                for prev in collected
+            )
+            if not is_dup:
+                collected.append(gf)
 
     collected.sort(key=lambda f: f.w * f.h, reverse=True)
     return collected[:max_faces], scene
@@ -140,6 +157,9 @@ class PerceptionWorker:
         )
         self.llr_cfg = LLRConfig.from_cfg(cfg)
         self.viewport_grace = float(trk_cfg["viewport_bottom_grace"])
+        self.unattached_confirm_frames = int(trk_cfg.get("unattached_confirm_frames", 4))
+        self.split_cos = float(cfg["recognition"].get("split_cosine", 0.25))
+        self.require_frontal_for_checkin = bool(cfg.get("liveness", {}).get("require_frontal_for_checkin", True))
         self.camera_id = str(cfg["camera"].get("id", "gate-1"))
         self.seq = 0
         self._stop = False
@@ -157,11 +177,16 @@ class PerceptionWorker:
                 frame, self.engine, self.ctx_det,
                 fallback_det_width=int(pcfg.get("fallback_det_width", 1280)),
                 max_faces=max_faces,
+                always_fallback_unmatched=bool(pcfg.get("always_fallback_unmatched", True)),
             )
         else:
             faces = self.engine.detect(frame)[:max_faces]
             scene = self.ctx_det.detect(frame) if self.ctx_det is not None and faces else None
 
+        prev_track_meta = {
+            tid: (tr.last_seen, tr.min_abs_yaw)
+            for tid, tr in self.tracker.tracks.items()
+        }
         matched, expired = self.tracker.update(
             faces, now_sec, person_boxes=scene.persons if scene is not None else None,
         )
@@ -181,7 +206,7 @@ class PerceptionWorker:
             t.min_abs_yaw = min(t.min_abs_yaw, abs(pose.yaw))
             track_poses.append(pose)
             track_quals.append(q)
-            if q.ok and not t.crossing_active:
+            if q.ok and not t.crossing_active and not t.spoof:
                 batch_indices.append(idx)
                 batch_aligned.append(self.engine.align(frame, f, pose=pose, pose_group=pose.pose_group))
 
@@ -198,11 +223,48 @@ class PerceptionWorker:
                 f.bbox, scene, frame_height=h,
                 viewport_bottom_grace=self.viewport_grace,
             )
-            if ctx_eval["spoof_reason"] in ("screen_detected", "unattached_face"):
+            if ctx_eval["spoof_reason"] == "screen_detected":
                 t.spoof = True
+                t.spoof_reason = "screen_detected"
+            elif ctx_eval["spoof_reason"] == "unattached_face":
+                t.unattached_streak += 1
+                if t.unattached_streak >= getattr(self, "unattached_confirm_frames", 4):
+                    t.spoof = True
+                    t.spoof_reason = t.spoof_reason or "unattached_face"
+            else:
+                t.unattached_streak = 0
 
             if idx in emb_by_idx and not t.spoof:
                 emb = emb_by_idx[idx]
+                agg = t.agg_embedding()
+                if len(t.embs) >= 2 and agg is not None and float(emb @ agg) < getattr(self, "split_cos", 0.25):
+                    # Tracker noi nham sang nguoi khac (vd: _jump) -> dong track cu va tach track moi ngay
+                    old_end_ts, old_min_yaw = prev_track_meta.get(t.id, (t.last_seen, t.min_abs_yaw))
+                    events_out.append({
+                        "type": "track_event",
+                        "event_kind": "appearance_closed",
+                        "camera_id": self.camera_id,
+                        "track_id": t.id,
+                        "start_ts": t.first_seen,
+                        "end_ts": old_end_ts,
+                        "employee_id": t.employee_id,
+                        "code": t.code,
+                        "name": t.name,
+                        "spoof": t.spoof,
+                        "spoof_reason": t.spoof_reason,
+                        "verification_tier": t.verification_tier,
+                        "min_abs_yaw": round(old_min_yaw, 1) if old_min_yaw < 900 else 0.0,
+                    })
+                    t = self.tracker.split(t, f, now_sec)
+                    t.decision_acc = TrackDecisionAccumulator(cfg=self.llr_cfg)
+                    t.pose_group, t.last_yaw, t.last_reason = pose.pose_group, pose.yaw, q.reason
+                    t.min_abs_yaw = abs(pose.yaw)
+                    if ctx_eval["spoof_reason"] == "unattached_face":
+                        t.unattached_streak = 1
+                    acc = t.decision_acc
+                t.embs.append((emb, max(q.score, 0.05)))
+                t.embs = t.embs[-int(self.cfg["recognition"].get("max_track_embeddings", 10)):]
+
                 sims = self.gallery.all_employee_similarities(emb, pose_group=pose.pose_group)
                 acc.observe(now_sec * 1000.0, pose.yaw, q.score, sims)
                 if acc.locked_employee_id is not None:
@@ -213,19 +275,35 @@ class PerceptionWorker:
                         t.verification_tier = acc.verification_tier
                         t.score, t.margin = acc.top1_llr, acc.llr_margin
                         t.quarantine = False
+                elif t.employee_id is not None and not t.event_done:
+                    # Bi go lock truoc khi COMMITTED
+                    t.employee_id = t.code = t.name = t.verification_tier = None
+                    t.score = t.margin = 0.0
 
-            if self.liveness is not None and q.ok and abs(pose.yaw) <= 40.0 and not t.spoof:
+            liv_cfg = self.cfg.get("liveness", {})
+            liv_min = int(liv_cfg.get("min_frames", 4))
+            liv_thr = float(liv_cfg.get("threshold", 0.70))
+            liv_spoof = float(liv_cfg.get("spoof_below", 0.35))
+            liv_win = int(liv_cfg.get("window", 8))
+            frontal_max = float(self.cfg.get("recognition", {}).get("frontal_max_yaw", 40.0))
+
+            if self.liveness is not None and q.ok and abs(pose.yaw) <= frontal_max and not t.spoof:
                 t.live.append(self.liveness.real_prob(frame, f.bbox))
-                t.live = t.live[-8:]
-                if len(t.live) >= int(self.cfg["liveness"].get("min_frames", 4)):
-                    lm = float(np.mean(t.live))
-                    if lm < float(self.cfg["liveness"].get("spoof_below", 0.35)):
-                        t.spoof = True
+                t.live = t.live[-liv_win:]
+                if len(t.live) >= liv_min and float(np.mean(t.live)) < liv_spoof:
+                    t.spoof = True
+                    t.spoof_reason = t.spoof_reason or "texture_spoof"
 
-            live_status = "spoof" if t.spoof else (
-                "live" if (not self.liveness or (len(t.live) >= 2 and float(np.mean(t.live)) >= 0.70) or abs(pose.yaw) > 40.0 and ctx_eval["body_coupled"])
-                else "checking"
-            )
+            if t.spoof:
+                live_status = "spoof"
+            elif self.liveness is None:
+                live_status = "live"
+            elif len(t.live) >= liv_min and float(np.mean(t.live)) >= liv_thr:
+                live_status = "live"
+            elif (not getattr(self, "require_frontal_for_checkin", True)) and abs(pose.yaw) > frontal_max and ctx_eval["body_coupled"]:
+                live_status = "live"
+            else:
+                live_status = "checking"
             state_str = acc.apply_liveness(live_status)
 
             if state_str == "LIVE_CONFIRMED" and not t.event_done and not t.quarantine and t.employee_id is not None:
@@ -297,6 +375,7 @@ class PerceptionWorker:
                 "code": exp.code,
                 "name": exp.name,
                 "spoof": exp.spoof,
+                "spoof_reason": exp.spoof_reason,
                 "verification_tier": exp.verification_tier,
                 "min_abs_yaw": round(exp.min_abs_yaw, 1) if exp.min_abs_yaw < 900 else 0.0,
             })
@@ -316,6 +395,25 @@ class PerceptionWorker:
         return overlay_pkt, events_out
 
 
+DEFAULT_MAIN_RTSP = "rtsp://127.0.0.1:8554/gate1_main"
+
+
+def resolve_worker_source(cfg: dict) -> str | int:
+    """Chon nguon doc cho worker: chi dung main_source khi la MediaMTX mac dinh (8554) hoac khong phai file/RTSP rieng."""
+    cam = cfg.get("camera", {})
+    src = cam.get("source", 0)
+    main_src = cam.get("main_source")
+    if not main_src:
+        return src
+    s_low = str(src).strip().lower()
+    is_net = s_low.startswith(("rtsp://", "rtsps://", "http://", "https://"))
+    if not is_net:
+        return src
+    if main_src == DEFAULT_MAIN_RTSP and "127.0.0.1:8554" not in s_low and "localhost:8554" not in s_low:
+        return src
+    return main_src
+
+
 async def run_worker_loop(cfg: dict, sock_path: Path, port: int = 18091) -> None:
     worker = PerceptionWorker(cfg)
     ipc = IPCClient(sock_path=sock_path, port=port)
@@ -330,7 +428,7 @@ async def run_worker_loop(cfg: dict, sock_path: Path, port: int = 18091) -> None
                 worker.gallery.reload()
 
     cmd_task = asyncio.create_task(_listen_commands())
-    src = cfg["camera"].get("main_source") or cfg["camera"]["source"]
+    src = resolve_worker_source(cfg)
     cap = open_capture_with_hwaccel(src)
     det_iv = 1.0 / max(0.5, float(cfg["pipeline"]["detect_fps"]))
     last_hb = 0.0

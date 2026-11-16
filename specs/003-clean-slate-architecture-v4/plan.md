@@ -144,6 +144,41 @@ tests/
 
 ---
 
+## Kế hoạch Bổ sung v4.1 (2026-11-16) — Khắc phục 10 Vấn đề Độ chính xác Nhận diện & Chuẩn bị Áp dụng ERP
+
+> Bổ sung từ phiên `/code-review` đối chiếu thực nghiệm trên `data/enroll/NV002/`, `data/clips/20261116/` và `data/facegate.db` (`R9`–`R13` trong [research.md](research.md)).
+
+### Bảng Ánh xạ 10 Vấn đề → Giải pháp & Phạm vi Tệp
+
+| Mức | Vấn đề gốc đã xác nhận | Giải pháp thiết kế v4.1 | Tệp đích chỉnh sửa |
+|---|---|---|---|
+| **P0** | #1 `TEMPLATE_LEFT_PROFILE` / `RIGHT_PROFILE` cắt mép mũi/mắt (`cos` tụt còn `0.04–0.34`) | Bỏ 2 template tự chế; luôn dùng `pose.kps5` (3DDFA_V2) warp về **`TEMPLATE_FRONTAL`** chuẩn duy nhất; nâng hậu tố `model_version` (`_v41`) để `backfill_legacy_embeddings()` tự động re-embed `data/enroll/`. | `app/engines.py`, `app/enrollment.py` |
+| **P0** | #4 `locked_employee_id` không gỡ; thiếu `split_cosine` & xác minh lại → nối nhầm người qua `_jump` | Thêm kiểm tra `recognition.split_cosine` tách track khi đổi người; cho phép gỡ `locked_employee_id` nếu chuỗi mẫu mới rớt ngưỡng trước `COMMITTED`; siết `_jump`. | `app/decision.py`, `app/worker_perception.py`, `app/tracker.py` |
+| **P0** | #5 Mặc định `isolated_worker=False` khiến `./run.sh` chạy `Pipeline` cũ (bỏ qua 3DDFA, LLR, 2-stage ROI) | Bật mặc định `isolated_worker: true` cho RTSP/file; ngoại lệ webcam USB dev/demo không mở 2 tiến trình `/dev/videoN` sẽ dùng chung lõi suy luận v4 trong tiến trình chính (tuân thủ `FR-006`). | `app/config.py`, `config.yaml`, `app/main.py`, `run.sh`, `app/pipeline.py` |
+| **P1** | #2 `detect_faces_two_stage_3mp` bỏ qua quét fallback toàn khung khi đã thấy người đầu tiên | Khi số mặt từ ROI `< max_faces`, luôn chạy lượt fallback tại `fallback_det_width` và gộp theo IoU `> 0.55` để không miss người thứ 2. | `app/worker_perception.py` |
+| **P1** | #3 `unattached_face` chỉ 1 frame đã gán vĩnh viễn `t.spoof = True` | Đổi thành bộ đếm `unattached_streak >= unattached_confirm_frames (4)` liên tiếp mới kết luận spoof; reset về 0 nếu bắt lại được thân người. | `app/worker_perception.py`, `app/tracker.py` |
+| **P1** | #6 `Pipeline` mặc định đánh giá `yaw` 5 điểm (`-108°/163°`) & warp lệch ở góc 40–90° | Giải quyết triệt để qua việc hợp nhất về lõi v4 dùng `PoseEstimator3D` (chỉ giữ `Pipeline` làm preview/fallback hoặc truyền `pose` đồng nhất). | `app/pipeline.py`, `app/quality.py` |
+| **P1** | #7 `enrollment.py` hardcode `0.45` trên mean gộp, bỏ qua `outlier_min_cosine` & `cross_pose_min_cosine` | Tính `mean` ưu tiên từ mẫu `frontal` (đã align theo `TEMPLATE_FRONTAL`), đọc đúng `outlier_min_cosine (0.42)` cho frontal và `cross_pose_min_cosine (0.20)` cho profile. | `app/enrollment.py` |
+| **P1** | #8 Bỏ qua liveness khi `|yaw|>40°`; nhánh thẳng chờ 2 frame thay `min_frames=4`; bỏ quên `min_profile_frames=4` | Dùng đồng nhất `liveness.min_frames (4)` và `recognition.min_profile_frames (4)`; thêm `liveness.require_frontal_for_checkin: true` cho ERP 1 camera RGB thường. | `app/worker_perception.py`, `app/decision.py`, `config.yaml` |
+| **P2** | #9 Trọng số LLR & `tau=0.45` đặt tay; `fit_llr_logistic_4param` chưa gắn vào `replay_eval.py` | Thêm cờ `--calibrate-llr` vào `replay_eval.py` (tạo cặp cùng/khác người từ `observations.jsonl`, chọn `tau` tại `FAR_ci95_upper ≤ 0.1%`, tính `FRR` theo dải `|yaw|`) xuất bộ trọng số đề xuất trước khi lên ERP. | `scripts/replay_eval.py`, `config.yaml` |
+| **P2** | #10 Gallery 1 người gán `second_val = b_bias (-4.8)` làm margin luôn đạt | Thay bằng `single_gallery_baseline_llr (0.0)` khi `len(means) == 1`; bổ sung kiểm thử đa nhân viên (≥ 20 người) trên `replay_eval.py`. | `app/decision.py`, `tests/` |
+| **P2** | Tinh chỉnh `quality` góc nghiêng (`roll > 35°` bị loại oan ở 40°–75°) | Nới `max_roll` thích ứng (`+15°`) khi `|yaw| > 40°` trong `assess()`. | `app/quality.py` |
+
+### Lộ trình Thực thi Khắc phục 4 Đợt (Ước lượng: 3–4 ngày công)
+
+1. **Đợt 1 — Chuẩn hóa Alignment, Quality & Enrollment (0.5–1 ngày)**:
+   - Sửa `align_by_pose()` về `pose.kps5 + TEMPLATE_FRONTAL`; sửa `app/quality.py` (roll góc nghiêng) và `app/enrollment.py` (tâm frontal + `outlier_min_cosine` / `cross_pose_min_cosine`); viết unit test chứng minh `cos(profile, frontal) ≥ 0.50` trên dữ liệu mẫu.
+2. **Đợt 2 — Sửa Lõi Quyết định, Chống Tráo Track & Liveness Đa Frame (1 ngày)**:
+   - Sửa `app/decision.py` (`single_gallery_baseline_llr`, `min_profile_frames`, unlock trước commit) và `app/worker_perception.py` (`always_fallback_unmatched`, `unattached_streak`, `split_cosine`, `liveness.min_frames`, `require_frontal_for_checkin`).
+   - Bổ sung test hồi quy cho kịch bản: người A → B trong 2s (`_jump`), miss 1 frame thân (`unattached_face`), YOLOX miss người thứ 2, gallery 1 người vs nhiều người.
+3. **Đợt 3 — Thống nhất Luồng Chạy Mặc định (0.5 ngày)**:
+   - Cập nhật `app/config.py`, `config.yaml`, `app/main.py`, `run.sh` (và `app/pipeline.py` nếu giữ chế độ single-process cho webcam USB) để mọi cấu hình mặc định đều chạy đúng lõi v4.
+4. **Đợt 4 — Calibrate Đa Nhân viên & Cổng Nghiệm thu ERP (1–2 ngày)**:
+   - Mở rộng `scripts/replay_eval.py` tích hợp `fit_llr_logistic_4param` + tính `FRR`.
+   - Quay/thu thập dữ liệu **≥ 20–50 nhân viên** + người lạ + giả mạo tại cổng thực tế, chạy calibrate lại `llr_weights`, xác nhận đạt **FAR ≤ 0.1% (cặp) / ≤ 1% (sự kiện), FRR ≤ 5%, APCER ≤ 10%, BPCER ≤ 5%** trước khi đưa vào ERP.
+
+---
+
 ## Cổng Quyết định Chiến lược Trình PM / Pháp chế (`K0` & `K0.5`)
 
 1. **[Trước `K0` — `H11`] Phê duyệt Mẫu đơn Đồng ý Dữ liệu Sinh trắc học**: Xác nhận phạm vi quay thử nghiệm, cam kết **không thu âm** (`H28`), cô lập mạng LAN không đi qua cloud (`H29`), hạn xóa video gốc và điều khoản lưu ảnh mẫu nếu chọn thiết bị đầu cuối ở câu 3.

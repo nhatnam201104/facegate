@@ -71,7 +71,8 @@ def assess(img: np.ndarray, face: Face, qcfg: dict, pose=None) -> Quality:
 
     max_yaw = float(qcfg.get("max_yaw", 90))
     max_pitch = float(qcfg.get("max_pitch", 35))
-    max_roll = float(qcfg.get("max_roll", 35))
+    base_max_roll = float(qcfg.get("max_roll", 35))
+    max_roll = base_max_roll + (15.0 if abs(yaw) > 40.0 else 0.0)
 
     reason = ""
     if size < qcfg["min_face"]:

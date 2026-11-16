@@ -20,10 +20,12 @@ camera:
 pipeline:
   backend: edgeface                  # giữ EdgeFace-XS (MIT) FP32/FP16
   execution_provider: cpu            # cpu | openvino (chỉ bật sau khi vượt cổng Replay K4)
+  isolated_worker: true              # v4.1: bật mặc định cho RTSP/file; webcam USB dùng chung lõi v4 trong tiến trình
   detect_fps: 6                      # nhịp suy luận trên luồng 15 fps của C310
   max_faces: 10                      # nâng từ 3 lên 10 mặt ở K4
   two_stage_roi: true                # resize chính frame /stream1 về 640px tìm người -> cắt 1:1 trên 3MP (H33, H35)
-  fallback_det_width: 1280           # khi đứng quá sát không thấy thân người
+  always_fallback_unmatched: true    # v4.1: không bỏ sót người thứ 2 bị YOLOX miss khi đã tìm thấy người thứ 1
+  fallback_det_width: 1280           # độ rộng quét dự phòng toàn khung
 
 quality:
   min_face: 60                       # cạnh ngắn khuôn mặt tối thiểu (px) trên vùng cắt 1:1 3MP
@@ -32,12 +34,18 @@ quality:
   max_brightness: 225
   max_yaw: 90                        # mở khóa toàn dải góc ngang ±90° (từ mức 35° của main)
   max_pitch: 35                      # chặn góc ngẩng/cúi quá dốc
-  max_roll: 35                       # chặn nghiêng đầu quá mức
+  max_roll: 35                       # chặn nghiêng đầu quá mức (tự nới +15° khi |yaw| > 40° ở v4.1)
+
+recognition:                         # giữ đúng section tương thích ngược với config.yaml (v4.1)
+  frontal_max_yaw: 40
+  min_good_frames: 2
+  min_profile_frames: 4              # v4.1: bắt buộc đủ 4 mẫu khi chỉ toàn góc nghiêng
+  split_cosine: 0.25                 # v4.1: tách track ngay nếu cosine < 0.25 so với embedding trung bình track
 
 decision:
   novelty_min_dt_ms: 250             # khử tương quan chuỗi frame liên tiếp (H4)
   novelty_min_dyaw_deg: 8.0
-  llr_weights:                       # hiệu chỉnh trên cặp ghép chéo K0 (H25)
+  llr_weights:                       # hiệu chỉnh lại bằng fit_llr_logistic_4param qua replay_eval.py (v4.1)
     a_cos: 12.0
     b_bias: -4.8
     c_abs_yaw: -0.015
@@ -45,12 +53,22 @@ decision:
   tau_threshold: 0.45                # rào cứng 1: LLR(top1) >= tau (Nguyên tắc I)
   margin_base: 0.70                  # rào cứng 2: LLR(top1) - LLR(top2) >= margin_base + margin_yaw_slope * |yaw|/90
   margin_yaw_slope: 0.30
+  single_gallery_baseline_llr: 0.0   # v4.1: thay thế b_bias (-4.8) khi gallery chỉ có 1 người
   auto_enroll_online: false          # CẤM tuyệt đối tự học mẫu online chống đầu độc (H17)
 
 tracking:
   crossing_face_iou: 0.25            # kích hoạt Crossing Quarantine khi 2 mặt/đầu giao cắt (H3)
   crossing_person_iou: 0.40
   viewport_bottom_grace: 0.80        # y2 >= 0.80*H coi là cắt khung hợp lệ, tắt phạt unattached_face (H3)
+  unattached_confirm_frames: 4       # v4.1: chỉ chốt spoof unattached_face sau N frame liên tiếp miss thân người
+
+liveness:
+  enabled: true
+  threshold: 0.70
+  spoof_below: 0.35
+  min_frames: 4                      # v4.1: áp dụng đồng nhất cho cả nhánh live và spoof (bỏ hardcode 2)
+  window: 8
+  require_frontal_for_checkin: true  # v4.1: bắt buộc qua MiniFASNet chính diện trước khi COMMITTED ở ERP RGB
 
 power:
   sleep: true

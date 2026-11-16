@@ -62,15 +62,8 @@ def align_face(img: np.ndarray, kps: np.ndarray, size: int = 112,
 
 def align_by_pose(img: np.ndarray, face: Face, pose=None,
                   pose_group: str | None = None, size: int = 112) -> np.ndarray:
-    grp = pose_group or (pose.pose_group if pose is not None else "frontal")
-    if pose is not None and pose.landmarks3d is not None and len(pose.landmarks3d) == 68:
-        pts = pose.landmarks3d[:, :2].astype(np.float32)
-        if grp == "left_profile":
-            src = np.stack([pts[42:48].mean(axis=0), pts[15], pts[30], pts[54], pts[12]], axis=0)
-            return align_face(img, src, size=size, template=TEMPLATE_LEFT_PROFILE)
-        if grp == "right_profile":
-            src = np.stack([pts[1], pts[36:42].mean(axis=0), pts[30], pts[4], pts[48]], axis=0)
-            return align_face(img, src, size=size, template=TEMPLATE_RIGHT_PROFILE)
+    """Luon can chinh ve TEMPLATE_FRONTAL chuan cua model; dung kps5 cua 3DDFA_V2 khi co."""
+    if pose is not None and getattr(pose, "kps5", None) is not None and len(pose.kps5) == 5:
         return align_face(img, pose.kps5, size=size, template=TEMPLATE_FRONTAL)
     return align_face(img, face.kps, size=size, template=TEMPLATE_FRONTAL)
 
@@ -221,7 +214,7 @@ def _resolve_ort_providers(ep: str) -> list[str]:
 class EdgeFaceEngine:
     """YuNet (Apache-2.0) + EdgeFace-XS (MIT) tren FP32 CPU/OpenVINO, ho tro batch 10 khuon mat (T016, T029)."""
     name = "edgeface"
-    model_version = "yunet2023mar+edgeface_xs_gamma_06"
+    model_version = "yunet2023mar+edgeface_xs_gamma_06_v41"
 
     def __init__(self, models_dir: Path, det_score: float = 0.55, execution_provider: str = "cpu"):
         import onnxruntime as ort

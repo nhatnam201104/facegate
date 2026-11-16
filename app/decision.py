@@ -17,6 +17,10 @@ class LLRConfig:
     margin_base: float = 0.70
     margin_yaw_slope: float = 0.30
     min_samples: int = 2
+    min_profile_frames: int = 4
+    frontal_max_yaw: float = 40.0
+    single_gallery_baseline_llr: float = 0.0
+    reverify_window: int = 2
 
     def __post_init__(self) -> None:
         if self.a_cos <= 0:
@@ -38,6 +42,10 @@ class LLRConfig:
             margin_base=float(d.get("margin_base", 0.70)),
             margin_yaw_slope=float(d.get("margin_yaw_slope", 0.30)),
             min_samples=int(rc.get("min_good_frames", 2)),
+            min_profile_frames=int(rc.get("min_profile_frames", 4)),
+            frontal_max_yaw=float(rc.get("frontal_max_yaw", 40.0)),
+            single_gallery_baseline_llr=float(d.get("single_gallery_baseline_llr", 0.0)),
+            reverify_window=int(d.get("reverify_window", 2)),
         )
 
 
@@ -128,24 +136,42 @@ class TrackDecisionAccumulator:
         return True
 
     def _evaluate_identity(self) -> None:
-        if self.sample_count < self.cfg.min_samples or not self.candidate_llrs:
+        if not self.candidate_llrs:
             return
-        means = [(eid, float(np.mean(vals))) for eid, vals in self.candidate_llrs.items() if vals]
+        win = max(1, int(self.cfg.reverify_window))
+        use_recent = self.locked_employee_id is not None
+        eval_yaws = self.yaw_samples[-win:] if use_recent else self.yaw_samples
+        min_yaw = min((abs(y) for y in eval_yaws), default=90.0)
+        req_samples = self.cfg.min_samples if min_yaw <= self.cfg.frontal_max_yaw else max(
+            self.cfg.min_samples, self.cfg.min_profile_frames
+        )
+        if self.sample_count < req_samples:
+            return
+
+        means = [
+            (eid, float(np.mean(vals[-win:] if use_recent else vals)))
+            for eid, vals in self.candidate_llrs.items()
+            if vals
+        ]
         means.sort(key=lambda kv: kv[1], reverse=True)
         top_id, top_val = means[0]
-        # Neu gallery chi co 1 nhan vien duy nhat, second lay muc baseline am (b_bias) cho s=0
-        second_val = means[1][1] if len(means) > 1 else float(self.cfg.b_bias)
-        mean_abs_yaw = float(np.mean([abs(y) for y in self.yaw_samples])) if self.yaw_samples else 0.0
+        # Gallery 1 nguoi: dung baseline trung lap (0.0) thay vi b_bias (-4.8) de khong bo qua margin ao
+        second_val = means[1][1] if len(means) > 1 else float(self.cfg.single_gallery_baseline_llr)
+        mean_abs_yaw = float(np.mean([abs(y) for y in eval_yaws])) if eval_yaws else 0.0
         req_margin = required_llr_margin(mean_abs_yaw, self.cfg)
 
         self.top1_llr = round(top_val, 4)
         self.llr_margin = round(top_val - second_val, 4)
         if top_val >= self.cfg.tau_threshold and (top_val - second_val) >= req_margin:
             self.locked_employee_id = top_id
-            min_yaw = min((abs(y) for y in self.yaw_samples), default=90.0)
-            self.verification_tier = "verified" if min_yaw <= 40.0 else "profile_verified"
+            self.verification_tier = "verified" if min_yaw <= self.cfg.frontal_max_yaw else "profile_verified"
             if self.state in ("SEEN", "COLLECTING", "IDENTIFIED"):
                 self.state = "IDENTIFIED"
+        elif self.state != "COMMITTED" and self.locked_employee_id is not None:
+            # Mau moi sau khi khoa bi rot nguong truoc luc COMMITTED -> go lock de thu thap/xac minh lai
+            self.locked_employee_id = None
+            self.verification_tier = None
+            self.state = "COLLECTING"
 
     def apply_liveness(self, live_status: str) -> str:
         """Chuyen trang thai theo ket qua Liveness: 'live' | 'checking' | 'spoof'."""

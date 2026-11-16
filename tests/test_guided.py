@@ -201,3 +201,77 @@ def test_seven_angles_with_profile_90_and_supplement_and_isolated_engine(env):
     # Kiem tra cam tuyet doi auto_enroll_online (H17)
     with pytest.raises(EnrollError):
         try_auto_enroll_from_gate(ctx)
+
+
+def test_t035_enrollment_uses_frontal_mean_config_outliers_and_backfills_new_version(tmp_path):
+    from app.enrollment import backfill_legacy_embeddings, process_enrollment
+
+    cfg = load_config()
+    cfg["_paths"] = {**cfg["_paths"], "enroll": tmp_path / "enroll"}
+    cfg["enrollment"]["min_frames"] = 3
+    cfg["enrollment"]["outlier_min_cosine"] = 0.42
+    cfg["enrollment"]["cross_pose_min_cosine"] = 0.20
+    db = DB(tmp_path / "e.db")
+
+    # Gia lap 5 frame khac nhau nhe de khong bi dedup 0.95, nhung profile cos ~0.28 voi frontal (<0.45 nhung >=0.20!)
+    # Neu code cu dung mean gop + hardcode 0.45 -> bi loai thanh outlier (>30% -> EnrollError).
+    # Code moi dung frontal mean + cross_pose_min_cosine(0.20) -> giu lai thanh cong ca 5 mau!
+    vecs_by_idx = [
+        np.array([1.00, 0.00, 0.00, 0.00], dtype=np.float32),
+        np.array([0.92, 0.39, 0.00, 0.00], dtype=np.float32),
+        np.array([0.92, -0.39, 0.00, 0.00], dtype=np.float32),
+        np.array([0.28, 0.00, 0.96, 0.00], dtype=np.float32),
+        np.array([0.28, 0.00, -0.96, 0.00], dtype=np.float32),
+    ]
+    vecs_by_idx = [v / np.linalg.norm(v) for v in vecs_by_idx]
+    rng = np.random.default_rng(42)
+    base_img = rng.integers(80, 180, (240, 320, 3), dtype=np.uint8)
+    frames = [base_img.copy() for _ in range(5)]
+    pose_seq = [0.0, -5.0, 5.0, -75.0, 75.0]
+    call_idx = {"i": 0}
+
+    class _EnrollEngine:
+        model_version = "edgeface_test_v41"
+
+        def detect(self, img):
+            yaw = pose_seq[min(call_idx["i"], len(pose_seq) - 1)]
+            le, re = np.array([100.0, 80.0]), np.array([160.0, 80.0])
+            nose = np.array([130.0 + yaw / 90.0 * 40.0, 115.0])
+            kps = np.array([le, re, nose, [110.0, 150.0], [150.0, 150.0]], dtype=np.float32)
+            return [Face(np.array([70.0, 40.0, 190.0, 180.0], dtype=np.float32), 0.95, kps)]
+
+        def align(self, img, face, pose=None, pose_group=None):
+            idx = call_idx["i"]
+            call_idx["i"] += 1
+            return idx
+
+        def embed_aligned(self, aligned):
+            return vecs_by_idx[int(aligned) % len(vecs_by_idx)].copy()
+
+    class _EnrollPose:
+        def estimate(self, img, face, prev_group=None):
+            from app.pose3d import PoseResult
+            yaw = pose_seq[min(call_idx["i"], len(pose_seq) - 1)]
+            grp = "left_profile" if yaw < -40 else ("right_profile" if yaw > 40 else "frontal")
+            return PoseResult(yaw, 0.0, 0.0, grp, np.zeros((68, 3), np.float32), face.kps, 0.8)
+
+    ctx = SimpleNamespace(
+        cfg=cfg,
+        db=db,
+        engine=_EnrollEngine(),
+        pose=_EnrollPose(),
+        engine_lock=threading.Lock(),
+        threshold=0.40,
+    )
+    rep = process_enrollment(frames, "NV099", "Tran Van Test", ctx)
+    assert rep["outliers"] == 0
+    assert rep["frames_selected"] == 5
+
+    # Kiem tra backfill khi doi model_version sang _v41 moi tu dong tai trich xuat anh tu data/enroll/
+    ctx.engine.model_version = "edgeface_test_v41_next"
+    call_idx["i"] = 0
+    migrated = backfill_legacy_embeddings(ctx)
+    assert migrated == 1
+    rows = db.q("SELECT COUNT(*) AS n FROM embeddings WHERE employee_id=? AND model_version=?",
+                (rep["employee_id"], "edgeface_test_v41_next"))
+    assert rows[0]["n"] == 5

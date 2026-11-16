@@ -112,7 +112,11 @@ def process_enrollment(frames: list[np.ndarray], code: str, name: str, ctx) -> d
         if not q.ok:
             stats["rejected"][q.reason] = stats["rejected"].get(q.reason, 0) + 1
             continue
-        aligned = engine.align(fr, f, pose=pose) if "pose" in engine.align.__code__.co_varnames else engine.align(fr, f)
+        aligned = (
+            engine.align(fr, f, pose=pose, pose_group=pose.pose_group if pose is not None else None)
+            if "pose" in engine.align.__code__.co_varnames
+            else engine.align(fr, f)
+        )
         if lock is not None:
             with lock:
                 emb = engine.embed_aligned(aligned)
@@ -130,13 +134,21 @@ def process_enrollment(frames: list[np.ndarray], code: str, name: str, ctx) -> d
         raise EnrollError(f"Chỉ có {len(cands)} frame đạt chất lượng (cần ≥ {min_n}). "
                           f"Quay lại nơi đủ sáng, mặt to rõ, giữ máy ổn định. Chi tiết: {stats}")
 
-    # Nhat quan: loai frame lech khoi trung tam (co the la nguoi khac)
-    mean = np.mean([c["emb"] for c in cands], axis=0)
+    # Nhat quan: tinh tam tu nhom frontal (neu co) va ap dung nguong rieng theo pose_group
+    front_cands = [c for c in cands if c["pose_group"] == "frontal"] or cands
+    mean = np.mean([c["emb"] for c in front_cands], axis=0)
     mean /= np.linalg.norm(mean) + 1e-9
+    front_min_cos = float(ecfg.get("outlier_min_cosine", 0.42))
+    prof_min_cos = float(ecfg.get("cross_pose_min_cosine", 0.20))
+    outliers, kept = [], []
     for c in cands:
         c["sim_center"] = float(c["emb"] @ mean)
-    outliers = [c for c in cands if c["sim_center"] < 0.45]
-    cands = [c for c in cands if c["sim_center"] >= 0.45]
+        min_req = front_min_cos if c["pose_group"] == "frontal" else prof_min_cos
+        if c["sim_center"] < min_req:
+            outliers.append(c)
+        else:
+            kept.append(c)
+    cands = kept
     if len(outliers) > 0.3 * (len(cands) + len(outliers)):
         raise EnrollError("Các frame không nhất quán (có thể nhiều người trong video). Hãy quay lại chỉ một người.")
 
@@ -253,12 +265,20 @@ def backfill_legacy_embeddings(ctx, stop_event=None) -> int:
             img = cv2.imread(str(img_p))
             if img is None:
                 continue
-            faces = engine.detect(img)
+            if lock is None:
+                faces = engine.detect(img)
+            else:
+                with lock:
+                    faces = engine.detect(img)
             if not faces:
                 continue
             f = max(faces, key=lambda x: x.w * x.h)
             pose = pose_est.estimate(img, f) if pose_est is not None else None
-            aligned = engine.align(img, f, pose=pose) if "pose" in engine.align.__code__.co_varnames else engine.align(img, f)
+            aligned = (
+                engine.align(img, f, pose=pose, pose_group=pose.pose_group if pose is not None else None)
+                if "pose" in engine.align.__code__.co_varnames
+                else engine.align(img, f)
+            )
             if lock is None:
                 emb = engine.embed_aligned(aligned)
             else:
@@ -266,8 +286,12 @@ def backfill_legacy_embeddings(ctx, stop_event=None) -> int:
                     emb = engine.embed_aligned(aligned)
             bname = "_".join(img_p.stem.split("_")[1:]) or "thang-giua"
             grp = _pose_group_from_bin_or_yaw(bname, pose.yaw if pose is not None else 0.0)
-            db.add_embedding(emp["id"], emb, engine.model_version, 0.85, bname,
-                             f"enroll/{emp['code']}/{img_p.name}", source="backfill", pose_group=grp)
+            db.add_embedding(
+                emp["id"], emb, engine.model_version, 0.85, bname,
+                f"enroll/{emp['code']}/{img_p.name}", source="backfill", pose_group=grp,
+                yaw=float(pose.yaw) if pose is not None else None,
+                pitch=float(pose.pitch) if pose is not None else None,
+            )
             added += 1
         if added > 0:
             migrated += 1

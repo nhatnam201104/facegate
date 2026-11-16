@@ -144,6 +144,7 @@ def _handle_worker_ipc(msg: dict) -> None:
                 camera=msg.get("camera_id", "gate-1"),
                 verification_tier=msg.get("verification_tier"),
                 min_abs_yaw=msg.get("min_abs_yaw", 0.0),
+                spoof_reason=msg.get("spoof_reason") if kind == "spoof" else None,
                 legal_hold=1 if kind == "spoof" else 0,
                 legal_hold_reason="unreviewed_spoof" if kind == "spoof" else None,
             )
@@ -206,12 +207,16 @@ async def lifespan(app: FastAPI):
     ctx.hrm = HRMWorker(cfg, ctx.db, on_update=lambda i, s: bc({"type": "hrm", "id": i, "status": s}))
     ctx.shift = Shift.from_cfg(cfg)
     ctx.clips = ClipRecorder(cfg)
+    from .context_detector import create_context_detector
     isolated = bool(cfg["pipeline"].get("isolated_worker") or os.environ.get("FACEGATE_ISOLATED_WORKER") == "1")
     # Che do isolated: worker_perception la bo nhan dien duy nhat; Pipeline o day chi cap khung xem truoc (CR2).
+    # Ngoai le webcam USB (isolated=False): Pipeline dung chung loi v4 (PoseEstimator3D + ContextDetector + LLR).
     ctx.pipeline = Pipeline(cfg, ctx.db, ctx.engine, ctx.gallery, ctx.camera, ctx.hrm, bc,
                             liveness=None if isolated else create_liveness(cfg),
                             clips=None if isolated else ctx.clips,
-                            recognize=not isolated).start()
+                            recognize=not isolated,
+                            pose=None if isolated else ctx.pose,
+                            context_detector=None if isolated else create_context_detector(cfg)).start()
     zone = _load_settings().get("motion_zone")
     if zone:
         try:
@@ -261,7 +266,16 @@ async def lifespan(app: FastAPI):
 
     sup_task = asyncio.create_task(_supervise_worker_and_disk())
     backfill_stop = threading.Event()
-    bf_task = asyncio.create_task(asyncio.to_thread(backfill_legacy_embeddings, ctx, backfill_stop))
+
+    async def _run_backfill_and_reload() -> None:
+        migrated = await asyncio.to_thread(backfill_legacy_embeddings, ctx, backfill_stop)
+        if migrated > 0 and not backfill_stop.is_set():
+            ctx.gallery.reload()
+            if getattr(ctx, "ipc", None) is not None:
+                await ctx.ipc.send_command({"cmd": "reload_gallery", "version": ctx.gallery.version})
+            log.info("Da nap lai gallery sau backfill (%d nhan vien)", migrated)
+
+    bf_task = asyncio.create_task(_run_backfill_and_reload())
 
     log.info("FaceGate v4 san sang: http://%s:%s", cfg["server"]["host"], cfg["server"]["port"])
     yield
