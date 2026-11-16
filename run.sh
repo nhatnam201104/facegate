@@ -18,4 +18,8 @@ if [ "${NO_BROWSER:-0}" != "1" ] && { [ -n "${DISPLAY:-}" ] || [ -n "${WAYLAND_D
   (sleep 1.5 && xdg-open "$URL" >/dev/null 2>&1 || true) &
 fi
 
+if [ "${FACEGATE_ISOLATED_WORKER:-0}" = "1" ]; then
+  export FACEGATE_ISOLATED_WORKER=1
+fi
+
 exec .venv/bin/python -m app.main "$@"

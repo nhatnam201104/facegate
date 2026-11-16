@@ -15,7 +15,9 @@ main{padding:16px 20px}
 .live{display:grid;grid-template-columns:1fr 320px;gap:16px}
 @media(max-width:900px){.live,.cols{grid-template-columns:1fr!important}}
 .video{background:#000;border-radius:8px;overflow:hidden;min-height:300px;display:flex;align-items:center;justify-content:center}
-.video img{width:100%;display:block}
+.video img,.video video{width:100%;display:block}
+.overlay-canvas{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:2}
+.health-banner{background:#5c1919;border-bottom:1px solid #ef4444;color:#fecaca;padding:8px 20px;font-size:13px;font-weight:600;display:flex;align-items:center;justify-content:space-between;gap:12px}
 aside,.card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px}
 h3{margin:0 0 10px;font-size:15px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .feed{list-style:none;margin:0;padding:0;max-height:62vh;overflow:auto}

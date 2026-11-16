@@ -67,12 +67,10 @@ def timesheet(db, date_from: str | None, date_to: str | None, shift: Shift, code
 
     t0, _ = day_range(d0)
     _, t1 = day_range(d1)
-    events = db.checkins_between(t0, t1, code)
-    by_key: dict[tuple[date, str], list[dict]] = {}
-    names: dict[str, str] = {}
-    for e in events:
-        by_key.setdefault((datetime.fromtimestamp(e["ts"]).date(), e["code"]), []).append(e)
-        names[e["code"]] = e["name"]
+    from .ledger import effective_checkins_between
+    eff_map = effective_checkins_between(db, d0, d1, code)
+    by_key: dict[tuple[date, str], list[dict]] = {k: [v] for k, v in eff_map.items()}
+    names: dict[str, str] = {v["code"]: v["name"] for v in eff_map.values()}
 
     # ten hien tai uu tien hon ten luu trong su kien cu; nhan vien dang hoat dong -> tinh vang
     for e in db.q("SELECT code, name FROM employees"):
@@ -109,7 +107,10 @@ def timesheet(db, date_from: str | None, date_to: str | None, shift: Shift, code
             t_in = evs[0]["ts"]   # lan check-in dau tien trong ngay
             late = late_minutes(t_in, shift)
             rows.append({"date": d.isoformat(), "code": c, "name": names.get(c, c),
-                         "status": "late" if late else "ok", "check_in": t_in, "late_min": late})
+                         "status": "late" if late else "ok", "check_in": t_in, "late_min": late,
+                         "ledger_id": evs[0].get("ledger_id"),
+                         "verification_tier": evs[0].get("verification_tier", "verified"),
+                         "audit_status": evs[0].get("audit_status", "not_required")})
         d -= timedelta(days=1)
 
     return {"from": d0.isoformat(), "to": d1.isoformat(), "shift": shift.as_dict(),
@@ -131,11 +132,11 @@ def _summary(rows: list[dict]) -> list[dict]:
 
 
 def today_stats(db, shift: Shift) -> dict:
-    t0, t1 = day_range(date.today())
-    evs = db.checkins_between(t0, t1)
-    first: dict[str, float] = {}
-    for e in evs:
-        first.setdefault(e["code"], e["ts"])
+    today = date.today()
+    t0, t1 = day_range(today)
+    from .ledger import effective_checkins_between
+    eff = effective_checkins_between(db, today, today)
+    first: dict[str, float] = {v["code"]: v["ts"] for v in eff.values()}
     total = db.q("SELECT COUNT(*) AS n FROM employees WHERE status='active'")[0]["n"]
     return {"present": len(first), "total": total,
             "late": sum(1 for ts in first.values() if late_minutes(ts, shift)),

@@ -85,40 +85,67 @@ footer{max-width:1180px;margin:0 auto;padding:0 24px 40px;color:var(--muted);fon
 
 <article>
 
-<p>Bản demo chạy <strong>cục bộ trên Windows, chỉ dùng CPU</strong>, theo các phương án kỹ thuật đã đề xuất:</p>
-<pre><code>Webcam / file video / RTSP ──► Reader thread (giữ frame mới nhất)
-        ► Detect 3–5 FPS (YuNet hoặc SCRFD) ► IoU tracker ► Quality filter
-        ► Align + Embedding (SFace hoặc ArcFace) ► Gom embedding theo track
-        ► So khớp open-set (ngưỡng + margin top-2, xác minh lại liên tục)
-        ► Chống giả mạo MiniFASNet (ảnh in / màn hình điện thoại) ► Rule chấm công (check-in/out, dedup)
-        ► SQLite + snapshot + clip mỗi lần xuất hiện ► HRM adapter (mock | ERPNext) qua outbox + retry
-        ► FastAPI: MJPEG video + WebSocket + REST  ►  Giao diện web
+<p>FaceGate v4 hỗ trợ vận hành trên <strong>Linux Server</strong> (chế độ 3 mặt phẳng với MediaMTX + tiến trình suy luận cô lập) và chạy demo/phát triển trên <strong>Linux / Windows 10–11 chỉ dùng CPU</strong>:</p>
+<pre><code>1. Media Plane (MediaMTX + ffmpeg -c:v copy -an):
+   Camera Tapo C310 / RTSP ──► WebRTC WHEP ──► Trình duyệt &lt;video&gt; + &lt;canvas&gt; (requestVideoFrameCallback)
+                           └──► Vòng đệm tmpfs fMP4 1s ──► Cắt MP4 H.264 gốc + sidecar HMAC-SHA256
+
+2. Perception Process (app/worker_perception.py — chạy độc lập, IPC NDJSON):
+   Lịch thức ca (/stream1 3MP | /stream2 chế độ chờ) ──► YOLOX-Nano (640px) + Cắt ROI Đầu-Vai 1:1 trên 3MP
+      ──► YuNet ──► 3DDFA_V2 (±90°) ──► EdgeFace-XS (batch tới 10 mặt) + MiniFASNet V2/V1SE
+      ──► IoU Tracker + Crossing Quarantine ──► Tích lũy LLR 4 tham số + Novelty Gate
+
+3. Control &amp; Business Plane (app/main.py):
+   Sổ cái bất biến (attendance_ledger) + Audit-by-Exception 5% + legal_hold + Fail-safe /api/health
+      ──► HRM Worker (mock JSONL | ERPNext tạo/hủy idempotent) · SQLite WAL / PostgreSQL · AES-256-GCM · RBAC
 </code></pre>
+<p><em>Lưu ý: Khi chạy demo webcam hoặc file video cục bộ trên laptop mà chưa bật MediaMTX, ứng dụng vẫn tự fallback sang luồng MJPEG (<code>/video.mjpg</code>) và ghi clip WebM/MP4 qua <code>app/clips.py</code>.</em></p>
 <h2 id="1-yeu-cau">1. Yêu cầu</h2>
 <ul>
-<li>Windows 10/11, <strong>Python 3.10 trở lên</strong> (khi cài nhớ tick <em>Add Python to PATH</em>).</li>
-<li>Webcam laptop, hoặc một file video quay ở cổng, hoặc camera IP có RTSP.</li>
+<li><strong>Hệ điều hành:</strong> Linux (Ubuntu/Debian… khuyến nghị cho vận hành thật với <code>tmpfs</code> và <code>chrony</code>) hoặc Windows 10/11.</li>
+<li><strong>Python 3.10 trở lên</strong> (đã kiểm chứng trên Python 3.12; trên Windows nhớ tick <em>Add Python to PATH</em>, trên Linux cần <code>python3-venv</code> hoặc <code>uv</code>).</li>
+<li>Nguồn video: Camera IP qua RTSP (như <strong>TP-Link Tapo C310</strong>), webcam (<code>0</code> hoặc <code>/dev/video0</code>) hoặc file video quay sẵn.</li>
+<li><em>Tùy chọn chế độ máy chủ v4:</em> cài đặt binary <code>mediamtx</code> và <code>ffmpeg</code> trong <code>PATH</code> để chạy Media Plane tách âm thanh, WebRTC WHEP và xuất MP4 burn-in.</li>
 </ul>
 <h2 id="2-cai-at-mot-lan">2. Cài đặt (một lần)</h2>
-<p>Clone repo (hoặc giải nén), mở thư mục, <strong>double-click <code>setup.bat</code></strong>. Script sẽ:</p>
+<p>Clone repo, mở thư mục và chạy script cài đặt tương ứng:</p>
+<ul>
+<li><strong>Trên Linux:</strong> <code>chmod +x setup.sh run.sh &amp;&amp; ./setup.sh</code></li>
+<li><strong>Trên Windows:</strong> double-click <strong><code>setup.bat</code></strong></li>
+</ul>
+<p>Script sẽ tự động:</p>
 <ol>
-<li>tạo môi trường ảo <code>.venv</code>;</li>
-<li>cài thư viện trong <code>requirements.txt</code>;</li>
-<li>tải model YuNet + SFace (OpenCV Zoo) và MiniFASNet chống giả mạo vào thư mục <code>models/</code>.</li>
+<li>Tạo môi trường ảo <code>.venv</code> (ưu tiên <code>uv</code> nếu có trên Linux);</li>
+<li>Cài các thư viện trong <code>requirements.txt</code> (<code>fastapi</code>, <code>uvicorn</code>, <code>onnxruntime</code>, <code>opencv-python-headless</code> trên Linux / <code>opencv-python</code> trên Windows, <code>cryptography</code>…);</li>
+<li>Chạy <code>scripts/download_models.py</code> để tải trọn bộ model thương mại hóa được (Apache-2.0 / MIT) vào <code>models/</code>: <strong>YuNet</strong>, <strong>SFace</strong>, <strong>EdgeFace-XS</strong>, <strong>3DDFA_V2</strong>, <strong>YOLOX-Nano</strong> và <strong>MiniFASNet V2 + V1SE</strong>.</li>
 </ol>
 <blockquote>
-<p>Model (<code>models/*.onnx</code>) và dữ liệu chạy (<code>data/</code>) không nằm trong git: model do <code>setup.bat</code> tải về, <code>data/</code> tự tạo khi chạy lần đầu.</p>
+<p>Model (<code>models/*.onnx</code>) và dữ liệu chạy (<code>data/</code>) không đưa vào git. Các file tham số <code>tddfa_*.bin</code> cho <code>3DDFA_V2</code> đi kèm sẵn trong <code>models/</code>. Kiểm tra toàn vẹn model bất kỳ lúc nào bằng: <code>.venv/bin/python scripts/download_models.py --verify-only</code>.</p>
 </blockquote>
-<p>Muốn benchmark thêm backend ONNX (SCRFD + ArcFace), mở terminal trong thư mục và chạy:</p>
-<pre><code class="language-bat">.venv\Scripts\python scripts\download_models.py --onnx
+<p>Muốn benchmark thêm backend nghiên cứu ONNX (SCRFD + ArcFace), chạy:</p>
+<pre><code class="language-bash"># Linux / macOS
+.venv/bin/python scripts/download_models.py --onnx
+
+# Windows
+.venv\Scripts\python scripts\download_models.py --onnx
 </code></pre>
-<blockquote>
-<p>Nếu tải model lỗi: mở các link trong <code>scripts/download_models.py</code> bằng trình duyệt, tải về và đặt vào <code>models/</code>.</p>
-</blockquote>
 <h2 id="3-chay">3. Chạy</h2>
-<p><strong>Double-click <code>run.bat</code></strong>. Trình duyệt sẽ mở http://127.0.0.1:8090.</p>
-<p><strong>Đổi nguồn nhận diện ngay trên web:</strong> ở tab Trực tiếp, chọn Webcam / File video / Camera RTSP rồi bấm <strong>Đổi nguồn</strong>. Khi chọn file video, webcam được tắt hẳn. Video tải lên lưu ở <code>data/sources/</code> (chỉ giữ file đang dùng). Nguồn đổi trên web chỉ có hiệu lực tới khi tắt app; mỗi lần mở lại <code>run.bat</code> sẽ dùng <code>camera.source</code> trong <code>config.yaml</code>.</p>
-<p>Thay đổi ngưỡng, backend hay nguồn mặc định thì sửa <code>config.yaml</code>, sau đó tắt cửa sổ đang chạy và mở lại <code>run.bat</code>.</p>
+<h3>Chạy nhanh (Webcam / File video / Demo cục bộ)</h3>
+<ul>
+<li><strong>Linux:</strong> <code>./run.sh</code> (hoặc <code>NO_BROWSER=1 ./run.sh</code> trên server headless)</li>
+<li><strong>Windows:</strong> double-click <strong><code>run.bat</code></strong></li>
+</ul>
+<p>Mở trình duyệt tại <code>http://127.0.0.1:8090</code>. Ở tab <em>Trực tiếp</em> có thể đổi nhanh nguồn Webcam / File video / RTSP (chỉ giữ hiệu lực đến khi tắt app; mặc định khởi động đọc từ <code>config.yaml</code>).</p>
+<h3>Chạy chế độ Máy chủ v4 đầy đủ (MediaMTX + Worker cô lập + Bảo mật)</h3>
+<pre><code class="language-bash"># 1. Khởi chạy MediaMTX (Single Puller, lọc bỏ âm thanh -an, vòng đệm tmpfs /dev/shm/facegate_ring)
+CAM_USER=admin CAM_PASS=matkhau CAM_IP=192.168.50.10 ./scripts/run_mediamtx.sh
+
+# 2. Thiết lập biến môi trường bảo mật và chạy tiến trình AI cô lập lỗi
+export FACEGATE_BIOMETRIC_KEY="chuoi-bi-mat-32-byte-hoac-passphrase"
+export FACEGATE_HMAC_SECRET="chuoi-bi-mat-ky-sidecar-clip"
+export FACEGATE_AUTH_SECRET="chuoi-bi-mat-rbac"   # khi bật security.auth_enabled: true
+FACEGATE_ISOLATED_WORKER=1 ./run.sh
+</code></pre>
 <div class="tw"><table>
 <thead>
 <tr>
@@ -128,86 +155,119 @@ footer{max-width:1180px;margin:0 auto;padding:0 24px 40px;color:var(--muted);fon
 </thead>
 <tbody>
 <tr>
-<td>Dùng webcam khác</td>
-<td><code>camera.source: 1</code></td>
+<td>Chọn nguồn mặc định</td>
+<td><code>camera.source</code> (<code>0</code>, <code>/dev/video0</code>, đường dẫn file, hoặc RTSP); với MediaMTX dùng <code>main_source</code>, <code>sub_source</code>, <code>whep_url</code></td>
 </tr>
 <tr>
-<td>Chạy trên footage đã quay</td>
-<td><code>camera.source: data/footage.mp4</code></td>
+<td>Đổi backend nhận diện</td>
+<td><code>pipeline.backend: edgeface</code> (mặc định v4) | <code>opencv</code> (YuNet+SFace) | <code>onnx</code> (nghiên cứu)</td>
 </tr>
 <tr>
-<td>Camera Hikvision</td>
-<td><code>camera.source: rtsp://user:pass@IP:554/Streaming/Channels/102</code> (102 = substream)</td>
+<td>Bật OpenVINO trên CPU Intel</td>
+<td><code>pipeline.execution_provider: openvino</code> (khuyến nghị kiểm thử lại qua <code>replay_eval.py</code>)</td>
 </tr>
 <tr>
-<td>Đổi backend</td>
-<td><code>pipeline.backend: opencv</code> hoặc <code>onnx</code></td>
+<td>Tắt/bật Two-Stage ROI 3MP</td>
+<td><code>pipeline.two_stage_roi: true</code>, chỉnh <code>pipeline.max_faces: 10</code></td>
 </tr>
 <tr>
-<td>Chế độ chờ khi không có người</td>
-<td><code>power.sleep</code>, <code>power.idle_seconds</code> (mặc định 30 giây); tăng <code>power.motion_threshold</code> nếu ánh sáng nhấp nháy làm app tự bật</td>
+<td>Chỉnh LLR &amp; rào cứng</td>
+<td><code>decision.llr_weights</code>, <code>decision.tau_threshold</code>, <code>decision.margin_base</code>, <code>decision.margin_yaw_slope</code></td>
 </tr>
 <tr>
-<td>Chỉ check-in khi đi qua đường ảo theo chiều vào</td>
+<td>Lịch thức theo ca &amp; chế độ chờ</td>
+<td><code>power.active_windows</code> (giữ nóng giờ cao điểm), <code>power.sleep</code>, <code>power.idle_seconds</code>, <code>power.motion_threshold</code></td>
+</tr>
+<tr>
+<td>Chỉ check-in khi qua đường ảo</td>
 <td><code>events.direction: line</code>, chỉnh <code>events.line</code> và <code>events.in_when</code></td>
 </tr>
 <tr>
-<td>Đẩy sang ERPNext</td>
-<td><code>hrm.adapter: erpnext</code> và điền <code>url</code>, <code>api_key</code>, <code>api_secret</code></td>
+<td>Đẩy sang ERPNext hai chiều</td>
+<td><code>hrm.adapter: erpnext</code> và điền <code>url</code>, <code>api_key</code>, <code>api_secret</code>, <code>device_id</code></td>
+</tr>
+<tr>
+<td>Gom nhiều cổng về PostgreSQL</td>
+<td><code>storage.database_url: "postgresql://user:pass@host:5432/facegate"</code> (cài thêm <code>psycopg[binary]</code>)</td>
+</tr>
+<tr>
+<td>Bật đăng nhập RBAC &amp; mở LAN</td>
+<td>Thêm mục <code>security.auth_enabled: true</code>, danh sách <code>users</code>, khóa bí mật và đổi <code>server.host: 0.0.0.0</code></td>
 </tr>
 </tbody>
 </table></div>
 <h2 id="4-kich-ban-demo">4. Kịch bản demo</h2>
 <ol>
-<li><strong>Đăng ký</strong>: tab <em>Đăng ký</em> → nhập mã và họ tên → tải video 6–10 giây (quay bằng điện thoại: nhìn thẳng, xoay trái/phải, ngẩng/cúi nhẹ) <strong>hoặc</strong> chọn <em>Quay từ camera cổng</em>. Hệ thống tự lọc frame, chia theo góc nhìn, bỏ frame trùng, chọn 5–15 frame và báo cáo. Video gốc bị xóa sau khi xử lý.</li>
-<li><strong>Duyệt</strong>: tab <em>Nhân viên</em> → bấm <strong>Duyệt</strong>. Chỉ nhân viên đã duyệt mới được nhận diện. Hệ thống sẽ cảnh báo nếu khuôn mặt giống một nhân viên khác đã có.</li>
-<li><strong>Trực tiếp</strong> (màn hình máy chấm công): đứng trước camera ~1 giây. Lần đầu trong ngày sẽ hiện thẻ <em>Xin chào… · Check-in HH:MM · Đúng giờ / Đi muộn N phút</em> kèm âm báo; các lần sau trong ngày chỉ hiện <em>Đã chấm công hôm nay, check-in lúc …</em> (không ghi thêm). Cột bên phải: số người có mặt, đi muộn, giả mạo hôm nay. Màu khung:<ul>
-<li><strong>xanh lá</strong>: đã nhận diện và đã xác minh người thật (nhãn có <code>thật 0.xx</code>);</li>
-<li><strong>cam</strong>: đang xác minh danh tính hoặc đang kiểm tra người thật;</li>
-<li><strong>đỏ</strong>: Unknown, hoặc <strong>GIẢ MẠO</strong> (ảnh/màn hình) — không chấm công, ghi sự kiện cảnh báo;</li>
-<li><strong>xám</strong>: chất lượng thấp, kèm lý do (mờ, mặt nhỏ, quay ngang…).</li>
+<li><strong>Đăng ký</strong>: tab <em>Đăng ký</em> → nhập mã và họ tên → chọn <em>Quay từ camera cổng</em> để làm theo hướng dẫn <strong>5–7 góc</strong> (5 góc chữ thập + 2 góc nghiêng sâu ~80° nếu bật <code>enable_profile_90</code>; có hỗ trợ soi gương WASM nếu đã nạp gói cục bộ) <strong>hoặc</strong> tải video 6–10 giây lên. Video gốc bị xóa sau khi xử lý.</li>
+<li><strong>Duyệt</strong>: tab <em>Nhân viên</em> → bấm <strong>Duyệt</strong>. Chỉ nhân viên đã duyệt mới được nhận diện; hệ thống cảnh báo nếu khuôn mặt trùng với nhân viên đã có.</li>
+<li><strong>Trực tiếp</strong>: đứng trước camera ~1 giây. Lần đầu trong ngày hiện thẻ <em>Xin chào… · Check-in HH:MM · Đúng giờ / Đi muộn N phút</em> kèm âm báo; các lần sau chỉ hiện <em>Đã chấm công hôm nay, check-in lúc …</em>. Dùng nút <strong>Vùng cửa</strong> để vẽ đa giác chỉ đánh thức chế độ chờ khi có người đi qua lối vào. Màu khung:<ul>
+<li><strong>xanh lá</strong>: đã nhận diện và xác minh người thật;</li>
+<li><strong>cam</strong>: đang thu thập / xác minh danh tính hoặc kiểm tra người thật (kèm trạng thái <code>QUARANTINED</code> nếu vừa đi giao cắt);</li>
+<li><strong>đỏ</strong>: Unknown, hoặc <strong>GIẢ MẠO</strong> (ảnh/màn hình/YOLOX phát hiện điện thoại) — không chấm công, ghi cảnh báo và tự gắn <code>legal_hold</code>;</li>
+<li><strong>xám</strong>: chất lượng thấp (mờ, mặt nhỏ, quay quá góc, ánh sáng yếu/chói, cắt mép).</li>
 </ul>
 </li>
-<li><strong>Chấm công</strong>: mỗi nhân viên chỉ lưu <strong>giờ check-in đầu tiên trong ngày</strong> và <strong>số phút đi muộn</strong> (tính từ giờ vào ca, trong khoảng <code>grace_minutes</code> coi như đúng giờ). Trạng thái <em>Đúng giờ / Đi muộn / Vắng / Chưa đến</em>, tổng hợp theo nhân viên (số ngày, số lần muộn, tổng phút muộn, vắng), nút <em>Xuất CSV</em>. Giờ vào ca cấu hình ở mục <code>attendance</code> trong <code>config.yaml</code>.</li>
-<li><strong>Lịch sử</strong>: mỗi lần một khuôn mặt xuất hiện trước camera được lưu kèm <strong>clip video</strong> (có khung nhận diện). Lọc theo người, loại (nhân viên / người lạ / giả mạo) và khoảng ngày; xem clip, tải từng clip hoặc <em>Tải tất cả clip (ZIP)</em> kèm <code>danh_sach.csv</code>. Từ bảng công bấm <em>Xem clip</em> để mở đúng người, đúng ngày.</li>
-<li><strong>Sự kiện &amp; đánh giá</strong>: gán nhãn <em>Đúng / Nhầm người / Là NV / Người lạ</em> (và <em>Đúng giả mạo / Người thật</em> cho cảnh báo giả mạo). Hệ thống tính <strong>false accept, false reject, unknown rate, tỉ lệ chặn nhầm người thật, latency p50/p90</strong>. Nút <em>Xuất CSV</em> để lấy số liệu báo cáo.</li>
-<li><strong>Xóa nhân viên</strong> ở tab <em>Nhân viên</em>: camera ngừng nhận diện người đó ngay, kể cả khi họ đang đứng trước camera. Dữ liệu khuôn mặt bị xóa; lịch sử chấm công và clip vẫn giữ (lọc được với nhãn <em>đã xóa</em>).</li>
-<li>Ở chế độ <code>hrm.adapter: mock</code>, mỗi check-in được ghi vào <code>data/hrm_mock.jsonl</code> đúng định dạng Employee Checkin.</li>
+<li><strong>Chấm công, Hậu kiểm &amp; Dự phòng</strong>: xem bảng công theo ngày/tuần/tháng và tổng hợp theo nhân viên; xuất CSV. Bên dưới có form <strong>Chấm công Dự phòng / Nhập bù</strong> (khi camera/worker sự cố) và <strong>Hàng chờ Hậu kiểm Ngoại lệ (5%)</strong> cho phép HR bấm <em>Xác nhận</em> hoặc <em>Thu hồi</em> (đồng bộ hủy chứng từ sang HRM).</li>
+<li><strong>Lịch sử &amp; Bằng chứng số</strong>: lọc theo người, loại và ngày; xem clip trực tiếp (khung bao vẽ động từ sidecar <code>.meta.json</code>), tải MP4/WebM gốc, bấm <strong>Xuất MP4 đóng dấu</strong> (burn-in FFmpeg), bấm <strong>🔒 Giữ bằng chứng</strong> (<code>legal_hold</code>) hoặc <em>Tải tất cả clip (ZIP)</em>.</li>
+<li><strong>Sự kiện &amp; đánh giá</strong>: gán nhãn thủ công để tính <strong>FAR, FRR, unknown rate, tỉ lệ chặn nhầm người thật, latency p50/p90</strong> và xuất CSV.</li>
+<li><strong>Xóa nhân viên</strong>: camera ngừng nhận diện ngay (đồng bộ sang cả tiến trình worker); dữ liệu khuôn mặt bị xóa còn lịch sử chấm công &amp; clip vẫn giữ.</li>
 </ol>
-<h2 id="5-benchmark-backend">5. Benchmark backend</h2>
-<pre><code class="language-bat">.venv\Scripts\python scripts\benchmark.py data\footage.mp4
+<h2 id="5-benchmark-backend">5. Benchmark, Thu thập K0 &amp; Kiểm thử tự động</h2>
+<pre><code class="language-bash"># 1. Benchmark từng backend &amp; độ nét Laplacian trên video thực tế
+.venv/bin/python scripts/benchmark.py data/footage.mp4
+
+# 2. Benchmark ngân sách chu kỳ (&lt; 200 ms) cho batch 10 khuôn mặt đồng thời (CPU hoặc OpenVINO)
+.venv/bin/python scripts/benchmark.py --ten-faces-bench --ep cpu
+
+# 3. Thu thập gói dữ liệu thực địa K0 (manifest.json + observations.jsonl + crops/)
+.venv/bin/python scripts/record_k0_bundle.py rtsp://127.0.0.1:8554/gate1_main data/k0_bundle --layout side_walk --subject NV001
+
+# 4. Chạy Replay ngoại tuyến tính FAR (Wilson CI 95%) và APCER/BPCER chuẩn ISO/IEC 30107-3
+.venv/bin/python scripts/replay_eval.py data/k0_bundle
+
+# 5. Chạy toàn bộ 46 bài kiểm thử tự động (IPC, LLR, ledger, crossing quarantine, API v4...)
+.venv/bin/pytest -v
 </code></pre>
-<p>Lệnh này in thời gian detect, thời gian embed và số mặt đạt chất lượng của từng backend trên cùng một video. Kết hợp số liệu này với nhãn ở tab <em>Sự kiện</em> để chọn model.</p>
-<h2 id="6-cau-truc">6. Cấu trúc</h2>
+<p><em>Trên Windows thay <code>.venv/bin/python</code> bằng <code>.venv\Scripts\python</code>.</em></p>
+<h2 id="6-cau-truc">6. Cấu trúc mã nguồn</h2>
 <pre><code>app/
-  engines.py     backend nhận diện (OpenCVEngine: YuNet+SFace, OnnxEngine: SCRFD+ArcFace)
-  quality.py     đánh giá kích thước, độ mờ, ánh sáng, góc mặt (heuristic)
-  tracker.py     bám mặt: IoU trên vị trí dự đoán theo vận tốc, dự phòng theo khoảng cách tâm; tách track khi khuôn mặt không khớp, gộp khi cùng nhân viên
-  gallery.py     gallery trong RAM, so khớp ngưỡng + margin top-2
-  pipeline.py    vòng xử lý chính, rule chấm công, ghi lịch sử, chế độ chờ, vẽ khung
-  camera.py      đọc webcam / file / RTSP trong thread riêng, tự kết nối lại
-  liveness.py    chống giả mạo MiniFASNet (gộp V2 + V1SE)
-  attendance.py  giờ vào ca, check-in mỗi ngày, đi muộn/vắng, bảng công
-  clips.py       ghi clip WebM mỗi lần xuất hiện (thread riêng, pre/post-roll, tự xóa clip cũ)
-  records.py     API bảng công + lịch sử + tải ZIP
-  enrollment.py  đăng ký từ video: lọc → chia góc → bỏ trùng → kiểm tra trùng người
-  hrm.py         adapter HRM (mock, ERPNext) + outbox/retry
-  db.py          SQLite (khi lên server sẽ chuyển sang PostgreSQL + pgvector)
-  main.py        FastAPI: REST, WebSocket, MJPEG, đổi nguồn video, vùng cửa
-  state.py       trạng thái dùng chung giữa các router
-  static/        giao diện web (app.js, attendance.js, history.js, zone.js)
-scripts/         tải model, benchmark
-data/            DB, snapshot, ảnh đăng ký, clips/, settings.json (tự tạo khi chạy, không push)
+  main.py               FastAPI Control Plane: lifespan, supervisor worker, WebSocket, REST, /api/health, RBAC login
+  worker_perception.py  Tiến trình Perception Process độc lập: lịch thức ca, Two-Stage ROI 1:1 trên 3MP, LLR, IPC
+  ipc.py                Giao thức NDJSON (Unix socket / TCP) &amp; schema TrackedObject (sẵn sàng cho Phase 2 SKU)
+  engines.py            Backend nhận diện: EdgeFaceEngine (YuNet + EdgeFace-XS), OpenCVEngine (SFace), OnnxEngine (SCRFD+ArcFace)
+  pose3d.py             Ước lượng tư thế đầu 3D (±90°) và 68 điểm mốc bằng 3DDFA_V2 ONNX (+ fallback 5 điểm)
+  context_detector.py   YOLOX-Nano phát hiện cơ thể &amp; vật chứa giả mạo (điện thoại/laptop/TV) + quy tắc Viewport-Aware
+  decision.py           Máy trạng thái quyết định liên tục, Novelty Gate &amp; hàm LLR 4 tham số tuân thủ rào cứng
+  tracker.py            Tracker IoU + vận tốc + cầu nối person_bbox + Crossing Quarantine chống tráo tên đồng phục
+  quality.py            Đánh giá chất lượng (kích thước, Laplacian blur trên nửa mặt thấy được, ánh sáng, yaw/pitch/roll)
+  gallery.py            Gallery embedding trong RAM, so khớp open-set &amp; giải mã embedding
+  liveness.py           Chống giả mạo thụ động MiniFASNet (gộp V2 + V1SE)
+  enrollment.py         Đăng ký từ video 7 bin góc, bỏ trùng, kiểm tra nhất quán &amp; cấm auto_enroll_online
+  guided.py             Đăng ký quay trực tiếp có hướng dẫn (5 góc chữ thập + 2 góc nghiêng ~80°, hỗ trợ supplement_only)
+  attendance.py         Logic ca làm, check-in từ ledger, số phút đi muộn, vắng, tổng hợp bảng công
+  ledger.py             Sổ cái bất biến append-only (checkin_created / revoked / manual) &amp; hàng chờ hậu kiểm 5%
+  media_clips.py        Cắt clip H.264 sạch từ MediaMTX Playback, ký sidecar HMAC-SHA256, burn-in FFmpeg &amp; dọn đĩa bảo vệ legal_hold
+  clips.py              Bộ ghi clip WebM/MP4 dự phòng khi chạy chế độ demo không có MediaMTX
+  records.py            Router API bảng công, thu hồi/nhập bù, lịch sử xuất hiện, legal_hold, burn-in &amp; tải ZIP
+  hrm.py                Adapter HRM (Mock JSONL &amp; ERPNext tạo/hủy Employee Checkin idempotent) + outbox retry
+  security.py           Mã hóa nghỉ AES-256-GCM (BiometricCipher) &amp; xác thực RBAC 3 vai trò (viewer/hr/admin)
+  db.py                 SQLite WAL / PostgreSQL đa cổng, tự động migrate schema &amp; audit_logs
+  camera.py             Đọc webcam / file / RTSP trong thread riêng (chế độ cục bộ / preview)
+  pipeline.py           Pipeline dự phòng khi không chạy isolated_worker &amp; quản lý chế độ chờ / vùng cửa
+  draw.py / state.py / config.py
+  static/               Giao diện web thuần (index.html, app.js, attendance.js, history.js, zone.js, whep_canvas.js, guided_wasm.js)
+deploy/                 mediamtx.yml, vlan-ntp-chrony.md, consent-template-k0.md
+scripts/                download_models.py, benchmark.py, record_k0_bundle.py, replay_eval.py, run_mediamtx.sh/.bat
+tests/                  10 file kiểm thử pytest (46 test cases)
+data/                   DB, snapshot, ảnh đăng ký (có thể mã hóa), clips/, settings.json (không đưa lên git)
 </code></pre>
 <h2 id="7-luu-y-quan-trong">7. Lưu ý quan trọng</h2>
 <ul>
-<li><strong>License model</strong>: YuNet và SFace thuộc OpenCV Zoo (Apache-2.0). Weights SCRFD/ArcFace của InsightFace <strong>chỉ dùng cho nghiên cứu/benchmark</strong>; muốn dùng thương mại phải có license riêng.</li>
-<li><strong>Ngưỡng</strong> (<code>recognition.thresholds</code>) là giá trị khởi điểm, cần hiệu chỉnh bằng footage thật. Sau khi đổi backend phải <strong>đăng ký lại</strong>, vì embedding được gắn <code>model_version</code>.</li>
-<li><strong>Chống giả mạo là phần mềm, chỉ giảm rủi ro</strong>: MiniFASNet (Minivision, Apache-2.0) chặn tốt ảnh in và ảnh trên màn hình điện thoại, nhưng video/màn hình chất lượng cao hoặc mặt nạ vẫn có thể lọt. Nếu dữ liệu dùng để <strong>tính lương</strong>, nên dùng máy chấm công có camera IR/3D. Chỉnh <code>liveness.threshold</code> (mặc định 0.70) theo điểm <code>thật 0.xx</code> hiện trên khung: tăng để chặn chặt hơn, giảm nếu người thật bị báo giả mạo.</li>
-<li><strong>Chế độ chờ</strong>: sau <code>idle_seconds</code> không thấy khuôn mặt, app ngừng nhận diện/vẽ khung/mã hoá video và chỉ đo chuyển động trên ảnh 160×90 (4 lần/giây); badge chuyển thành <em>CHẾ ĐỘ CHỜ</em>, hình cập nhật mỗi 2 giây. Để không bị lá cây, bóng đổ, đèn nhấp nháy đánh thức: (1) chỉ tính chuyển động trong <strong>vùng cửa</strong> — bấm nút <em>Vùng cửa</em> ở tab Trực tiếp, chấm các góc lối đi lên hình rồi <em>Lưu vùng</em> (lưu ở <code>data/settings.json</code>); (2) khi có chuyển động trong vùng, app tìm khuôn mặt trong <code>confirm_seconds</code> (1 giây) — thấy mặt mới bật lại, không thấy thì ngủ tiếp (rê chuột lên badge để xem số lần đã bỏ qua). Khi đang chạy, chỉ khuôn mặt mới giữ app thức. Clip vẫn có 2 giây trước khi người xuất hiện. Webcam vẫn mở (đèn vẫn sáng) để không bỏ sót người đến.</li>
-<li><strong>Clip video</strong> lưu tại <code>data/clips/</code>, tự xóa sau <code>clips.retention_days</code> ngày (mặc định 30).</li>
-<li><strong>Dữ liệu khuôn mặt là dữ liệu sinh trắc học</strong>: chỉ dùng với nhân viên đã đồng ý. Thư mục <code>data/</code> chứa ảnh khuôn mặt, không chia sẻ ra ngoài.</li>
-<li>Webcam laptop cho kết quả tốt hơn camera cổng vì mặt to và gần. Muốn đánh giá đúng thực tế, hãy quay footage tại vị trí lắp camera thật rồi chạy với <code>camera.source</code> là file đó.</li>
+<li><strong>License model</strong>: Toàn bộ bộ model mặc định v4 (<code>YuNet</code>, <code>EdgeFace-XS</code>, <code>3DDFA_V2</code>, <code>YOLOX-Nano</code>, <code>MiniFASNet</code>, <code>MediaPipe WASM</code>) đều dùng giấy phép <strong>Apache-2.0 / MIT</strong>, thương mại hóa được. Chỉ weights <code>SCRFD/ArcFace</code> (<code>--onnx</code>) là phi thương mại để benchmark.</li>
+<li><strong>Ngưỡng &amp; Đổi backend</strong>: Các ngưỡng trong <code>config.yaml</code> (<code>decision.tau_threshold: 0.45</code>, <code>margin_base: 0.70</code>, <code>liveness.threshold: 0.70</code>) cần hiệu chỉnh theo bộ dữ liệu thực địa <code>K0</code>. Sau khi đổi backend nhận diện phải đăng ký lại hoặc chạy backfill theo <code>model_version</code>.</li>
+<li><strong>Chống giả mạo &amp; Legal Hold</strong>: Clip nghi ngờ giả mạo (<code>spoof</code>) hoặc lượt <code>profile_verified</code> cần hậu kiểm tự động gắn cờ <code>legal_hold = 1</code> để không bị xóa khi đầy đĩa; HR chỉ gỡ khóa sau khi đối soát xong.</li>
+<li><strong>Dữ liệu sinh trắc học &amp; Bảo mật</strong>: Chỉ thu thập khi có đồng ý của nhân viên (<code>deploy/consent-template-k0.md</code>). Trước khi mở <code>server.host: 0.0.0.0</code> cho mạng nội bộ, bắt buộc bật <code>security.auth_enabled: true</code> và đặt <code>FACEGATE_BIOMETRIC_KEY</code>, <code>FACEGATE_HMAC_SECRET</code>, <code>FACEGATE_AUTH_SECRET</code>.</li>
+<li><strong>Chuẩn hóa hiện trường TP-Link Tapo C310</strong>: Bắt buộc tuân thủ thứ tự trong <code>deploy/vlan-ntp-chrony.md</code> (cắm dây RJ45, bỏ microSD, tắt Tapo Care, đặt <code>Day Mode</code> + đèn ≥ 250–300 lux, cấu hình <code>chrony</code> rồi cô lập VLAN kèm DNAT UDP 123, tắt App Tapo trên điện thoại) trước khi đo <code>K0</code>.</li>
 </ul>
 </article>
 </div>

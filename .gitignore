@@ -2,12 +2,14 @@
 .venv/
 __pycache__/
 *.pyc
+.pytest_cache/
 
 # Du lieu chay (DB nhan vien, anh khuon mat, clip) - du lieu sinh trac hoc, KHONG push
 data/
 
-# Model tai bang setup.bat / scripts/download_models.py
+# Model tai bang setup.sh / setup.bat / scripts/download_models.py
 models/*.onnx
+models/*.bin
 
 # Cong cu / IDE
 .remember/
@@ -17,3 +19,5 @@ models/*.onnx
 *.tmp
 *.log
 .ua/
+.specify/
+specs/

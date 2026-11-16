@@ -38,19 +38,43 @@ class Gallery:
             if rows:
                 self.mat = np.stack([r["vec"] for r in rows]).astype(np.float32)
                 self.owner = np.array([r["employee_id"] for r in rows], np.int64)
+                self.groups = [str(r.get("pose_group") or "frontal") for r in rows]
             else:
                 self.mat = np.zeros((0, 1), np.float32)
                 self.owner = np.zeros((0,), np.int64)
-            self.people = {r["employee_id"]: {"code": r["code"], "name": r["name"]} for r in rows}
+                self.groups = []
+            self.people = {int(r["employee_id"]): {"code": r["code"], "name": r["name"]} for r in rows}
             self.version += 1
 
     def has(self, employee_id: int | None) -> bool:
         with self.lock:
             return employee_id in self.people
 
+    def get_person(self, employee_id: int | None) -> dict | None:
+        with self.lock:
+            return dict(self.people[employee_id]) if employee_id in self.people else None
+
     @property
     def size(self) -> int:
         return len(self.people)
+
+    def all_employee_similarities(self, emb: np.ndarray, pose_group: str | None = None) -> dict[int, float]:
+        """Tra ve diem cosine cao nhat cua tung nhan vien (uu tien cung pose_group neu co) de dua vao bo tich luy LLR."""
+        with self.lock:
+            if self.mat.shape[0] == 0 or self.mat.shape[1] != emb.size:
+                return {}
+            sims = self.mat @ emb
+            best: dict[int, float] = {}
+            for idx, (o, s) in enumerate(zip(self.owner.tolist(), sims.tolist())):
+                if pose_group and pose_group != "frontal" and self.groups[idx] not in (pose_group, "frontal"):
+                    continue
+                if s > best.get(o, -1.0):
+                    best[o] = float(s)
+            if not best:
+                for o, s in zip(self.owner.tolist(), sims.tolist()):
+                    if s > best.get(o, -1.0):
+                        best[o] = float(s)
+            return best
 
     def match(self, emb: np.ndarray, threshold: float, margin: float) -> Match:
         with self.lock:

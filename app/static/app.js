@@ -13,8 +13,28 @@ document.querySelectorAll("nav button").forEach(b => b.onclick = () => {
   document.querySelectorAll("nav button").forEach(x => x.classList.toggle("active", x === b));
   document.querySelectorAll(".tab").forEach(t => t.classList.toggle("active", t.id === "tab-" + b.dataset.tab));
   tabHooks[b.dataset.tab]?.();
+  syncLiveStreamVisibility();
   updateEnrollPreview();
 });
+
+function syncLiveStreamVisibility() {
+  const onLive = isActive("live") && !document.hidden;
+  const img = $("#video");
+  if (!onLive) {
+    window.fgWhepOverlay?.stop();
+    if (img && img.getAttribute("src")) img.removeAttribute("src");
+    return;
+  }
+  if (lastStatus?.whep_url) {
+    window.fgWhepOverlay?.setOffsetMs(lastStatus.overlay_offset_ms || 0);
+    window.fgWhepOverlay?.startWhep(lastStatus.whep_url).then(ok => {
+      if (!ok && img && !img.getAttribute("src")) reloadVideo(img);
+    });
+  } else if (img && !img.getAttribute("src")) {
+    reloadVideo(img);
+  }
+}
+document.addEventListener("visibilitychange", syncLiveStreamVisibility);
 
 // danh sach nguoi cho cac o loc (ke ca nhan vien da xoa con lich su)
 async function loadPeople() {
@@ -38,6 +58,7 @@ function connectWS() {
   ws.onmessage = m => {
     const msg = JSON.parse(m.data);
     if (msg.type === "status") showStatus(msg.status);
+    if (msg.type === "frame_overlay") window.fgWhepOverlay?.pushOverlay(msg);
     if (msg.type === "event") {
       addFeed(msg.event, true);
       if (msg.event.kind !== "unknown") showGreet(msg.event, msg.greet);
@@ -172,9 +193,27 @@ async function loadToday() {
   $("#tdLate").textContent = t.late; $("#tdSpoof").textContent = t.spoof;
   $("#tdShift").textContent = `Ca ${t.shift.start}–${t.shift.end} · trễ cho phép ${t.shift.grace_minutes}′`;
 }
-loadToday(); loadPeople();
+async function pollHealth() {
+  try {
+    const h = await (await fetch("/api/health")).json();
+    const b = $("#healthBanner");
+    if (!b) return;
+    b.hidden = Boolean(h.ok);
+    if (!h.ok) {
+      const issues = [];
+      if (!h.camera_stream1) issues.push("Mất tín hiệu Camera /stream1");
+      if (!h.ffmpeg_ingest_alive) issues.push("Tiến trình lọc FFmpeg (-an) ngừng chạy");
+      if (!h.perception_worker_alive) issues.push("Tiến trình nhận diện AI không phản hồi");
+      if (h.disk_low) issues.push(`Ổ cứng sắp đầy (còn ${h.free_disk_gb} GB · đang khóa ${h.legal_hold_clips_count} clip legal_hold)`);
+      $("#healthText").textContent = `⚠ CẢNH BÁO FAIL-SAFE: ${issues.join(" · ")} — Hãy dùng kênh chấm công dự phòng!`;
+    }
+  } catch (_) {}
+}
+loadToday(); loadPeople(); pollHealth();
 setInterval(loadToday, 60000);
+setInterval(pollHealth, 4000);
 connectWS();
+window.fgMirrorGuide?.tryInitLocalWasm();
 
 // ---------- enrollment
 function applyEnrollMode() {
