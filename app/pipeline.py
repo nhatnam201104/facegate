@@ -13,6 +13,7 @@ import cv2
 import numpy as np
 
 from .attendance import Shift, day_range, greeting
+from .audio_prompt import create_look_prompter
 from .draw import GRAY, GREEN, ORANGE, RED, draw_overlay
 from .engines import Face
 from .quality import assess
@@ -99,6 +100,8 @@ class Pipeline:
         self.live_win = int(lc.get("window", 8))
         self.require_frontal_for_checkin = bool(lc.get("require_frontal_for_checkin", True))
         self.shift = Shift.from_cfg(cfg)
+        # isolated_worker: worker_perception tu nhac, o day khong nhac trung lan nua
+        self.look_prompter = create_look_prompter(cfg, on_event=broadcast) if self.recognize else None
         self.qcfg = cfg["quality"]
         self.ecfg = cfg["events"]
         self.pcfg = cfg["pipeline"]
@@ -139,6 +142,8 @@ class Pipeline:
         self._stop.set()
         if self._thread.is_alive():
             self._thread.join(timeout=5)
+        if self.look_prompter is not None:
+            self.look_prompter.close()
 
     def set_camera(self, camera) -> None:
         self._next_camera = camera
@@ -433,6 +438,8 @@ class Pipeline:
 
         body_coupled = ctx_eval["body_coupled"] if ctx_eval is not None else False
         state = self._live_state(t, yaw=q.yaw, body_coupled=body_coupled)
+        if self.look_prompter is not None:
+            self.look_prompter.update(t.id, now, q.yaw, state, spoof=t.spoof, event_done=t.event_done)
         if t.decision_acc is not None:
             t.decision_acc.apply_liveness(state)
         if state == "spoof" and not t.event_done:
@@ -529,6 +536,8 @@ class Pipeline:
         return "IN" if going_down == down_is_in else "OUT"
 
     def _on_track_end(self, t: Track) -> None:
+        if self.look_prompter is not None:
+            self.look_prompter.forget(t.id)
         if t.spoof:
             kind = "spoof"
         elif t.employee_id is not None:

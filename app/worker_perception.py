@@ -12,6 +12,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from .audio_prompt import create_look_prompter
 from .config import load_config
 from .context_detector import ContextScene, create_context_detector, evaluate_face_context
 from .db import DB
@@ -162,6 +163,9 @@ class PerceptionWorker:
         self.require_frontal_for_checkin = bool(cfg.get("liveness", {}).get("require_frontal_for_checkin", True))
         self.camera_id = str(cfg["camera"].get("id", "gate-1"))
         self.seq = 0
+        self._chime_events: list[dict] = []
+        # Loa Tapo nhac nhin vao camera / canh bao gia mao (dong thoi day goi IPC camera_chime len Web)
+        self.look_prompter = create_look_prompter(cfg, on_event=self._chime_events.append)
         self._stop = False
 
     def process_frame(self, frame: np.ndarray, ts_ns: int | None = None, decode_ms: float = 0.0) -> tuple[dict, list[dict]]:
@@ -304,6 +308,8 @@ class PerceptionWorker:
                 live_status = "live"
             else:
                 live_status = "checking"
+            if getattr(self, "look_prompter", None) is not None:
+                self.look_prompter.update(t.id, now_sec, pose.yaw, live_status, spoof=t.spoof, event_done=t.event_done)
             state_str = acc.apply_liveness(live_status)
 
             if state_str == "LIVE_CONFIRMED" and not t.event_done and not t.quarantine and t.employee_id is not None:
@@ -362,6 +368,8 @@ class PerceptionWorker:
             objects_out.append(obj.to_dict())
 
         for exp in expired:
+            if getattr(self, "look_prompter", None) is not None:
+                self.look_prompter.forget(exp.id)
             if exp.decision_acc is not None:
                 exp.decision_acc.finalize_on_expire()
             events_out.append({
@@ -379,6 +387,10 @@ class PerceptionWorker:
                 "verification_tier": exp.verification_tier,
                 "min_abs_yaw": round(exp.min_abs_yaw, 1) if exp.min_abs_yaw < 900 else 0.0,
             })
+
+        while getattr(self, "_chime_events", None):
+            ce = self._chime_events.pop(0)
+            events_out.append({**ce, "camera_id": self.camera_id})
 
         self.seq += 1
         infer_ms = (time.perf_counter() - t0) * 1000.0
@@ -459,6 +471,8 @@ async def run_worker_loop(cfg: dict, sock_path: Path, port: int = 18091) -> None
     finally:
         cmd_task.cancel()
         cap.release()
+        if worker.look_prompter is not None:
+            worker.look_prompter.close()
         await ipc.close()
 
 

@@ -26,6 +26,7 @@ from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from .attendance import Shift, greeting
+from .audio_prompt import build_chime_notifier, create_look_prompter
 from .camera import Camera, can_read_video
 from .clips import ClipRecorder
 from .config import ROOT, load_config
@@ -81,6 +82,9 @@ def _handle_worker_ipc(msg: dict) -> None:
     if mtype == "heartbeat":
         ctx.last_worker_hb = now
         ctx.worker_hb = msg
+        return
+    if mtype == "camera_chime":
+        bc(msg)
         return
     if mtype == "frame_overlay":
         ctx.last_worker_hb = now
@@ -207,6 +211,7 @@ async def lifespan(app: FastAPI):
     ctx.hrm = HRMWorker(cfg, ctx.db, on_update=lambda i, s: bc({"type": "hrm", "id": i, "status": s}))
     ctx.shift = Shift.from_cfg(cfg)
     ctx.clips = ClipRecorder(cfg)
+    ctx.chime = build_chime_notifier(cfg, on_event=bc)
     from .context_detector import create_context_detector
     isolated = bool(cfg["pipeline"].get("isolated_worker") or os.environ.get("FACEGATE_ISOLATED_WORKER") == "1")
     # Che do isolated: worker_perception la bo nhan dien duy nhat; Pipeline o day chi cap khung xem truoc (CR2).
@@ -285,6 +290,8 @@ async def lifespan(app: FastAPI):
     bf_task.cancel()
     await ctx.ipc.close()
     ctx.pipeline.stop()
+    if getattr(ctx, "chime", None) is not None:
+        ctx.chime.close()
     ctx.clips.close()
     ctx.camera.stop()
     ctx.hrm.stop()
@@ -297,7 +304,10 @@ app.include_router(records_router)
 
 @app.get("/")
 def index():
-    return FileResponse(ROOT / "app" / "static" / "index.html")
+    return FileResponse(
+        ROOT / "app" / "static" / "index.html",
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+    )
 
 
 @app.get("/files/{path:path}")
@@ -391,7 +401,53 @@ def status():
     st["whep_url"] = ctx.cfg["camera"].get("whep_url", "/media/gate1_main/whep")
     st["overlay_offset_ms"] = ctx.cfg["camera"].get("overlay_offset_ms", 0.0)
     st["model_profile"] = ctx.cfg["camera"].get("model_profile", "tapo_c310")
+    chime = getattr(ctx, "chime", None)
+    st["camera_chime"] = chime.status() if chime is not None else {"hardware_configured": False}
     return st
+
+
+def _sync_chime_from_disk_and_camera() -> object:
+    """Doc lai audio_prompt tu config.yaml (neu nguoi dung vua sua ma chua restart) + nguon RTSP dang chay."""
+    try:
+        fresh = load_config()
+        ctx.cfg["audio_prompt"] = fresh.get("audio_prompt") or ctx.cfg.get("audio_prompt", {})
+    except Exception:  # noqa: BLE001
+        pass
+    cam_src = getattr(getattr(ctx, "camera", None), "source", None)
+    new_chime = build_chime_notifier(ctx.cfg, on_event=bc, camera_source=cam_src)
+    old_chime = getattr(ctx, "chime", None)
+    if (
+        old_chime is None
+        or old_chime.host != new_chime.host
+        or old_chime.user != new_chime.user
+        or old_chime.password != new_chime.password
+        or old_chime.cloud_password != new_chime.cloud_password
+        or old_chime.mode != new_chime.mode
+        or old_chime.prompt_wav != new_chime.prompt_wav
+    ):
+        if old_chime is not None:
+            old_chime.close()
+        ctx.chime = new_chime
+        if getattr(ctx, "pipeline", None) is not None and ctx.pipeline.recognize:
+            cfg_for_pipe = {**ctx.cfg, "camera": {**ctx.cfg.get("camera", {}), "source": cam_src or ctx.cfg.get("camera", {}).get("source", 0)}}
+            old_lp = ctx.pipeline.look_prompter
+            ctx.pipeline.look_prompter = create_look_prompter(cfg_for_pipe, on_event=bc)
+            if old_lp is not None:
+                old_lp.close()
+    return ctx.chime
+
+
+@app.post("/api/camera/chime")
+async def trigger_camera_chime(
+    kind: str = Body("chime", embed=True),
+    duration_sec: float | None = Body(None, embed=True),
+):
+    """Phat thu tieng chuong tren loa Camera Tapo (hoac du phong chuong Web Audio khi demo chua cam camera that)."""
+    if kind not in ("chime", "prompt", "spoof"):
+        raise HTTPException(400, "kind phải là chime | prompt | spoof")
+    chime = _sync_chime_from_disk_and_camera()
+    res = await run_in_threadpool(chime.trigger, kind, duration_sec, True)
+    return res
 
 
 @app.get("/api/health")
@@ -502,6 +558,7 @@ def _switch_camera(source, label: str | None = None) -> None:
         # chi giu video nguon dang dung
         if old.kind == "file" and ctx.cfg["_paths"]["sources"] in Path(old.source).parents:
             Path(old.source).unlink(missing_ok=True)
+    _sync_chime_from_disk_and_camera()
     log.info("Doi nguon video -> %s", cam.label)
     bc({"type": "status", "status": ctx.pipeline.status()})
 
