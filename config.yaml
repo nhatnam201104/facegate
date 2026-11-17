@@ -158,14 +158,14 @@ audio_prompt:              # phat chuong canh bao tren loa camera Tapo C310 (kem
   host: ""                 # IP camera Tapo (vd: 192.168.50.10, hoac de trong lay tu bien moi truong CAM_IP / TAPO_HOST)
   user: admin
   password: ""             # mat khau Camera Account hoac TP-Link Cloud (khuyen nghi dat qua TAPO_PASSWORD / TAPO_CLOUD_PASSWORD)
-  cloud_password: "@Namdichoi2"
+  cloud_password: ""
   mode: talk_8800          # talk_8800 (phat chuong Dinh-Dong / coi G.711 ra loa port 8800) | manual_alarm | play_alarm | custom_audio
   duration_sec: 0.85       # do dai tieng chuong nhac nhin thang / bam thu chuong (giay)
   spoof_duration_sec: 1.2  # do dai coi canh bao khi phat hien gia mao (giay)
   alarm_type: 0
   alarm_volume: low        # low | medium | high
   custom_audio_id: 1
-  prompt_wav: ""           # de trong = dung app/static/audio/look_at_camera.wav ("Vui long quay mat nhin thang vao camera.")
+  prompt_wav: ""           # de trong = dung webapp/audio/look_at_camera.wav ("Vui long quay mat nhin thang vao camera.")
   profile_wait_sec: 1.2    # chi nhac khi mat nghieng >40 do qua N giay ma chua xong liveness
   cooldown_sec: 6.0        # khoang nghi toi thieu giua 2 lan chuong nhac
   spoof_chime: true        # keu chuong canh bao ngay khi phat hien anh in / dien thoai gia mao
