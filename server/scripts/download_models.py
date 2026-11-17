@@ -24,14 +24,14 @@ OPENCV_MODELS = {
 }
 
 V4_COMMERCIAL_MODELS = {
-    # EdgeFace-XS (otroshi/edgeface - MIT): nhan dien da goc toi +-90 do tren CPU
+    # EdgeFace-XS (otroshi/edgeface / yakhyo/edgeface-onnx): nhan dien da goc toi +-90 do tren CPU
     "edgeface_xs_gamma_06.onnx": (
-        "https://huggingface.co/otroshi/edgeface/resolve/main/edgeface_xs_gamma_06.onnx",
+        "https://github.com/yakhyo/edgeface-onnx/releases/download/weights/edgeface_xs_gamma_06.onnx",
         1_000_000,
     ),
     # 3DDFA_V2 MobileNet-120x120 + BFM base params (cleardusk/3DDFA_V2 - MIT): uoc luong tu the 3D
     "3ddfa_v2_mb1_120x120.onnx": (
-        "https://github.com/cleardusk/3DDFA_V2/raw/master/weights/mb1_120x120.onnx",
+        "https://huggingface.co/Stable-Human/3ddfa_v2/resolve/main/mb1_120x120.onnx",
         1_000_000,
     ),
     # YOLOX-Nano COCO (Megvii-BaseDetection/YOLOX - Apache-2.0): phat hien nguoi & vat chua gia mao

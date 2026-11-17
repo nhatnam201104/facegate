@@ -145,6 +145,18 @@ def _apply_v4_defaults(cfg: dict) -> dict:
     st = cfg.setdefault("storage", {})
     st.setdefault("data_dir", "data")
     st.setdefault("database_url", "")
+
+    sku = cfg.setdefault("sku", {})
+    sku.setdefault("feature_type", "orb")
+    sku["orb_nfeatures"] = int(_clamp(sku.get("orb_nfeatures", 800), 100, 5000))
+    sku["sift_nfeatures"] = int(_clamp(sku.get("sift_nfeatures", 600), 100, 5000))
+    sku["min_template_kps"] = int(_clamp(sku.get("min_template_kps", 30), 8, 500))
+    sku["min_inliers"] = int(_clamp(sku.get("min_inliers", 12), 6, 200))
+    sku["min_inlier_ratio"] = _clamp(sku.get("min_inlier_ratio", 0.25), 0.05, 0.95)
+    sku["ratio_thresh"] = _clamp(sku.get("ratio_thresh", 0.75), 0.4, 0.95)
+    sku["ransac_reproj_thresh"] = _clamp(sku.get("ransac_reproj_thresh", 4.5), 1.0, 15.0)
+    sku["min_blur"] = float(sku.get("min_blur", 20.0))
+    sku["scan_max_width"] = int(_clamp(sku.get("scan_max_width", 960), 320, 2560))
     return cfg
 
 

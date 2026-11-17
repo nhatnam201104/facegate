@@ -113,6 +113,57 @@ CREATE TABLE IF NOT EXISTS audit_logs (
     detail_json TEXT
 );
 CREATE INDEX IF NOT EXISTS ix_audit_ts ON audit_logs(ts);
+
+CREATE TABLE IF NOT EXISTS sku_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+    code TEXT UNIQUE NOT NULL,
+    name TEXT NOT NULL,
+    barcode TEXT UNIQUE,
+    uom TEXT NOT NULL DEFAULT 'pcs',
+    status TEXT NOT NULL DEFAULT 'active',
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_sku_items_status ON sku_items(status);
+
+CREATE TABLE IF NOT EXISTS sku_templates (
+    id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+    sku_id INTEGER NOT NULL REFERENCES sku_items(id) ON DELETE CASCADE,
+    feature_type TEXT NOT NULL,
+    width INTEGER NOT NULL,
+    height INTEGER NOT NULL,
+    num_kps INTEGER NOT NULL,
+    kps_blob BLOB NOT NULL,
+    desc_blob BLOB NOT NULL,
+    desc_dtype TEXT NOT NULL,
+    desc_cols INTEGER NOT NULL,
+    image_path TEXT,
+    label TEXT,
+    created_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_sku_tpl_sku ON sku_templates(sku_id);
+
+CREATE TABLE IF NOT EXISTS sku_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+    ts REAL NOT NULL,
+    camera TEXT,
+    sku_id INTEGER,
+    code TEXT,
+    name TEXT,
+    barcode TEXT,
+    method TEXT NOT NULL,
+    score REAL,
+    inliers INTEGER,
+    direction TEXT,
+    qty REAL NOT NULL DEFAULT 1.0,
+    uom TEXT,
+    track_id INTEGER,
+    snapshot TEXT,
+    clip TEXT,
+    meta_json TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_sku_ev_ts ON sku_events(ts);
+CREATE INDEX IF NOT EXISTS ix_sku_ev_code ON sku_events(code);
 """
 
 EMBEDDING_COLUMNS = {
@@ -453,3 +504,167 @@ class DB:
     def set_hrm(self, ev_id: int, status: str, response: str) -> None:
         self.x("UPDATE events SET hrm_status=?, hrm_response=?, hrm_attempts=hrm_attempts+1 WHERE id=?",
                (status, response[:500], ev_id))
+
+    # --- sku (Phase 2: Hang hoa / Bao bi) ---
+    def get_sku_by_code(self, code: str) -> dict | None:
+        r = self.q("SELECT * FROM sku_items WHERE code=?", (code.strip(),))
+        return r[0] if r else None
+
+    def get_sku_by_barcode(self, barcode: str) -> dict | None:
+        b = (barcode or "").strip()
+        if not b:
+            return None
+        r = self.q("SELECT * FROM sku_items WHERE barcode=?", (b,))
+        return r[0] if r else None
+
+    def upsert_sku_item(self, code: str, name: str, barcode: str | None = None,
+                        uom: str = "pcs", status: str = "active") -> int:
+        code_c = code.strip()
+        name_c = name.strip()
+        b_c = (barcode or "").strip() or None
+        uom_c = (uom or "pcs").strip() or "pcs"
+        now = time.time()
+        existing = self.get_sku_by_code(code_c)
+        if existing:
+            self.x(
+                "UPDATE sku_items SET name=?, barcode=?, uom=?, status=?, updated_at=? WHERE id=?",
+                (name_c, b_c, uom_c, status, now, existing["id"]),
+            )
+            return int(existing["id"])
+        return self.x(
+            "INSERT INTO sku_items(code,name,barcode,uom,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
+            (code_c, name_c, b_c, uom_c, status, now, now),
+        )
+
+    def list_sku_items(self) -> list[dict]:
+        return self.q("""
+            SELECT s.*,
+              (SELECT COUNT(*) FROM sku_templates t WHERE t.sku_id=s.id) AS n_templates,
+              (SELECT COALESCE(SUM(num_kps), 0) FROM sku_templates t WHERE t.sku_id=s.id) AS total_kps,
+              (SELECT image_path FROM sku_templates t WHERE t.sku_id=s.id ORDER BY num_kps DESC, id DESC LIMIT 1) AS thumb
+            FROM sku_items s ORDER BY s.updated_at DESC
+        """)
+
+    def set_sku_status(self, sku_id: int, status: str) -> None:
+        self.x("UPDATE sku_items SET status=?, updated_at=? WHERE id=?", (status, time.time(), sku_id))
+
+    def delete_sku_item(self, sku_id: int) -> list[str]:
+        imgs = [r["image_path"] for r in self.q("SELECT image_path FROM sku_templates WHERE sku_id=?", (sku_id,))]
+        self.x("DELETE FROM sku_items WHERE id=?", (sku_id,))
+        return [p for p in imgs if p]
+
+    def add_sku_template(
+        self,
+        sku_id: int,
+        feature_type: str,
+        width: int,
+        height: int,
+        kps_xy: np.ndarray,
+        descriptors: np.ndarray,
+        image_path: str | None = None,
+        label: str | None = None,
+    ) -> int:
+        pts = np.ascontiguousarray(kps_xy, dtype=np.float32)
+        if pts.ndim != 2 or pts.shape[1] != 2:
+            raise ValueError("kps_xy phai co kich thuoc (N, 2)")
+        if descriptors.dtype == np.uint8:
+            desc = np.ascontiguousarray(descriptors, dtype=np.uint8)
+            dtype_name = "uint8"
+        else:
+            desc = np.ascontiguousarray(descriptors, dtype=np.float32)
+            dtype_name = "float32"
+        if desc.ndim != 2 or desc.shape[0] != pts.shape[0]:
+            raise ValueError("descriptors phai co cung so hang N voi kps_xy")
+        return self.x(
+            """INSERT INTO sku_templates(
+                   sku_id,feature_type,width,height,num_kps,kps_blob,desc_blob,
+                   desc_dtype,desc_cols,image_path,label,created_at
+               ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                int(sku_id), str(feature_type).lower(), int(width), int(height),
+                int(pts.shape[0]), pts.tobytes(), desc.tobytes(),
+                dtype_name, int(desc.shape[1]), image_path, label, time.time(),
+            ),
+        )
+
+    def clear_sku_templates(self, sku_id: int, feature_type: str | None = None) -> None:
+        if feature_type:
+            self.x("DELETE FROM sku_templates WHERE sku_id=? AND feature_type=?", (sku_id, feature_type.lower()))
+        else:
+            self.x("DELETE FROM sku_templates WHERE sku_id=?", (sku_id,))
+
+    def load_sku_gallery(
+        self,
+        feature_type: str | None = None,
+        statuses: tuple = ("active",),
+    ) -> tuple[list[dict], list[dict]]:
+        ph = ",".join("?" * len(statuses))
+        items = self.q(f"SELECT * FROM sku_items WHERE status IN ({ph}) ORDER BY id", tuple(statuses))
+        sql = f"""
+            SELECT t.*, s.code, s.name, s.barcode, s.uom
+            FROM sku_templates t
+            JOIN sku_items s ON s.id=t.sku_id
+            WHERE s.status IN ({ph})
+        """
+        args: list = list(statuses)
+        if feature_type:
+            sql += " AND t.feature_type=?"
+            args.append(feature_type.lower())
+        rows = self.q(sql + " ORDER BY t.id", tuple(args))
+        templates = []
+        for r in rows:
+            n = int(r["num_kps"])
+            cols = int(r["desc_cols"])
+            dt = np.uint8 if r["desc_dtype"] == "uint8" else np.float32
+            kps = np.frombuffer(bytes(r["kps_blob"]), dtype=np.float32, count=n * 2).reshape(n, 2).copy()
+            desc = np.frombuffer(bytes(r["desc_blob"]), dtype=dt, count=n * cols).reshape(n, cols).copy()
+            templates.append({
+                "template_id": int(r["id"]),
+                "sku_id": int(r["sku_id"]),
+                "code": r["code"],
+                "name": r["name"],
+                "barcode": r["barcode"],
+                "uom": r["uom"],
+                "feature_type": r["feature_type"],
+                "width": int(r["width"]),
+                "height": int(r["height"]),
+                "num_kps": n,
+                "kps_xy": kps,
+                "descriptors": desc,
+                "image_path": r["image_path"],
+                "label": r["label"],
+            })
+        return items, templates
+
+    def add_sku_event(self, **kw) -> int:
+        if "meta" in kw and "meta_json" not in kw:
+            meta_val = kw.pop("meta")
+            kw["meta_json"] = json.dumps(meta_val, ensure_ascii=False) if meta_val is not None else None
+        kw.setdefault("ts", time.time())
+        kw.setdefault("qty", 1.0)
+        cols = ",".join(kw)
+        return self.x(f"INSERT INTO sku_events({cols}) VALUES({','.join('?' * len(kw))})", tuple(kw.values()))
+
+    def list_sku_events(
+        self,
+        t0: float | None = None,
+        t1: float | None = None,
+        code: str | None = None,
+        method: str | None = None,
+        limit: int = 200,
+    ) -> list[dict]:
+        conds, args = [], []
+        if t0 is not None:
+            conds.append("ts>=?")
+            args.append(float(t0))
+        if t1 is not None:
+            conds.append("ts<?")
+            args.append(float(t1))
+        if code:
+            conds.append("code=?")
+            args.append(code)
+        if method:
+            conds.append("method=?")
+            args.append(method)
+        where = (" WHERE " + " AND ".join(conds)) if conds else ""
+        return self.q(f"SELECT * FROM sku_events{where} ORDER BY ts DESC LIMIT ?", (*args, int(limit)))
