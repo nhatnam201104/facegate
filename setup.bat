@@ -8,7 +8,7 @@ echo [2/3] Cai thu vien ...
 .venv\Scripts\python -m pip install --upgrade pip
 .venv\Scripts\python -m pip install -r requirements.txt || goto :err
 echo [3/3] Tai model ...
-.venv\Scripts\python scripts\download_models.py %* || goto :err
+.venv\Scripts\python server\scripts\download_models.py %* || goto :err
 echo.
 echo Cai dat xong. Chay run.bat de khoi dong.
 pause

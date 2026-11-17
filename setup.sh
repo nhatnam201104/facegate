@@ -43,7 +43,7 @@ else
 fi
 
 echo "[3/3] Tải model ONNX ..."
-.venv/bin/python scripts/download_models.py "$@" || exit 1
+.venv/bin/python server/scripts/download_models.py "$@" || exit 1
 
 if compgen -G "/dev/video*" >/dev/null 2>&1; then
   for dev in /dev/video*; do

@@ -8,7 +8,7 @@ if [ ! -x ".venv/bin/python" ]; then
 fi
 
 URL="$(.venv/bin/python -c '
-from app.config import load_config
+from server.config import load_config
 cfg = load_config()["server"]
 host = "127.0.0.1" if cfg["host"] in ("0.0.0.0", "::") else cfg["host"]
 print(f"http://{host}:{cfg[\"port\"]}")
@@ -22,4 +22,4 @@ if [ "${FACEGATE_ISOLATED_WORKER:-0}" = "1" ]; then
   export FACEGATE_ISOLATED_WORKER=1
 fi
 
-exec .venv/bin/python -m app.main "$@"
+exec .venv/bin/python -m server.main "$@"
