@@ -1,0 +1,389 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FaceGate – Giới thiệu dự án</title>
+<style>
+:root{--ink:#17202a;--muted:#5d6b78;--line:#e3e8ee;--paper:#fbfaf7;--card:#fff;--accent:#0f7a5c;--accent-soft:#e3f3ec;
+  --warn:#9a5b00;--warn-soft:#fdf1dc;--bad:#a8322b;--bad-soft:#fbe6e4;--code:#f2f4f7;
+  --sans:"Segoe UI",system-ui,-apple-system,"Helvetica Neue",Arial,sans-serif;--mono:Consolas,"Cascadia Mono",Menlo,monospace}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth;scroll-padding-top:16px}
+body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.65 var(--sans);-webkit-font-smoothing:antialiased}
+header.hero{background:#0e1f1a;color:#eef6f2;padding:56px 24px 44px;position:relative;overflow:hidden}
+header.hero::after{content:"";position:absolute;right:-120px;top:-120px;width:420px;height:420px;border-radius:50%;
+  background:radial-gradient(circle,rgba(46,196,144,.35),transparent 65%)}
+.hero-in{max-width:1180px;margin:0 auto;position:relative;z-index:1}
+.kicker{display:inline-block;font-size:12px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;
+  color:#7fe0bd;border:1px solid #2c6b56;border-radius:999px;padding:3px 12px;margin-bottom:18px}
+header h1{margin:0;font-size:clamp(30px,4.2vw,48px);line-height:1.12;letter-spacing:-.02em;font-weight:800}
+header p{margin:12px 0 0;max-width:760px;color:#b9cfc6;font-size:17px}
+.wrap{max-width:1180px;margin:0 auto;padding:36px 24px 80px;display:grid;grid-template-columns:230px minmax(0,1fr);gap:48px}
+.toc{position:sticky;top:20px;align-self:start;font-size:14px}
+.toc b{display:block;font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin-bottom:10px}
+.toc ul{list-style:none;margin:0;padding:0;border-left:2px solid var(--line)}
+.toc li a{display:block;padding:6px 0 6px 14px;margin-left:-2px;border-left:2px solid transparent;color:var(--muted);text-decoration:none}
+.toc li a:hover,.toc li a.on{color:var(--accent);border-left-color:var(--accent)}
+article{min-width:0}
+article h2{font-size:26px;letter-spacing:-.01em;margin:52px 0 14px;padding-top:6px;border-top:1px solid var(--line)}
+article h2:first-child{margin-top:0;border-top:0}
+article h3{font-size:18.5px;margin:30px 0 8px;color:#0b3b2e}
+article p,article li{max-width:78ch}
+article li{margin:4px 0}
+article li>ul,article li>ol{margin:4px 0}
+a{color:var(--accent)}
+code{font-family:var(--mono);font-size:.88em;background:var(--code);border:1px solid var(--line);border-radius:5px;padding:1px 5px}
+pre{background:#0e1f1a;color:#d6efe5;border-radius:12px;padding:20px 22px;overflow:auto;font:13.5px/1.6 var(--mono);
+  box-shadow:0 12px 28px -18px rgba(14,31,26,.7)}
+pre code{background:none;border:0;padding:0;color:inherit;font-size:inherit}
+.tw{overflow-x:auto;margin:16px 0 22px;border:1px solid var(--line);border-radius:12px;background:var(--card);
+  box-shadow:0 1px 0 rgba(0,0,0,.02),0 10px 24px -20px rgba(23,32,42,.35)}
+table{border-collapse:collapse;width:100%;font-size:14.5px}
+th,td{text-align:left;vertical-align:top;padding:10px 14px;border-bottom:1px solid var(--line)}
+thead th{background:#f4f6f8;font-size:12.5px;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);white-space:nowrap}
+tbody tr:last-child td{border-bottom:0}
+tbody tr:hover td{background:#fafcfb}
+td:first-child{font-weight:600}
+table.cmp td:nth-child(2){color:var(--muted)}
+table.cmp td:nth-child(3){background:#f7fbf9}
+table.cmp{min-width:720px}
+table.ba td:nth-child(2){color:var(--bad)}
+table.ba td:nth-child(3){color:var(--accent);font-weight:600}
+.st{display:inline-block;font-size:12.5px;font-weight:700;border-radius:999px;padding:2px 10px;white-space:nowrap}
+.st.ok{background:var(--accent-soft);color:var(--accent)}
+.st.part{background:var(--warn-soft);color:var(--warn)}
+.st.no{background:var(--bad-soft);color:var(--bad)}
+footer{max-width:1180px;margin:0 auto;padding:0 24px 40px;color:var(--muted);font-size:13px}
+@media (max-width:900px){.wrap{grid-template-columns:1fr;gap:12px}.toc{position:static}}
+@media print{
+  body{background:#fff;font-size:11.5pt}header.hero{background:#fff;color:#000;padding:0 0 12px;border-bottom:2px solid #000}
+  header.hero::after,.toc{display:none}.kicker{color:#000;border-color:#000}header p{color:#333}
+  .wrap{display:block;padding:12px 0}.tw{box-shadow:none;overflow:visible}table.cmp{min-width:0}
+  h2{break-after:avoid}tr,pre{break-inside:avoid}pre{background:#f4f4f4;color:#000;box-shadow:none}
+}
+</style>
+</head>
+<body>
+<header class="hero"><div class="hero-in">
+  <span class="kicker">Kiến trúc v4 · Chấm công khuôn mặt</span>
+  <h1>FaceGate – Giới thiệu dự án</h1>
+  <p>Hệ thống nhận diện nhân viên tại cổng phục vụ chấm công HRM (chuẩn hóa cho TP-Link Tapo C310 và máy chủ CPU). Cập nhật: 16/11/2026.</p>
+</div></header>
+<div class="wrap">
+<nav class="toc" aria-label="Mục lục"><b>Mục lục</b>
+<ul>
+<li><a href="#1-tom-tat">1. Tóm tắt</a></li>
+<li><a href="#2-kien-truc">2. Kiến trúc</a></li>
+<li><a href="#3-cong-nghe-su-dung">3. Công nghệ sử dụng</a></li>
+<li><a href="#4-cac-bai-toan-a-giai-quyet">4. Các bài toán đã giải quyết</a></li>
+<li><a href="#5-so-voi-cong-nghe-a-e-xuat">5. So với đề xuất ban đầu &amp; bản PoC v1</a></li>
+<li><a href="#6-gioi-han-va-rui-ro-con-lai">6. Giới hạn và rủi ro còn lại</a></li>
+<li><a href="#7-buoc-tiep-theo-e-xuat">7. Bước tiếp theo đề xuất</a></li>
+</ul>
+</nav>
+
+<article>
+
+<h2 id="1-tom-tat">1. Tóm tắt</h2>
+<p>FaceGate là giải pháp cho phần <strong>HRM</strong> của dự án <em>"camera nhận diện nhân viên và hàng hóa"</em>, đã được tái kiến trúc lên phiên bản <strong>v4 (Clean-Slate 3-Plane Architecture)</strong> để sẵn sàng chuyển từ PoC sang triển khai thử nghiệm hiện trường trên camera <strong>TP-Link Tapo C310</strong>:</p>
+<ol>
+<li>Nhân viên đăng ký khuôn mặt qua giao diện hướng dẫn tới <strong>7 góc</strong> (5 góc chữ thập + 2 góc nghiêng ~80°) hoặc tải video ngắn; hỗ trợ soi gương <code>0 ms</code> bằng WASM trên trình duyệt.</li>
+<li>HR duyệt hồ sơ nhân viên.</li>
+<li>Nhân viên đi qua cổng (hỗ trợ tối đa <strong>10 khuôn mặt đồng thời</strong> và góc nghiêng tới <strong>±90°</strong>).</li>
+<li>Hệ thống nhận diện liên tục bằng điểm log-odds <code>LLR</code>, kiểm tra người thật, cách ly giao cắt (<code>Crossing Quarantine</code>), ghi nhận vào <strong>sổ cái bất biến</strong> và đồng bộ hai chiều sang HRM.</li>
+</ol>
+<p>Hệ thống <strong>chạy 100% trên CPU</strong> (không cần GPU riêng), hỗ trợ đầy đủ cả <strong>Linux Server</strong> (Ubuntu/Debian — ưu tiên vận hành thực tế với <code>MediaMTX</code>, <code>tmpfs</code> RAM và đồng bộ giờ <code>chrony</code> NTP) lẫn <strong>Windows 10/11</strong> (phát triển và chạy demo với webcam, file video hoặc RTSP).</p>
+<p>Phần <strong>sản xuất</strong> (nhận diện hàng hóa/SKU, theo dõi hiện diện theo khu vực) được tách sang <strong>Phase 2</strong>; tuy nhiên kiến trúc v4 đã chuẩn hóa schema <code>TrackedObject</code> (<code>kind: "face" | "person" | "sku"</code>) để mở rộng mà không phải viết lại hạ tầng.</p>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Hạng mục</th>
+<th>Trạng thái</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Nhận diện đa góc tới <strong>±90°</strong> (<code>YuNet</code> + <code>3DDFA_V2</code> + <code>EdgeFace-XS</code>), batch tối đa <strong>10 khuôn mặt</strong> trên CPU</td>
+<td><span class="st ok">Đã triển khai</span></td>
+</tr>
+<tr>
+<td>Open-Set tin cậy (<code>LLR >= tau_threshold</code> và <code>margin >= μ(yaw)</code>), báo Unknown, không đoán tên</td>
+<td><span class="st ok">Đã triển khai</span></td>
+</tr>
+<tr>
+<td>Chống tráo tên khi đi giao cắt (<code>Crossing Quarantine</code>) &amp; ngữ cảnh cơ thể <code>YOLOX-Nano</code></td>
+<td><span class="st ok">Đã triển khai</span></td>
+</tr>
+<tr>
+<td>Đăng ký khuôn mặt hướng dẫn tới <strong>7 góc</strong> (có WASM soi gương &amp; bổ sung góc nghiêng), HR duyệt</td>
+<td><span class="st ok">Đã triển khai</span></td>
+</tr>
+<tr>
+<td>Chống giả mạo thụ động (<code>MiniFASNet V2 + V1SE</code>) + phát hiện màn hình/điện thoại (<code>YOLOX-Nano</code>)</td>
+<td><span class="st ok">Đã triển khai</span> (giảm rủi ro phần mềm)</td>
+</tr>
+<tr>
+<td>Media Plane: <code>MediaMTX</code> Single Puller, tách âm thanh <code>-an</code>, WebRTC WHEP + <code>&lt;canvas&gt;</code>, vòng đệm <code>tmpfs</code> fMP4</td>
+<td><span class="st ok">Đã triển khai</span></td>
+</tr>
+<tr>
+<td>Clip bằng chứng MP4 H.264 gốc sạch + sidecar <code>HMAC-SHA256</code>, xuất burn-in FFmpeg &amp; khóa <code>legal_hold</code></td>
+<td><span class="st ok">Đã triển khai</span></td>
+</tr>
+<tr>
+<td>Cô lập tiến trình AI (<code>worker_perception.py</code>), Fail-safe <code>/api/health</code>, lịch thức theo ca &amp; chế độ chờ</td>
+<td><span class="st ok">Đã triển khai</span></td>
+</tr>
+<tr>
+<td>Sổ cái chấm công bất biến, hậu kiểm ngoại lệ 5%, nhập bù dự phòng &amp; ERPNext hai chiều</td>
+<td><span class="st part">Mock đã chạy</span> · ERPNext đã viết đủ tạo/hủy, cần thử server thật</td>
+</tr>
+<tr>
+<td>Bảo mật vận hành: mã hóa sinh trắc học <code>AES-256-GCM</code>, RBAC 3 vai trò, <code>audit_logs</code> &amp; PostgreSQL đa cổng</td>
+<td><span class="st ok">Đã triển khai</span> (vượt 46/46 bài test tự động)</td>
+</tr>
+<tr>
+<td>Đo kiểm thực địa pha <code>K0</code> trên TP-Link Tapo C310 &amp; trình duyệt cổng <code>K0.5</code></td>
+<td><span class="st part">Đã có bộ công cụ</span> (<code>record_k0_bundle.py</code>, <code>replay_eval.py</code>), cần quay footage thật</td>
+</tr>
+<tr>
+<td>Hàng hóa / SKU, zone sản xuất (Phase 2)</td>
+<td><span class="st no">Chưa làm</span> (đã chờ sẵn ở <code>TrackedObject</code>)</td>
+</tr>
+</tbody>
+</table></div>
+<h2 id="2-kien-truc">2. Kiến trúc</h2>
+<p>Khác với bản PoC v1 chạy chung trong một tiến trình và tự nén lại MJPEG/WebM trên CPU, FaceGate v4 tách thành <strong>3 Mặt phẳng Độc lập (Planes)</strong>:</p>
+<pre><code>1. MEDIA PLANE (MediaMTX + ffmpeg -c:v copy -an)
+   Tapo C310 (/stream1 3MP@15fps, /stream2) ──► MediaMTX (Single RTSP Puller, 0 audio)
+      ├──► WebRTC (WHEP) ────────────────────► Trình duyệt &lt;video&gt; + &lt;canvas&gt; (requestVideoFrameCallback)
+      └──► Vòng đệm fMP4 1s trên tmpfs RAM ──► Cắt MP4 H.264 gốc sạch + sidecar .meta.json (HMAC-SHA256)
+
+2. PERCEPTION PROCESS (app/worker_perception.py — tiến trình riêng cô lập lỗi, NDJSON IPC)
+   Lịch thức theo ca (/stream1 giờ cao điểm | /stream2 chế độ ngủ)
+      ──► YOLOX-Nano (640px tìm người &amp; màn hình) ──► Cắt ROI Đầu-Vai 1:1 trên khung 3MP gốc
+      ──► YuNet (detect mặt) ──► 3DDFA_V2 (yaw/pitch/roll &amp; 68 mốc 3D ±90°)
+      ──► EdgeFace-XS (batch tới 10 mặt) + MiniFASNet V2/V1SE
+      ──► IoU Tracker + Crossing Quarantine ──► Tích lũy LLR 4 tham số + Novelty Gate
+
+3. CONTROL &amp; BUSINESS PLANE (FastAPI + Ledger + Security)
+   IPC Server ──► Sổ cái bất biến (attendance_ledger) + Audit-by-Exception 5% + legal_hold
+      ├──► HRM Worker (Mock JSONL | ERPNext Employee Checkin tạo/hủy idempotent)
+      ├──► Lưu trữ: SQLite WAL (1 cổng) hoặc PostgreSQL (≥ 2 cổng) · AES-256-GCM · RBAC
+      └──► Web UI (6 tab) + /api/health Fail-safe (≤ 5s) + fallback MJPEG/WebM khi chạy webcam cục bộ
+</code></pre>
+<p>Tách tiến trình giúp khi AI bận, driver camera kẹt hoặc thậm chí worker suy luận bị lỗi, giao diện bảng công, chấm công dự phòng và hệ thống đồng bộ HRM vẫn hoạt động bình thường và tự khởi động lại worker sau 1 giây.</p>
+<h2 id="3-cong-nghe-su-dung">3. Công nghệ sử dụng</h2>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Lớp</th>
+<th>Công nghệ hiện tại (v4)</th>
+<th>Ghi chú &amp; Giấy phép</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Ngôn ngữ, API server</td>
+<td>Python 3.10+ (kiểm chứng 3.12), FastAPI, Uvicorn</td>
+<td>REST, WebSocket, IPC NDJSON (Unix socket / TCP), fallback MJPEG</td>
+</tr>
+<tr>
+<td>Media Relay &amp; Ghi vòng đệm</td>
+<td><strong>MediaMTX</strong> + <code>ffmpeg -c:v copy -an</code> + <code>tmpfs</code> fMP4</td>
+<td>MIT; Single RTSP Puller; WebRTC WHEP; 0% CPU re-encode cho xem trực tiếp &amp; clip gốc</td>
+</tr>
+<tr>
+<td>Phát hiện ngữ cảnh &amp; ROI</td>
+<td><strong>YOLOX-Nano</strong> (COCO) qua ONNX Runtime</td>
+<td>Apache-2.0; tìm vùng người để cắt ROI 1:1 trên 3MP và phát hiện điện thoại/màn hình</td>
+</tr>
+<tr>
+<td>Phát hiện mặt</td>
+<td><strong>YuNet</strong> (OpenCV Zoo)</td>
+<td>Apache-2.0; kèm 5 mốc khuôn mặt</td>
+</tr>
+<tr>
+<td>Ước lượng tư thế 3D</td>
+<td><strong>3DDFA_V2</strong> MobileNet-120x120 (68 mốc 3D)</td>
+<td>MIT; ước lượng yaw/pitch/roll và căn chỉnh đa góc tới ±90°</td>
+</tr>
+<tr>
+<td>Nhận diện (Embedding)</td>
+<td><strong>EdgeFace-XS</strong> (mặc định, MIT) · giữ <code>SFace</code> (Apache-2.0) &amp; <code>SCRFD+ArcFace</code> (nghiên cứu) để so sánh</td>
+<td>Hỗ trợ batch tới 10 mặt trên CPU; tùy chọn <code>OpenVINOExecutionProvider</code> ở K4</td>
+</tr>
+<tr>
+<td>Chống giả mạo</td>
+<td><strong>MiniFASNet V2 + V1SE</strong> + ngữ cảnh <code>YOLOX-Nano</code></td>
+<td>Apache-2.0; kết hợp kiểm tra vân bề mặt và phát hiện vật chứa màn hình</td>
+</tr>
+<tr>
+<td>Lõi quyết định &amp; Tracking</td>
+<td><strong>LLR 4 tham số + Novelty Gate</strong>; IoU + vận tốc + <code>Crossing Quarantine</code></td>
+<td>Không nhảy bậc ở biên 40°; giữ rào cứng <code>tau_threshold</code> &amp; <code>margin μ(yaw)</code></td>
+</tr>
+<tr>
+<td>So khớp &amp; Lưu trữ</td>
+<td>NumPy cosine trong RAM; <strong>SQLite WAL</strong> (1 cổng) / <strong>PostgreSQL</strong> (≥ 2 cổng)</td>
+<td>Thêm bảng <code>attendance_ledger</code>, <code>audit_logs</code>, cờ <code>legal_hold</code></td>
+</tr>
+<tr>
+<td>Bảo mật &amp; Toàn vẹn</td>
+<td><strong>AES-256-GCM</strong> (<code>cryptography</code>), RBAC 3 vai trò, <code>HMAC-SHA256</code> sidecar</td>
+<td>Mã hóa embedding/ảnh mẫu lúc nghỉ; ký số clip bằng chứng MP4 + <code>.meta.json</code></td>
+</tr>
+<tr>
+<td>Giao diện &amp; Đăng ký</td>
+<td>HTML/CSS/JS thuần, <code>&lt;canvas&gt;</code> <code>requestVideoFrameCallback</code>, <strong>MediaPipe WASM</strong></td>
+<td>Apache-2.0; soi gương 0 ms trên trình duyệt, lấy mẫu chuẩn từ camera cổng</td>
+</tr>
+<tr>
+<td>Tích hợp HRM &amp; Đóng gói</td>
+<td>Mock JSONL &amp; <strong>ERPNext</strong> hai chiều (tạo + hủy idempotent); <code>setup.sh/run.sh</code> &amp; <code>setup.bat/run.bat</code></td>
+<td>Hỗ trợ Linux Server và Windows; có bộ <code>record_k0_bundle.py</code>, <code>replay_eval.py</code>, <code>benchmark.py</code></td>
+</tr>
+</tbody>
+</table></div>
+<p>Toàn bộ thông số nằm trong <code>config.yaml</code>. Tổng mã nguồn hiện khoảng <strong>8.170 dòng</strong> (gồm backend, worker, media/security, frontend và script đánh giá).</p>
+<h2 id="4-cac-bai-toan-a-giai-quyet">4. Các bài toán đã giải quyết</h2>
+<h3 id="41-nhan-dien-tin-cay-da-goc-90-khong-oan-ten">4.1. Nhận diện tin cậy đa góc (±90°), không đoán tên</h3>
+<ul>
+<li><strong>Khai thác trọn vẹn 3MP của Tapo C310:</strong> Thay vì bóp cả khung hình xuống 960px, pipeline thu nhỏ khung <code>2304×1296</code> về 640px tìm vùng người bằng <code>YOLOX-Nano</code> rồi cắt vùng Đầu–Vai tỷ lệ <strong>1:1 trên khung gốc</strong> để giữ đủ <code>80–110 px</code> bề ngang mặt ở cự ly 2–3 m.</li>
+<li><strong>Ước lượng tư thế 3D &amp; tích lũy liên tục LLR:</strong> <code>3DDFA_V2</code> cung cấp yaw/pitch/roll chính xác tới ±90°; điểm tương đồng cosine được quy đổi qua hàm logistic 4 tham số <code>LLR(s, yaw, q)</code> và lọc bớt frame trùng lặp nhờ <strong>Novelty Gate</strong> (<code>Δt ≥ 250 ms</code> hoặc <code>|Δyaw| ≥ 8°</code>).</li>
+<li><strong>Rào cứng kép theo góc nhìn:</strong> Chỉ chốt danh tính khi đồng thời đạt <code>LLR(top1) ≥ tau_threshold</code> và biên độ cách biệt <code>LLR(top1) - LLR(top2) ≥ μ(yaw)</code> (siết chặt dần khi mặt quay nghiêng). Thiếu dữ liệu thì luôn hiển thị <strong>Unknown</strong>.</li>
+</ul>
+<h3 id="42-ang-ky-khuon-mat-7-goc-tach-tai-nguyen">4.2. Đăng ký khuôn mặt tới 7 góc, tách tài nguyên cổng</h3>
+<ul>
+<li>Hỗ trợ quay trực tiếp có hướng dẫn tới <strong>7 góc</strong> (5 góc chữ thập + 2 góc nghiêng sâu ~80° qua <code>enable_profile_90</code>), cho phép đăng ký bổ sung góc nghiêng (<code>supplement_only</code>) hoặc tải video 6–10 giây.</li>
+<li>Trình duyệt có sẵn module <code>MediaPipe Face Landmarker</code> WASM (<code>guided_wasm.js</code>) phản hồi góc soi gương tức thì, trong khi ảnh mẫu trích vector vẫn chụp chuẩn từ camera cổng để tránh lệch miền ảnh và phải qua bước HR bấm <strong>Duyệt</strong>.</li>
+<li>Enrollment dùng session suy luận riêng (<code>enroll_engine</code>), không khóa luồng nhận diện tại cổng; đồng thời tắt vĩnh viễn <code>auto_enroll_online</code> để chống đầu độc mẫu.</li>
+</ul>
+<h3 id="43-so-cai-cham-cong-hau-kiem-5-va-fail-safe">4.3. Sổ cái chấm công bất biến, hậu kiểm 5% và Fail-safe</h3>
+<ul>
+<li>Mỗi ngày mỗi nhân viên chỉ có một check-in hiệu lực, nhưng được lưu trong sổ cái <strong>append-only</strong> <code>attendance_ledger</code> (<code>checkin_created</code>, <code>checkin_revoked</code>, <code>checkin_manual</code>) có <code>idempotency_key</code> và đồng bộ tạo/hủy hai chiều với <strong>ERPNext</strong>.</li>
+<li>Các lượt nhận diện ở góc nghiêng (<code>profile_verified</code>) sát biên, gần cảnh báo spoof hoặc 5% ngẫu nhiên được đưa vào <strong>Hàng chờ Hậu kiểm Ngoại lệ (Audit-by-Exception)</strong> để HR xác nhận hoặc thu hồi.</li>
+<li><strong>Fail-safe:</strong> Endpoint <code>/api/health</code> phát hiện mất camera, lỗi ffmpeg, worker treo hoặc đĩa trống <code>&lt; 2 GB</code> trong <code>≤ 5 giây</code>, hiển thị cảnh báo ngay trên web và mở form <strong>Chấm công Dự phòng / Nhập bù</strong> có ghi vết kiểm toán.</li>
+</ul>
+<h3 id="44-chong-gia-mao-va-ngan-canh-bao-nham-khi-cat-khung">4.4. Chống giả mạo nhiều lớp &amp; miễn phạt cắt khung đáy</h3>
+<ul>
+<li>Kết hợp <strong>MiniFASNet V2 + V1SE</strong> (soi bề mặt và viền thiết bị) với bộ phát hiện ngữ cảnh <strong>YOLOX-Nano</strong> (phát hiện điện thoại, laptop, màn hình TV chồng lên vùng mặt hoặc khuôn mặt không gắn với thân người).</li>
+<li>Bổ sung quy tắc <strong>Viewport-Aware Context</strong>: khi nhân viên đứng gần camera làm phần vai bị cắt ở mép dưới khung hình (<code>y2 ≥ 0.80 × H</code>) hoặc bị người đi trước che khuất, hệ thống miễn phạt lỗi <code>unattached_face</code>.</li>
+</ul>
+<h3 id="45-chong-trao-ten-khi-mac-dong-phuc-giao-cat-crossing-quarantine">4.5. Chống tráo tên khi mặc đồng phục giao cắt (Crossing Quarantine)</h3>
+<ul>
+<li>Tracker kết hợp IoU, dự đoán vận tốc và cầu nối hộp cơ thể <code>YOLOX-Nano</code>.</li>
+<li>Khi hai hộp mặt hoặc hộp người giao cắt nhau vượt ngưỡng (<code>crossing_face_iou: 0.25</code> / <code>crossing_person_iou: 0.40</code>), hệ thống kích hoạt <strong>Crossing Quarantine</strong>: xóa sạch bằng chứng tích lũy trong pha giao cắt, khóa chốt check-in và buộc track phải vượt lại từ đầu đầy đủ rào cứng Open-Set sau khi tách nhau.</li>
+</ul>
+<h3 id="46-lich-su-clip-sach-ky-hmac-va-khoa-legal-hold">4.6. Lịch sử clip MP4 gốc sạch, ký HMAC-SHA256 và khóa legal_hold</h3>
+<ul>
+<li>Thay vì ghi đè khung chữ lên video gốc và tốn CPU nén WebM, chế độ Media Plane cắt đoạn <strong>MP4 H.264 gốc sạch</strong> (0 âm thanh) từ vòng đệm <code>tmpfs</code> của MediaMTX, lưu kèm sidecar <code>.meta.json</code> ký <code>HMAC-SHA256</code>.</li>
+<li>Trình phát web vẽ lại khung theo timeline từ sidecar; khi cần đối soát lương/khiếu nại có nút <strong>Xuất MP4 đóng dấu</strong> (burn-in bằng FFmpeg). Các clip spoof, đang hậu kiểm hoặc bị khiếu nại được gắn cờ <code>legal_hold = 1</code> để không bao giờ bị xóa tự động khi dọn đĩa.</li>
+</ul>
+<h3 id="47-lich-thuc-theo-ca-va-che-do-cho">4.7. Lịch thức theo ca và chế độ chờ</h3>
+<ul>
+<li>Trong khung giờ vào/tan ca (<code>power.active_windows</code>, ví dụ 06:30–09:30 và 16:30–18:30), worker giữ nóng giải mã <code>/stream1</code> để phản hồi ngay (<code>0 ms</code> chờ GOP keyframe).</li>
+<li>Ngoài giờ cao điểm, nếu không có người sau <code>idle_seconds</code> (30s), hệ thống chuyển sang <strong>CHẾ ĐỘ CHỜ</strong>, chỉ canh chuyển động trong <strong>Vùng cửa</strong> và kiểm tra xác nhận có khuôn mặt trong <code>confirm_seconds</code> để tránh bị lá cây, bóng đổ đánh thức.</li>
+</ul>
+<h2 id="5-so-voi-cong-nghe-a-e-xuat">5. So với đề xuất ban đầu &amp; bản PoC v1</h2>
+<div class="tw"><table class="cmp">
+<thead>
+<tr>
+<th>Hạng mục</th>
+<th>Đề xuất ban đầu / PoC v1</th>
+<th>Kiến trúc v4 hiện tại</th>
+<th>Lý do thay đổi</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Kiến trúc tổng thể</td>
+<td>1 tiến trình Python đọc camera, chạy AI, nén MJPEG &amp; WebM chung</td>
+<td><strong>3 Mặt phẳng Độc lập</strong>: MediaMTX + Perception Worker + FastAPI Control</td>
+<td>Cô lập lỗi driver/AI khỏi API &amp; bảng công; bỏ hoàn toàn gánh nặng nén kép video khỏi Python CPU</td>
+</tr>
+<tr>
+<td>Nơi chạy</td>
+<td>Demo cục bộ trên Windows (chưa có server Linux)</td>
+<td><strong>Linux Server</strong> (ưu tiên: <code>tmpfs</code>, <code>chrony</code>) &amp; <strong>Windows 10/11</strong></td>
+<td>Sẵn sàng triển khai tại văn phòng trên LAN nội bộ, không phụ thuộc cloud/Internet</td>
+</tr>
+<tr>
+<td>Phát hiện &amp; Cắt vùng</td>
+<td><code>YuNet</code> trên khung bị bóp về <code>960px</code></td>
+<td><strong>Two-Stage ROI 1:1</strong> (<code>YOLOX-Nano</code> + <code>YuNet</code> trên khung 3MP gốc)</td>
+<td>Bảo toàn 100% mật độ pixel mặt (80–110 px) ở khoảng cách 2–3 m của Tapo C310</td>
+</tr>
+<tr>
+<td>Tư thế &amp; Nhận diện</td>
+<td>Heuristic 5 điểm + <code>SFace</code> (giới hạn <code>±40°</code>)</td>
+<td><strong>3DDFA_V2</strong> (±90°) + <strong>EdgeFace-XS</strong> (MIT)</td>
+<td>Hỗ trợ nhận diện liên tục tới ±90°, batch nhanh trên CPU và giữ nguyên license thương mại</td>
+</tr>
+<tr>
+<td>Quyết định danh tính</td>
+<td>Chia ngăn góc cứng <code>40° ± 5°</code>, ngưỡng cosine rời rạc</td>
+<td><strong>LLR 4 tham số + Novelty Gate</strong>, rào cứng <code>tau + margin μ(yaw)</code></td>
+<td>Xóa lỗi nhảy bậc/kẹt biên tại 40°, khử tương quan chuỗi frame liên tiếp</td>
+</tr>
+<tr>
+<td>Bám mặt đồng phục</td>
+<td>IoU + kiểm tra cosine khi tách track</td>
+<td>IoU + cầu nối <code>YOLOX-Nano</code> + <strong>Crossing Quarantine</strong> + Viewport-Aware</td>
+<td>Triệt tiêu tráo tên khi 2 người mặc đồng phục đi chéo nhau; không phạt nhầm khi cắt vai đáy ảnh</td>
+</tr>
+<tr>
+<td>Xem trực tiếp &amp; Clip</td>
+<td>MJPEG qua FastAPI + clip WebM (VP8) đã burn-in</td>
+<td><strong>MediaMTX WebRTC WHEP</strong> + <code>&lt;canvas&gt;</code>; clip MP4 gốc + sidecar <code>HMAC-SHA256</code></td>
+<td>Giảm trễ dưới 300 ms, tiết kiệm CPU khi nhiều người xem, giữ clip gốc sạch kèm khả năng kiểm chứng toàn vẹn</td>
+</tr>
+<tr>
+<td>Số khuôn mặt đồng thời</td>
+<td>Giới hạn 3 mặt</td>
+<td><strong>10 khuôn mặt</strong> (<code>max_faces: 10</code>) với batch embedding</td>
+<td>Đáp ứng mục tiêu tải giờ cao điểm tại cổng</td>
+</tr>
+<tr>
+<td>Đăng ký khuôn mặt</td>
+<td>5 góc chữ thập từ camera/video</td>
+<td><strong>Tối đa 7 góc</strong> (5 + 2 góc nghiêng ~80°), tùy chọn <strong>MediaPipe WASM</strong></td>
+<td>Phản hồi soi gương 0 ms ở client nhưng vẫn giữ mẫu chuẩn từ camera cổng, bổ sung góc nghiêng</td>
+</tr>
+<tr>
+<td>Nghiệp vụ &amp; Bảo mật</td>
+<td>Bảng <code>events</code> đơn giản, chưa có auth/mã hóa</td>
+<td><strong>Sổ cái append-only</strong>, Audit 5%, ERPNext 2 chiều, <code>legal_hold</code>, <strong>AES-256-GCM</strong>, <strong>RBAC</strong>, PostgreSQL</td>
+<td>Đáp ứng yêu cầu đối soát tính lương, bảo vệ dữ liệu sinh trắc học và mở rộng nhiều cổng</td>
+</tr>
+</tbody>
+</table></div>
+<h2 id="6-gioi-han-va-rui-ro-con-lai">6. Giới hạn và rủi ro còn lại</h2>
+<ul>
+<li><strong>Chưa có số liệu đo thực địa trên Tapo C310.</strong> 46 bài kiểm thử tự động đã đạt, nhưng độ mờ chuyển động ở <code>15 fps</code>, FAR ghép chéo và APCER/BPCER thực tế cần được đo bằng tập footage quay tại cổng (pha <code>K0</code>).</li>
+<li><strong>Chống giả mạo RGB vẫn chỉ giảm rủi ro.</strong> MiniFASNet + YOLOX-Nano chặn tốt ảnh in và điện thoại thông thường, nhưng video độ nét cao trên màn hình lớn vẫn có rủi ro lọt; nếu chấm công tính lương trực tiếp nên cân nhắc thiết bị IR/3D hoặc xác thực 2 yếu tố.</li>
+<li><strong>Yêu cầu ánh sáng &amp; lắp đặt khắt khe với Tapo C310:</strong> Bắt buộc dây LAN RJ45, khóa cứng <code>Day Mode</code>, đèn chiếu thuận ≥ 250–300 lux, không gắn microSD, cô lập VLAN và chuyển hướng NTP UDP 123 về <code>chrony</code> (theo <code>deploy/vlan-ntp-chrony.md</code>).</li>
+<li><strong>Chưa thử nghiệm nối ERPNext server thật</strong> và chưa kiểm chứng tải 10 người thực tế tại hiện trường (hiện mới có micro-benchmark batch 10 mặt).</li>
+</ul>
+<h2 id="7-buoc-tiep-theo-e-xuat">7. Bước tiếp theo đề xuất</h2>
+<ol>
+<li><strong>Pha K0 — Hiện trường Tapo C310:</strong> Ký đơn đồng ý sinh trắc học (<code>deploy/consent-template-k0.md</code>), lắp đặt theo <code>deploy/vlan-ntp-chrony.md</code>, quay thử cả 2 bố cục (đi thẳng ±40° và đi ngang ±90°) kèm bộ tấn công giả mạo ISO/IEC 30107-3 rồi chạy <code>scripts/record_k0_bundle.py</code> + <code>scripts/replay_eval.py</code>.</li>
+<li><strong>Cổng K0.5 — Họp chốt với PM &amp; Pháp chế:</strong> Điền bảng số liệu vào <code>docs/BAO_CAO_K0_5_PM.md</code> để chốt bố cục cổng, phương án phần cứng (<code>A / B / C / C'</code>) và quy chế bằng chứng clip.</li>
+<li><strong>Kiểm chứng K1–K4 trên phần cứng thật:</strong> Đo độ lệch đồng bộ <code>&lt;canvas&gt;</code> bằng đồng hồ mili-giây (hiệu chỉnh <code>overlay_offset_ms</code>), đo tổng chu kỳ 10 khuôn mặt trên server Linux (bật <code>OpenVINOExecutionProvider</code> nếu cần).</li>
+<li><strong>Thử nghiệm tích hợp thật (K5):</strong> Nối ERPNext staging kiểm thử tạo/hủy <code>Employee Checkin</code>, bật RBAC + khóa mã hóa trên mạng nội bộ và chuẩn bị PostgreSQL khi nhân rộng nhiều cổng.</li>
+<li><strong>Phase 2 (Sản xuất):</strong> Tận dụng chung hạ tầng MediaMTX và schema <code>TrackedObject</code> để triển khai nhận diện hàng hóa/SKU và giám sát khu vực sản xuất trên camera riêng.</li>
+</ol>
+</article>
+</div>
+<footer>FaceGate v4 · github.com/nhatnam201104/facegate</footer>
+<script>
+// danh dau muc dang doc trong muc luc
+const links = [...document.querySelectorAll(".toc a")];
+const obs = new IntersectionObserver(es => es.forEach(e => {
+  if (e.isIntersecting) links.forEach(a => a.classList.toggle("on", a.hash === "#" + e.target.id));
+}), {rootMargin: "0px 0px -70% 0px"});
+document.querySelectorAll("article h2[id]").forEach(el => obs.observe(el));
+</script>
+</body>
+</html>

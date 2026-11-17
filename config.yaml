@@ -1,0 +1,188 @@
+# ==== FaceGate demo - cau hinh ====
+# Sua file nay roi chay lai ./run.sh (Linux) hoac run.bat (Windows)
+
+camera:
+  # 0 (hoac /dev/video0 tren Linux) = webcam | duong dan file video | RTSP qua MediaMTX Single Puller
+  source: 0
+  name: gate-1
+  id: gate-1
+  loop_file: true
+  model_profile: tapo_c310           # tapo_c310 | enterprise_rtsp | webcam
+  main_source: rtsp://127.0.0.1:8554/gate1_main
+  sub_source: rtsp://127.0.0.1:8554/gate1_sub
+  whep_url: /media/gate1_main/whep
+  playback_url: http://127.0.0.1:9996
+  overlay_offset_ms: 0
+
+pipeline:
+  # edgeface : YuNet + 3DDFA_V2 + EdgeFace-XS (Apache-2.0 / MIT) -> mac dinh v4, ho tro +-90 do tren CPU
+  # opencv   : YuNet + SFace (OpenCV Zoo, Apache-2.0)
+  # onnx     : SCRFD-500M + ArcFace MobileFaceNet (InsightFace, CHI dung nghien cuu/benchmark)
+  backend: edgeface
+  execution_provider: cpu            # cpu | openvino (chi bat sau khi vuot cong Replay K4)
+  detect_fps: 6
+  det_score: 0.55
+  max_faces: 10
+  stream_fps: 15
+  stream_width: 960
+  two_stage_roi: true                # resize chinh frame /stream1 ve 640px tim nguoi -> cat ROI 1:1 tren 3MP
+  always_fallback_unmatched: true    # quet bo sung toan khung neu YOLOX miss nguoi thu 2
+  fallback_det_width: 1280
+
+quality:
+  min_face: 60             # canh ngan nho nhat cua mat (pixel)
+  min_blur: 35             # phuong sai Laplacian toi thieu tren vung da nhin thay
+  min_brightness: 45
+  max_brightness: 225
+  max_yaw: 90              # do, ho tro nhan dien toi goc nghieng suon +-90 do
+  max_pitch: 35
+  max_roll: 35
+
+recognition:
+  frontal_max_yaw: 40
+  pose_hysteresis: 5
+  thresholds:
+    edgeface:
+      frontal: 0.40
+      profile: 0.46
+    opencv:
+      frontal: 0.42
+      profile: 0.48
+    onnx:
+      frontal: 0.40
+      profile: 0.46
+  margin: 0.06
+  profile_margin: 0.08
+  min_good_frames: 2
+  min_profile_frames: 4
+  max_track_embeddings: 10
+  track_max_age: 2.0
+  split_cosine: 0.25
+
+decision:
+  novelty_min_dt_ms: 250
+  novelty_min_dyaw_deg: 8.0
+  llr_weights:
+    a_cos: 12.0
+    b_bias: -4.8
+    c_abs_yaw: -0.015
+    d_quality: 0.60
+  tau_threshold: 0.45
+  margin_base: 0.70
+  margin_yaw_slope: 0.30
+  single_gallery_baseline_llr: 0.0
+  auto_enroll_online: false          # CAM tuyet doi tu hoc mau online chong dau doc (H17)
+
+tracking:
+  crossing_face_iou: 0.25            # kich hoat Crossing Quarantine khi 2 hop mat giao cat (H3)
+  crossing_person_iou: 0.40
+  viewport_bottom_grace: 0.80        # y2 >= 0.80*H coi la cat khung hop le, tat phat unattached_face
+  unattached_confirm_frames: 4       # chi khoa spoof unattached_face sau N frame miss lien tiep
+
+events:
+  # Moi nhan vien chi check-in 1 lan/ngay; cac lan sau chi hien "Da cham cong luc ..."
+  # none: xac nhan dung nguoi that la ghi check-in
+  # line: chi ghi khi di qua duong ao theo chieu VAO (in_when)
+  direction: none
+  line: [[0.0, 0.6], [1.0, 0.6]]   # toa do chuan hoa 0..1 (x, y)
+  in_when: down            # down: di tu tren xuong duoi qua line = IN; up: nguoc lai
+  log_unknown: true        # luu su kien Unknown de danh gia (khong gui HRM)
+
+
+liveness:                  # chong gia mao bang anh/man hinh (MiniFASNet, passive)
+  enabled: true
+  threshold: 0.70          # TB xac suat "nguoi that" >= muc nay moi duoc cham cong
+  spoof_below: 0.35        # TB duoi muc nay = gia mao: canh bao, khong cham cong
+  min_frames: 4            # so frame tot toi thieu truoc khi ket luan (ca live va spoof)
+  window: 8                # lay trung binh tren N frame gan nhat cua track
+  require_frontal_for_checkin: true  # bat buoc qua MiniFASNet chinh dien (|yaw|<=40) truoc khi check-in ERP
+
+attendance:
+  shift_start: "08:00"
+  shift_end: "17:00"
+  grace_minutes: 5         # tre/som trong khoang nay van tinh dung gio
+  workdays: [1, 2, 3, 4, 5]   # 1 = Thu 2 ... 7 = Chu nhat (tinh vang)
+
+clips:                     # clip video moi lan xuat hien (tab Lich su)
+  enabled: true
+  fps: 10
+  width: 640
+  pre_seconds: 2           # lay them truoc khi mat xuat hien
+  post_seconds: 1.5        # va sau khi mat roi khung hinh
+  max_seconds: 60          # clip dai nhat cho 1 lan xuat hien
+  retention_days: 30       # tu xoa clip cu (du lieu sinh trac hoc)
+
+
+power:                     # che do cho & lich thuc theo ca (H34)
+  sleep: true
+  active_windows:          # luon giu nong decode /stream1 0ms cho GOP trong gio vao/tan ca
+    - ["06:30", "09:30"]
+    - ["16:30", "18:30"]
+  idle_seconds: 30         # khong thay mat / chuyen dong trong N giay -> vao che do cho
+  motion_threshold: 0.01   # ti le diem anh thay doi de danh thuc (0.01 = 1%); tang neu hay tu bat vi nhieu sang
+  sleep_check_fps: 4       # so lan do chuyen dong moi giay khi dang cho
+  confirm_seconds: 1.0     # co chuyen dong trong vung -> tim khuon mat trong N giay; khong thay = la cay/bong, ngu tiep
+  # Vung loi di (toa do 0..1). Chi chuyen dong trong vung moi danh thuc. Ve tren web: tab Truc tiep > "Vung cua".
+  # Vung ve tren web luu o data/settings.json va duoc uu tien hon dong nay.
+  motion_zone: [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]
+
+enrollment:
+  sample_fps: 10           # tach frame tu video dang ky
+  min_frames: 5
+  max_frames: 21
+  per_bin: 3               # toi da so frame cho moi o goc nhin
+  dedup_cosine: 0.95       # 2 frame giong nhau hon muc nay thi bo bot 1
+  outlier_min_cosine: 0.42
+  cross_pose_min_cosine: 0.20
+  keep_video: false        # mac dinh xoa video goc sau khi xu ly
+  guided:                  # dang ky quay tu camera: 7 goc (5 chu thap + 2 nghieng suon ~80 do)
+    enable_profile_90: true
+    yaw_enter: 15          # do lech ngang (so voi luc nhin thang) de tinh la da quay
+    yaw_center: 9          # trong khoang nay la "nhin thang"
+    profile_yaw_min: 65
+    profile_yaw_max: 88
+    pitch_enter: 10        # do lech doc de tinh la da ngang/cui
+    pitch_center: 8
+    hold_seconds: 0.7      # phai giu dung goc lien tuc chung nay
+    timeout_seconds: 240   # tong thoi gian toi da cua mot phien
+
+audit_and_safety:
+  profile_audit_sample_rate: 0.05
+  near_spoof_window_sec: 300
+  min_free_disk_gb: 2.0
+  heartbeat_timeout_sec: 5.0
+
+audio_prompt:              # phat chuong canh bao tren loa camera Tapo C310 (kem chuong Web du phong khi demo)
+  enabled: true            # bat tu dong keu chuong khi phat hien gia mao hoac nhac nhin thang
+  backend: tapo            # tapo | web
+  host: ""                 # IP camera Tapo (vd: 192.168.50.10, hoac de trong lay tu bien moi truong CAM_IP / TAPO_HOST)
+  user: admin
+  password: ""             # mat khau Camera Account hoac TP-Link Cloud (khuyen nghi dat qua TAPO_PASSWORD / TAPO_CLOUD_PASSWORD)
+  cloud_password: ""
+  mode: talk_8800          # talk_8800 (phat chuong Dinh-Dong / coi G.711 ra loa port 8800) | manual_alarm | play_alarm | custom_audio
+  duration_sec: 0.85       # do dai tieng chuong nhac nhin thang / bam thu chuong (giay)
+  spoof_duration_sec: 1.2  # do dai coi canh bao khi phat hien gia mao (giay)
+  alarm_type: 0
+  alarm_volume: low        # low | medium | high
+  custom_audio_id: 1
+  prompt_wav: ""           # de trong = dung webapp/audio/look_at_camera.wav ("Vui long quay mat nhin thang vao camera.")
+  profile_wait_sec: 1.2    # chi nhac khi mat nghieng >40 do qua N giay ma chua xong liveness
+  cooldown_sec: 6.0        # khoang nghi toi thieu giua 2 lan chuong nhac
+  spoof_chime: true        # keu chuong canh bao ngay khi phat hien anh in / dien thoai gia mao
+  spoof_cooldown_sec: 4.0
+
+hrm:
+  adapter: mock            # mock | erpnext
+  erpnext:
+    url: http://localhost:8000
+    api_key: ""
+    api_secret: ""
+    device_id: gate-1
+
+storage:
+  data_dir: data
+  database_url: ""         # de trong = SQLite WAL; postgresql://... khi gom >= 2 cong (K5)
+
+server:
+  host: 127.0.0.1          # doi thanh 0.0.0.0 neu chay tren Linux server va mo tu may khac trong LAN
+  port: 8090
