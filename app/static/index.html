@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>FaceGate · Demo nhận diện cổng</title>
-<link rel="stylesheet" href="/static/style.css">
+<link rel="stylesheet" href="/static/style.css?v=4.2">
 </head>
 <body>
 <header>
@@ -32,6 +32,9 @@
         <span class="rec" id="recBadge">ĐANG NHẬN DIỆN</span>
         <span class="muted">Nguồn:</span> <b id="srcLabel">…</b>
         <button type="button" class="btn" id="zoneBtn" title="Chỉ chuyển động trong vùng này mới đánh thức chế độ chờ">Vùng cửa</button>
+        <button type="button" class="btn chime-btn" id="chimeBtn" title="Phát thử tiếng chuông cảnh báo trên loa Camera Tapo (hoặc giả lập trên Web khi chưa cắm camera)">🔔 Thử chuông Camera</button>
+        <button type="button" class="btn chime-btn" id="promptVoiceBtn" title="Phát thử audio tiếng Việt nhắc người dùng quay mặt nhìn thẳng vào camera">🗣️ Thử nhắc quay mặt</button>
+        <span class="msg" id="chimeMsg"></span>
       </div>
       <form id="srcForm" class="srcform">
         <select name="kind" aria-label="Loại nguồn video">
@@ -214,11 +217,11 @@
     </div>
   </div>
 </div>
-<script src="/static/whep_canvas.js"></script>
-<script src="/static/guided_wasm.js"></script>
-<script src="/static/app.js"></script>
-<script src="/static/attendance.js"></script>
-<script src="/static/history.js"></script>
-<script src="/static/zone.js"></script>
+<script src="/static/whep_canvas.js?v=4.2"></script>
+<script src="/static/guided_wasm.js?v=4.2"></script>
+<script src="/static/app.js?v=4.2"></script>
+<script src="/static/attendance.js?v=4.2"></script>
+<script src="/static/history.js?v=4.2"></script>
+<script src="/static/zone.js?v=4.2"></script>
 </body>
 </html>

@@ -10,3 +10,5 @@ pillow>=10.0
 cryptography>=42.0
 # Tuy chon khi gom >= 2 cong camera ve PostgreSQL (K5):
 # psycopg[binary]>=3.1
+# Tuy chon: loa Tapo nhac "nhin vao camera" (audio_prompt.backend=tapo, thu vien khong chinh thuc, MIT):
+# pytapo>=3.4

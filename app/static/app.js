@@ -59,6 +59,7 @@ function connectWS() {
     const msg = JSON.parse(m.data);
     if (msg.type === "status") showStatus(msg.status);
     if (msg.type === "frame_overlay") window.fgWhepOverlay?.pushOverlay(msg);
+    if (msg.type === "camera_chime") handleCameraChimeEvent(msg);
     if (msg.type === "event") {
       addFeed(msg.event, true);
       if (msg.event.kind !== "unknown") showGreet(msg.event, msg.greet);
@@ -90,6 +91,12 @@ function showStatus(s) {
     ` · đã bỏ qua ${s.wakes_rejected} lần chuyển động không phải người` : "";
   const zoned = s.motion_zone && JSON.stringify(s.motion_zone) !== JSON.stringify([[0, 0], [1, 0], [1, 1], [0, 1]]);
   $("#zoneBtn").textContent = zoned ? "Vùng cửa ✓" : "Vùng cửa";
+  if (s.camera_chime && $("#chimeBtn")) {
+    const hw = s.camera_chime.hardware_configured;
+    $("#chimeBtn").title = hw
+      ? `Phát chuông trên loa Tapo (${s.camera_chime.host})`
+      : "Chưa cấu hình IP/mật khẩu loa Tapo — bấm để demo chuông giả lập trên Web";
+  }
   const ph = $("#videoPh"), hasImg = $("#video").naturalWidth > 0;
   ph.hidden = live && hasImg;
   ph.textContent = black ? `“${s.source.label}” đang trả hình đen — đang tự mở lại. Kiểm tra nắp che/phím tắt camera, ` +
@@ -163,6 +170,138 @@ function beep(ok) {
       o.connect(g).connect(audioCtx.destination); o.start(t); o.stop(t + 0.14);
     });
   } catch { /* trinh duyet chan am thanh truoc khi nguoi dung tuong tac */ }
+}
+
+// ---------- chuong canh bao Camera Tapo + giong noi nhac quay mat + du phong Web Audio khi demo
+let chimeMsgTimer = null;
+let promptVoiceAudio = null;
+let lastPromptVoiceAt = 0;
+function playPromptVoiceWeb(audioUrl = "/static/audio/look_at_camera.wav", forceSound = false) {
+  if (!forceSound && !$("#soundOn")?.checked) return false;
+  const nowMs = Date.now();
+  if (nowMs - lastPromptVoiceAt < 800) return true;
+  lastPromptVoiceAt = nowMs;
+  try {
+    if (!promptVoiceAudio || promptVoiceAudio.getAttribute("src") !== audioUrl) {
+      promptVoiceAudio = new Audio(audioUrl);
+    }
+    promptVoiceAudio.currentTime = 0;
+    const p = promptVoiceAudio.play();
+    if (p && typeof p.catch === "function") {
+      p.catch(() => playCameraBellSynth("prompt", forceSound));
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function playCameraBellSynth(kind = "chime", forceSound = false) {
+  if (!forceSound && !$("#soundOn")?.checked) return;
+  try {
+    audioCtx = audioCtx || new AudioContext();
+    if (audioCtx.state === "suspended") audioCtx.resume();
+    const now = audioCtx.currentTime;
+    if (kind === "spoof") {
+      // Coi canh bao 2 hoi ro rang khi phat hien gia mao
+      [0, 0.22, 0.44].forEach(offset => {
+        const osc = audioCtx.createOscillator(), gain = audioCtx.createGain();
+        osc.type = "sawtooth";
+        osc.frequency.setValueAtTime(740, now + offset);
+        osc.frequency.linearRampToValueAtTime(520, now + offset + 0.18);
+        gain.gain.setValueAtTime(0.0001, now + offset);
+        gain.gain.exponentialRampToValueAtTime(0.28, now + offset + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + offset + 0.19);
+        osc.connect(gain).connect(audioCtx.destination);
+        osc.start(now + offset);
+        osc.stop(now + offset + 0.20);
+      });
+    } else {
+      // Tieng chuong cua Dinh-Dong (E5 -> C5 co am boi ngan vang giong chuong camera)
+      const bellNotes = kind === "prompt"
+        ? [{f: 783.99, t: 0, d: 0.35}, {f: 1046.5, t: 0.18, d: 0.45}]
+        : [{f: 659.25, t: 0, d: 0.48}, {f: 523.25, t: 0.32, d: 0.70}];
+      bellNotes.forEach(n => {
+        [1, 2.0].forEach((harm, hi) => {
+          const osc = audioCtx.createOscillator(), gain = audioCtx.createGain();
+          osc.type = "sine";
+          osc.frequency.setValueAtTime(n.f * harm, now + n.t);
+          const peak = hi === 0 ? 0.30 : 0.08;
+          gain.gain.setValueAtTime(0.0001, now + n.t);
+          gain.gain.exponentialRampToValueAtTime(peak, now + n.t + 0.015);
+          gain.gain.exponentialRampToValueAtTime(0.0001, now + n.t + n.d);
+          osc.connect(gain).connect(audioCtx.destination);
+          osc.start(now + n.t);
+          osc.stop(now + n.t + n.d + 0.02);
+        });
+      });
+    }
+  } catch { /* bo qua neu trinh duyet chua cap quyen AudioContext */ }
+}
+
+function handleCameraChimeEvent(msg) {
+  const kind = msg.chime_kind || "chime";
+  const btn = kind === "prompt" ? ($("#promptVoiceBtn") || $("#chimeBtn")) : $("#chimeBtn");
+  const statusEl = $("#chimeMsg");
+  // Neu la su kien nhac quay mat va co audio_url -> phat giong noi tieng Viet khi chua co loa phan cung hoac dang bat Am bao
+  if (kind === "prompt" && msg.audio_url) {
+    playPromptVoiceWeb(msg.audio_url, !msg.hardware_sent);
+  } else {
+    playCameraBellSynth(kind, !msg.hardware_sent);
+  }
+  if (btn) {
+    btn.classList.add("ringing");
+    setTimeout(() => btn.classList.remove("ringing"), 1100);
+  }
+  if (statusEl) {
+    const labelMap = {spoof: "Cảnh báo giả mạo", prompt: "Nhắc quay mặt nhìn thẳng camera", chime: "Chuông camera"};
+    const tag = labelMap[kind] || "Chuông camera";
+    statusEl.className = "msg ok";
+    statusEl.textContent = msg.hardware_sent
+      ? `🔔 ${tag} (đã phát loa Tapo ${msg.host || ""})`
+      : `🔊 ${tag} (demo Web)`;
+    clearTimeout(chimeMsgTimer);
+    chimeMsgTimer = setTimeout(() => { statusEl.textContent = ""; }, 4500);
+  }
+}
+
+async function triggerChimeDemo(kind, btn, labelBusy) {
+  const statusEl = $("#chimeMsg");
+  audioCtx = audioCtx || new AudioContext();
+  if (audioCtx.state === "suspended") await audioCtx.resume();
+  btn.disabled = true;
+  if (statusEl) { statusEl.className = "msg"; statusEl.textContent = labelBusy; }
+  try {
+    const r = await fetch("/api/camera/chime", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({kind}),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || r.statusText);
+    if (kind === "prompt" && !data.hardware_sent) {
+      playPromptVoiceWeb(data.audio_url || "/static/audio/look_at_camera.wav", true);
+    }
+    if (statusEl) {
+      statusEl.className = data.hardware_sent ? "msg ok" : "msg warn";
+      statusEl.textContent = data.message || "Đã kích hoạt âm báo";
+      clearTimeout(chimeMsgTimer);
+      chimeMsgTimer = setTimeout(() => { statusEl.textContent = ""; }, 5000);
+    }
+  } catch (e) {
+    if (kind === "prompt") playPromptVoiceWeb("/static/audio/look_at_camera.wav", true);
+    else playCameraBellSynth(kind, true);
+    if (statusEl) { statusEl.className = "msg err"; statusEl.textContent = e.message; }
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+if ($("#chimeBtn")) {
+  $("#chimeBtn").onclick = () => triggerChimeDemo("chime", $("#chimeBtn"), "Đang gọi chuông…");
+}
+if ($("#promptVoiceBtn")) {
+  $("#promptVoiceBtn").onclick = () => triggerChimeDemo("prompt", $("#promptVoiceBtn"), "Đang phát lời nhắc…");
 }
 const GREET_SUB = {on_time: () => "Đúng giờ", late: g => `Đi muộn ${g.minutes} phút`};
 function showGreet(e, g) {

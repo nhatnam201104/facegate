@@ -61,7 +61,10 @@ td .acts button.sel{background:var(--accent);color:#06140f;border-color:var(--ac
 [hidden]{display:none!important}
 /* nguon video + trang thai nhan dien */
 .srcbar{display:flex;align-items:center;gap:16px;flex-wrap:wrap;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px 14px;margin-bottom:12px}
-.srcnow{display:flex;align-items:center;gap:8px}
+.srcnow{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.chime-btn{background:#243848;border:1px solid #3c5b73;color:#d8ecff}
+.chime-btn:hover{background:#2f4b60}
+.chime-btn.ringing{background:#5a3b14;border-color:var(--warn);color:#ffd591}
 .srcform{display:flex;align-items:center;gap:8px;margin-left:auto;flex-wrap:wrap}
 .srcform select,.srcform input{display:inline-block;width:auto;margin:0;padding:6px 8px;background:var(--bg);border:1px solid var(--line);border-radius:6px;color:var(--text);font:inherit}
 .srcform #srcValue{width:320px;max-width:60vw}
