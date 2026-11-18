@@ -1,0 +1,35 @@
+FaceGate (msoftware-ai-camera-attendance)
+Copyright (c) 2026 MSoftware. All rights reserved.
+
+This product includes third-party components. Full license texts are in
+third_party/licenses/; the complete list is in THIRD_PARTY_LICENSES.md and
+server/models/manifest.json.
+
+----------------------------------------------------------------------------
+Model weights distributed with or downloaded by this product
+----------------------------------------------------------------------------
+
+YuNet face detector (OpenCV Zoo), Copyright (c) 2020 Shiqi Yu, MIT License
+  third_party/licenses/opencv_zoo-yunet-LICENSE
+
+SFace face recognizer (OpenCV Zoo), Apache License 2.0
+  third_party/licenses/opencv_zoo-sface-LICENSE
+
+YOLOX-Nano, Copyright (c) 2021-2022 Megvii Inc., Apache License 2.0
+  third_party/licenses/YOLOX-LICENSE
+
+MiniFASNetV2 / MiniFASNetV1SE (Silent-Face-Anti-Spoofing, Minivision AI),
+Apache License 2.0; ONNX conversion by yakhyo/face-anti-spoofing,
+Apache License 2.0
+  third_party/licenses/Silent-Face-Anti-Spoofing-LICENSE
+  third_party/licenses/yakhyo-face-anti-spoofing-LICENSE
+
+OpenCV Zoo repository license, Apache License 2.0
+  third_party/licenses/opencv_zoo-LICENSE
+
+----------------------------------------------------------------------------
+Licensed under the Apache License, Version 2.0 (the "License") for the
+Apache-2.0 components above; you may not use those files except in
+compliance with the License. You may obtain a copy of the License at
+http://www.apache.org/licenses/LICENSE-2.0
+----------------------------------------------------------------------------

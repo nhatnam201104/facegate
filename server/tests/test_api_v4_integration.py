@@ -47,7 +47,7 @@ def _setup_test_ctx(tmp_path: Path, auth_enabled: bool = False):
                                         "describe": lambda self: {"kind": "rtsp", "label": "Tapo C310", "connected": True, "black": False}})()
     ctx.pipeline = type("DummyPipe", (), {
         "_thread": type("T", (), {"is_alive": lambda self: True})(),
-        "status": lambda self: {"backend": "edgeface", "camera_connected": True, "camera_fps": 15.0,
+        "status": lambda self: {"backend": "opencv", "camera_connected": True, "camera_fps": 15.0,
                                 "detect_fps": 6.0, "detect_ms": 42.0, "gallery": 1, "threshold": 0.40,
                                 "source": ctx.camera.describe(), "sleeping": False, "motion_zone": [], "hrm": "mock"},
     })()

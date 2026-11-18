@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "facegate/model-manifest.schema.json",
+  "title": "FaceGate model license manifest",
+  "type": "object",
+  "required": ["schema_version", "allowed_weight_licenses", "models"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": { "const": 1 },
+    "allowed_weight_licenses": {
+      "type": "array",
+      "items": { "type": "string" },
+      "minItems": 1
+    },
+    "models": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/ModelArtifact" }
+    }
+  },
+  "$defs": {
+    "ModelArtifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "file", "role", "version", "source_url", "upstream_repo", "sha256", "min_bytes",
+        "license_code", "license_weights", "license_file", "training_data",
+        "training_data_risk", "commercial_use"
+      ],
+      "properties": {
+        "file": { "type": "string", "pattern": "^[A-Za-z0-9_.-]+$" },
+        "role": { "enum": ["face_detect", "face_embed", "pose", "liveness", "context_detect"] },
+        "version": { "type": "string" },
+        "source_url": { "type": "string", "format": "uri" },
+        "upstream_repo": { "type": "string", "format": "uri" },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "min_bytes": { "type": "integer", "minimum": 1 },
+        "license_code": { "type": "string" },
+        "license_weights": { "type": "string" },
+        "license_file": { "type": "string" },
+        "training_data": { "type": "array", "items": { "type": "string" } },
+        "training_data_risk": { "enum": ["none", "residual_accepted", "blocking"] },
+        "commercial_use": { "enum": ["allowed", "forbidden", "unknown"] },
+        "legal_ack": {
+          "type": ["object", "null"],
+          "required": ["by", "date", "ref"],
+          "properties": {
+            "by": { "type": "string" },
+            "date": { "type": "string", "format": "date" },
+            "ref": { "type": "string" }
+          }
+        },
+        "notice": { "type": "string" }
+      },
+      "if": { "properties": { "training_data_risk": { "const": "residual_accepted" } } },
+      "then": { "required": ["legal_ack"], "properties": { "legal_ack": { "type": "object" } } }
+    }
+  },
+  "examples": [
+    {
+      "schema_version": 1,
+      "allowed_weight_licenses": ["MIT", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "ISC", "Zlib", "CC0-1.0", "CC-BY-4.0"],
+      "models": [
+        {
+          "file": "face_recognition_sface_2021dec.onnx",
+          "role": "face_embed",
+          "version": "sface2021dec",
+          "source_url": "https://github.com/opencv/opencv_zoo/raw/main/models/face_recognition_sface/face_recognition_sface_2021dec.onnx",
+          "upstream_repo": "https://github.com/opencv/opencv_zoo",
+          "sha256": "<điền khi triển khai — tính từ file tải từ nguồn chính thức>",
+          "min_bytes": 100000,
+          "license_code": "Apache-2.0",
+          "license_weights": "Apache-2.0",
+          "license_file": "third_party/licenses/opencv_zoo-sface-LICENSE",
+          "training_data": ["CASIA-WebFace", "MS-Celeb-1M (cleaned)"],
+          "training_data_risk": "residual_accepted",
+          "commercial_use": "allowed",
+          "legal_ack": { "by": "<Pháp chế>", "date": "2026-11-XX", "ref": "<số văn bản>" },
+          "notice": "SFace model from OpenCV Zoo, Apache License 2.0"
+        }
+      ]
+    }
+  ]
+}

@@ -21,7 +21,7 @@ from .engines import Face, create_engine
 from ..enrollment.gallery import Gallery
 from ..api.ipc import IPCClient, TrackedObject
 from .liveness import create_liveness
-from .pose3d import PoseEstimator3D
+from .pose3d import create_pose_estimator
 from .quality import assess
 from ..api.security import BiometricCipher
 from .tracker import IoUTracker, iou
@@ -147,7 +147,7 @@ class PerceptionWorker:
                      cipher=BiometricCipher.from_env_or_cfg(cfg))
         self.engine = create_engine(cfg)
         self.gallery = Gallery(self.db, self.engine.model_version)
-        self.pose = PoseEstimator3D(cfg["_paths"]["models"])
+        self.pose = create_pose_estimator(cfg)
         self.ctx_det = create_context_detector(cfg)
         self.liveness = create_liveness(cfg)
         trk_cfg = cfg["tracking"]
@@ -204,13 +204,17 @@ class PerceptionWorker:
         for idx, (t, f) in enumerate(matched):
             if t.decision_acc is None:
                 t.decision_acc = TrackDecisionAccumulator(cfg=self.llr_cfg)
-            pose = self.pose.estimate(frame, f, prev_group=t.pose_group if t.hits > 1 else None)
+            pose = self.pose.estimate(frame, f, prev_group=t.pose_group if t.hits > 1 else None, track_id=t.id, ts=now_sec)
             q = assess(frame, f, self.cfg["quality"], pose=pose)
             t.pose_group, t.last_yaw, t.last_reason = pose.pose_group, pose.yaw, q.reason
+            pose_ok = bool(getattr(pose, "pose_reliable", True))
+            if q.ok and not pose_ok:
+                # Feature 002: khung qua nghieng -> khong lam bang chung danh tinh (Hien phap II)
+                t.last_reason = "pose_unreliable"
             t.min_abs_yaw = min(t.min_abs_yaw, abs(pose.yaw))
             track_poses.append(pose)
             track_quals.append(q)
-            if q.ok and not t.crossing_active and not t.spoof:
+            if q.ok and pose_ok and not t.crossing_active and not t.spoof:
                 batch_indices.append(idx)
                 batch_aligned.append(self.engine.align(frame, f, pose=pose, pose_group=pose.pose_group))
 
@@ -370,6 +374,8 @@ class PerceptionWorker:
         for exp in expired:
             if getattr(self, "look_prompter", None) is not None:
                 self.look_prompter.forget(exp.id)
+            if hasattr(self.pose, "forget"):
+                self.pose.forget(exp.id)
             if exp.decision_acc is not None:
                 exp.decision_acc.finalize_on_expire()
             events_out.append({

@@ -26,6 +26,16 @@ from pathlib import Path
 from typing import Callable
 
 log = logging.getLogger("audio_prompt")
+_TAPO_WARNED = False
+
+
+def _warn_tapo_once() -> None:
+    """Feature 002 (FR-009): pytapo goi API TP-Link KHONG chinh thuc -> canh bao 1 lan khi bat backend tapo."""
+    global _TAPO_WARNED
+    if not _TAPO_WARNED:
+        _TAPO_WARNED = True
+        log.warning("audio_prompt.backend=tapo dùng API không chính thức của TP-Link (pytapo); "
+                    "kiểm tra điều khoản sử dụng với khách hàng trước khi triển khai")
 
 DEFAULT_PROMPT_WAV = Path(__file__).resolve().parent.parent.parent / "webapp" / "audio" / "look_at_camera.wav"
 DEFAULT_PROMPT_WEB_URL = "/static/audio/look_at_camera.wav"
@@ -738,10 +748,12 @@ def create_look_prompter(cfg: dict, on_event: Callable[[dict], None] | None = No
     ac = cfg.get("audio_prompt") or {}
     if not ac.get("enabled", False):
         return None
-    backend = str(ac.get("backend", "tapo")).strip().lower()
+    backend = str(ac.get("backend", "web")).strip().lower()
     if backend not in ("tapo", "web"):
         log.warning("audio_prompt.backend=%s khong ho tro -> tat", backend)
         return None
+    if backend == "tapo":
+        _warn_tapo_once()
     notifier = build_chime_notifier(cfg, on_event=on_event)
     if backend == "tapo" and not notifier.hardware_configured and on_event is None:
         log.warning("audio_prompt.enabled=true nhung thieu host/password cua camera Tapo -> bo qua nhac phan cung")

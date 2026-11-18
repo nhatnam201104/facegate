@@ -46,8 +46,8 @@ STEPS: list[Step] = [
 
 VERIFY_FRONT_STEP = Step("xac-minh-thang", 0, 0, "Nhìn thẳng vào camera để xác minh danh tính", "frontal", verify_only=True)
 PROFILE_STEPS: list[Step] = [
-    Step("nghieng-sau-trai", -2, 0, "Quay hẳn mặt sang phải (~80°)", "left_profile"),
-    Step("nghieng-sau-phai", +2, 0, "Quay hẳn mặt sang trái (~80°)", "right_profile"),
+    Step("nghieng-sau-trai", -2, 0, "Quay mặt sang phải (~55°)", "left_profile"),
+    Step("nghieng-sau-phai", +2, 0, "Quay mặt sang trái (~55°)", "right_profile"),
 ]
 
 QUALITY_HINT = {
@@ -65,8 +65,9 @@ DEFAULTS = {
     "enable_profile_90": False,
     "yaw_enter": 15.0,      # do lech yaw so voi nhin thang de tinh la "da quay"
     "yaw_center": 9.0,      # trong khoang nay la "thang"
-    "profile_yaw_min": 65.0,
-    "profile_yaw_max": 88.0,
+    # Feature 002: diem moc YuNet + PnP chi tin cay toi ~60 do (pose.max_reliable_yaw) -> dang ky goc nghieng 45-60
+    "profile_yaw_min": 45.0,
+    "profile_yaw_max": 60.0,
     "pitch_enter": 10.0,
     "pitch_center": 8.0,
     "max_turn": 45.0,       # qua muc nay -> bao quay qua
@@ -86,14 +87,14 @@ def evaluate(step: Step, dyaw: float, dpitch: float, p: dict) -> tuple[bool, str
     """Dung/sai cua mot mau (yaw, pitch da tru baseline) voi buoc muc tieu + cau goi y. Ham thuan -> de test."""
     if abs(step.h) == 2:
         side = "phải" if step.h < 0 else "trái"
-        p_min = float(p.get("profile_yaw_min", 65.0))
-        p_max = float(p.get("profile_yaw_max", 88.0))
+        p_min = float(p.get("profile_yaw_min", 45.0))
+        p_max = float(p.get("profile_yaw_max", 60.0))
         if dyaw * step.h <= 0:
             return False, f"Quay hẳn mặt sang {side}"
         if abs(dyaw) < p_min:
-            return False, f"Xoay thêm sang {side} (~80°)"
+            return False, f"Xoay thêm sang {side} (~55°)"
         if abs(dyaw) > p_max:
-            return False, "Quay quá sát 90°, quay lại một chút"
+            return False, "Quay quá nhiều, quay lại một chút"
         if abs(dpitch) > max(float(p["pitch_center"]) * 2.2, 18.0):
             return False, "Giữ đầu ngang tầm mắt"
         return True, "Đúng góc nghiêng rồi, giữ nguyên"

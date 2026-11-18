@@ -154,12 +154,8 @@ def record_bundle(video_source: str, out_dir: Path, layout: str = "side_walk",
     liv = create_liveness(cfg)
     pose_est = None
     try:
-        from server.vision.pose3d import PoseEstimator3D
-        pose_est = PoseEstimator3D(
-            cfg["_paths"]["models"],
-            frontal_max_yaw=float(cfg.get("recognition", {}).get("frontal_max_yaw", 40.0)),
-            hysteresis=float(cfg.get("recognition", {}).get("pose_hysteresis", 5.0)),
-        )
+        from server.vision.pose3d import create_pose_estimator
+        pose_est = create_pose_estimator(cfg)
     except Exception:  # noqa: BLE001
         pass
     ctx_det = None

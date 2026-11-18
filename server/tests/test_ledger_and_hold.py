@@ -142,13 +142,13 @@ def test_aes256_gcm_biometric_encryption_and_rbac_tokens(tmp_path: Path):
     db.set_status(eid, "active")
     orig = np.linspace(-1.0, 1.0, 128, dtype=np.float32)
     orig /= np.linalg.norm(orig)
-    db.add_embedding(eid, orig, "edgeface_v4", 0.95, "thang-giua", None, pose_group="frontal", yaw=2.0, pitch=0.0)
+    db.add_embedding(eid, orig, "opencv_v4", 0.95, "thang-giua", None, pose_group="frontal", yaw=2.0, pitch=0.0)
 
     # Kiem tra du lieu tho tren dia da bi ma hoa AES-GCM (bat dau bang FG1$, khong doc duoc float32 goc)
     raw_blob = bytes(db.q("SELECT vec FROM embeddings WHERE employee_id=?", (eid,))[0]["vec"])
     assert raw_blob.startswith(b"FG1$")
     # Giai ma trong RAM khop tuyet doi 100%
-    loaded = db.load_gallery("edgeface_v4")
+    loaded = db.load_gallery("opencv_v4")
     assert len(loaded) == 1 and np.allclose(loaded[0]["vec"], orig, atol=1e-6)
 
     tok = issue_rbac_token("lan.hr", "hr", "jwt-test-secret", ttl_sec=3600)

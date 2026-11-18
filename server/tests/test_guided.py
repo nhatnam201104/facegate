@@ -178,7 +178,7 @@ def test_seven_angles_with_profile_90_and_supplement_and_isolated_engine(env):
         assert g.snapshot()["total"] == 7
         for i, st in enumerate(g.steps):
             if abs(st.h) == 2:
-                cam.pose = (-75.0 if st.h < 0 else 75.0, 0.0)
+                cam.pose = (-52.0 if st.h < 0 else 52.0, 0.0)  # feature 002: dang ky nghieng 45-60 do
             else:
                 cam.pose = pose_for(st, front=(0.0, 0.0))
             assert wait(lambda: g.step > i or g.state != "running"), f"ket o buoc {i}: {g.snapshot()['hint']}"
@@ -190,7 +190,7 @@ def test_seven_angles_with_profile_90_and_supplement_and_isolated_engine(env):
         gs = GuidedSession(ctx, "NV005", "Hoàng Văn E", supplement_only=True).start()
         assert gs.snapshot()["total"] == 3
         for i, st in enumerate(gs.steps):
-            cam.pose = (0.0, 0.0) if st.verify_only else (-76.0 if st.h < 0 else 76.0, 0.0)
+            cam.pose = (0.0, 0.0) if st.verify_only else (-54.0 if st.h < 0 else 54.0, 0.0)
             assert wait(lambda: gs.step > i or gs.state != "running")
         assert wait(lambda: gs.state == "done")
         assert gs.snapshot()["report"]["supplement_only"] is True
@@ -231,7 +231,7 @@ def test_t035_enrollment_uses_frontal_mean_config_outliers_and_backfills_new_ver
     call_idx = {"i": 0}
 
     class _EnrollEngine:
-        model_version = "edgeface_test_v41"
+        model_version = "opencv_test_v41"
 
         def detect(self, img):
             yaw = pose_seq[min(call_idx["i"], len(pose_seq) - 1)]
@@ -268,10 +268,10 @@ def test_t035_enrollment_uses_frontal_mean_config_outliers_and_backfills_new_ver
     assert rep["frames_selected"] == 5
 
     # Kiem tra backfill khi doi model_version sang _v41 moi tu dong tai trich xuat anh tu data/enroll/
-    ctx.engine.model_version = "edgeface_test_v41_next"
+    ctx.engine.model_version = "opencv_test_v41_next"
     call_idx["i"] = 0
     migrated = backfill_legacy_embeddings(ctx)
     assert migrated == 1
     rows = db.q("SELECT COUNT(*) AS n FROM embeddings WHERE employee_id=? AND model_version=?",
-                (rep["employee_id"], "edgeface_test_v41_next"))
+                (rep["employee_id"], "opencv_test_v41_next"))
     assert rows[0]["n"] == 5

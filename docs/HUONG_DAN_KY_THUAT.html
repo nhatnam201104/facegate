@@ -92,7 +92,7 @@ footer{max-width:1180px;margin:0 auto;padding:0 24px 40px;color:var(--muted);fon
 
 2. Perception Process (app/worker_perception.py — chạy độc lập, IPC NDJSON):
    Lịch thức ca (/stream1 3MP | /stream2 chế độ chờ) ──► YOLOX-Nano (640px) + Cắt ROI Đầu-Vai 1:1 trên 3MP
-      ──► YuNet ──► 3DDFA_V2 (±90°) ──► EdgeFace-XS (batch tới 10 mặt) + MiniFASNet V2/V1SE
+      ──► YuNet ──► PnP 5 điểm (±60°) ──► SFace (batch tới 10 mặt) + MiniFASNet V2/V1SE
       ──► IoU Tracker + Crossing Quarantine ──► Tích lũy LLR 4 tham số + Novelty Gate
 
 3. Control &amp; Business Plane (app/main.py):
@@ -117,18 +117,11 @@ footer{max-width:1180px;margin:0 auto;padding:0 24px 40px;color:var(--muted);fon
 <ol>
 <li>Tạo môi trường ảo <code>.venv</code> (ưu tiên <code>uv</code> nếu có trên Linux);</li>
 <li>Cài các thư viện trong <code>requirements.txt</code> (<code>fastapi</code>, <code>uvicorn</code>, <code>onnxruntime</code>, <code>opencv-python-headless</code> trên Linux / <code>opencv-python</code> trên Windows, <code>cryptography</code>…);</li>
-<li>Chạy <code>scripts/download_models.py</code> để tải trọn bộ model thương mại hóa được (Apache-2.0 / MIT) vào <code>models/</code>: <strong>YuNet</strong>, <strong>SFace</strong>, <strong>EdgeFace-XS</strong>, <strong>3DDFA_V2</strong>, <strong>YOLOX-Nano</strong> và <strong>MiniFASNet V2 + V1SE</strong>.</li>
+<li>Chạy <code>scripts/download_models.py</code> để tải trọn bộ model thương mại hóa được (Apache-2.0 / MIT) vào <code>models/</code>: <strong>YuNet</strong>, <strong>SFace</strong>, <strong>YOLOX-Nano</strong> và <strong>MiniFASNet V2 + V1SE</strong>.</li>
 </ol>
 <blockquote>
-<p>Model (<code>models/*.onnx</code>) và dữ liệu chạy (<code>data/</code>) không đưa vào git. Các file tham số <code>tddfa_*.bin</code> cho <code>3DDFA_V2</code> đi kèm sẵn trong <code>models/</code>. Kiểm tra toàn vẹn model bất kỳ lúc nào bằng: <code>.venv/bin/python scripts/download_models.py --verify-only</code>.</p>
+<p>Model (<code>models/*.onnx</code>) và dữ liệu chạy (<code>data/</code>) không đưa vào git. Danh sách model, URL, SHA-256 và giấy phép nằm trong <code>server/models/manifest.json</code>; kiểm tra giấy phép bằng <code>python server/scripts/license_gate.py</code>. Kiểm tra toàn vẹn model bất kỳ lúc nào bằng: <code>.venv/bin/python scripts/download_models.py --verify-only</code>.</p>
 </blockquote>
-<p>Muốn benchmark thêm backend nghiên cứu ONNX (SCRFD + ArcFace), chạy:</p>
-<pre><code class="language-bash"># Linux / macOS
-.venv/bin/python scripts/download_models.py --onnx
-
-# Windows
-.venv\Scripts\python scripts\download_models.py --onnx
-</code></pre>
 <h2 id="3-chay">3. Chạy</h2>
 <h3>Chạy nhanh (Webcam / File video / Demo cục bộ)</h3>
 <ul>
@@ -160,7 +153,7 @@ FACEGATE_ISOLATED_WORKER=1 ./run.sh
 </tr>
 <tr>
 <td>Đổi backend nhận diện</td>
-<td><code>pipeline.backend: edgeface</code> (mặc định v4) | <code>opencv</code> (YuNet+SFace) | <code>onnx</code> (nghiên cứu)</td>
+<td><code>pipeline.backend: opencv</code> (YuNet + SFace, backend duy nhất từ feature 002; <code>edgeface</code>/<code>onnx</code> đã bị gỡ do giấy phép phi thương mại)</td>
 </tr>
 <tr>
 <td>Bật OpenVINO trên CPU Intel</td>
@@ -198,7 +191,7 @@ FACEGATE_ISOLATED_WORKER=1 ./run.sh
 </table></div>
 <h2 id="4-kich-ban-demo">4. Kịch bản demo</h2>
 <ol>
-<li><strong>Đăng ký</strong>: tab <em>Đăng ký</em> → nhập mã và họ tên → chọn <em>Quay từ camera cổng</em> để làm theo hướng dẫn <strong>5–7 góc</strong> (5 góc chữ thập + 2 góc nghiêng sâu ~80° nếu bật <code>enable_profile_90</code>; có hỗ trợ soi gương WASM nếu đã nạp gói cục bộ) <strong>hoặc</strong> tải video 6–10 giây lên. Video gốc bị xóa sau khi xử lý.</li>
+<li><strong>Đăng ký</strong>: tab <em>Đăng ký</em> → nhập mã và họ tên → chọn <em>Quay từ camera cổng</em> để làm theo hướng dẫn <strong>5–7 góc</strong> (5 góc chữ thập + 2 góc nghiêng ~45–60° nếu bật <code>enable_profile_90</code>; có hỗ trợ soi gương WASM nếu đã nạp gói cục bộ) <strong>hoặc</strong> tải video 6–10 giây lên. Video gốc bị xóa sau khi xử lý.</li>
 <li><strong>Duyệt</strong>: tab <em>Nhân viên</em> → bấm <strong>Duyệt</strong>. Chỉ nhân viên đã duyệt mới được nhận diện; hệ thống cảnh báo nếu khuôn mặt trùng với nhân viên đã có.</li>
 <li><strong>Trực tiếp</strong>: đứng trước camera ~1 giây. Lần đầu trong ngày hiện thẻ <em>Xin chào… · Check-in HH:MM · Đúng giờ / Đi muộn N phút</em> kèm âm báo; các lần sau chỉ hiện <em>Đã chấm công hôm nay, check-in lúc …</em>. Dùng nút <strong>Vùng cửa</strong> để vẽ đa giác chỉ đánh thức chế độ chờ khi có người đi qua lối vào. Màu khung:<ul>
 <li><strong>xanh lá</strong>: đã nhận diện và xác minh người thật;</li>
@@ -234,8 +227,8 @@ FACEGATE_ISOLATED_WORKER=1 ./run.sh
   main.py               FastAPI Control Plane: lifespan, supervisor worker, WebSocket, REST, /api/health, RBAC login
   worker_perception.py  Tiến trình Perception Process độc lập: lịch thức ca, Two-Stage ROI 1:1 trên 3MP, LLR, IPC
   ipc.py                Giao thức NDJSON (Unix socket / TCP) &amp; schema TrackedObject (sẵn sàng cho Phase 2 SKU)
-  engines.py            Backend nhận diện: EdgeFaceEngine (YuNet + EdgeFace-XS), OpenCVEngine (SFace), OnnxEngine (SCRFD+ArcFace)
-  pose3d.py             Ước lượng tư thế đầu 3D (±90°) và 68 điểm mốc bằng 3DDFA_V2 ONNX (+ fallback 5 điểm)
+  engines.py            Backend nhận diện: OpenCVEngine (YuNet + SFace); kiểm tra giấy phép qua license_guard.py
+  pose3d.py             Ước lượng tư thế đầu bằng cv2.solvePnP trên 5 điểm YuNet (tin cậy tới ~±60°, cờ pose_reliable)
   context_detector.py   YOLOX-Nano phát hiện cơ thể &amp; vật chứa giả mạo (điện thoại/laptop/TV) + quy tắc Viewport-Aware
   decision.py           Máy trạng thái quyết định liên tục, Novelty Gate &amp; hàm LLR 4 tham số tuân thủ rào cứng
   tracker.py            Tracker IoU + vận tốc + cầu nối person_bbox + Crossing Quarantine chống tráo tên đồng phục
@@ -243,7 +236,7 @@ FACEGATE_ISOLATED_WORKER=1 ./run.sh
   gallery.py            Gallery embedding trong RAM, so khớp open-set &amp; giải mã embedding
   liveness.py           Chống giả mạo thụ động MiniFASNet (gộp V2 + V1SE)
   enrollment.py         Đăng ký từ video 7 bin góc, bỏ trùng, kiểm tra nhất quán &amp; cấm auto_enroll_online
-  guided.py             Đăng ký quay trực tiếp có hướng dẫn (5 góc chữ thập + 2 góc nghiêng ~80°, hỗ trợ supplement_only)
+  guided.py             Đăng ký quay trực tiếp có hướng dẫn (5 góc chữ thập + 2 góc nghiêng ~45–60°, hỗ trợ supplement_only)
   attendance.py         Logic ca làm, check-in từ ledger, số phút đi muộn, vắng, tổng hợp bảng công
   ledger.py             Sổ cái bất biến append-only (checkin_created / revoked / manual) &amp; hàng chờ hậu kiểm 5%
   media_clips.py        Cắt clip H.264 sạch từ MediaMTX Playback, ký sidecar HMAC-SHA256, burn-in FFmpeg &amp; dọn đĩa bảo vệ legal_hold
@@ -263,7 +256,7 @@ data/                   DB, snapshot, ảnh đăng ký (có thể mã hóa), cli
 </code></pre>
 <h2 id="7-luu-y-quan-trong">7. Lưu ý quan trọng</h2>
 <ul>
-<li><strong>License model</strong>: Toàn bộ bộ model mặc định v4 (<code>YuNet</code>, <code>EdgeFace-XS</code>, <code>3DDFA_V2</code>, <code>YOLOX-Nano</code>, <code>MiniFASNet</code>, <code>MediaPipe WASM</code>) đều dùng giấy phép <strong>Apache-2.0 / MIT</strong>, thương mại hóa được. Chỉ weights <code>SCRFD/ArcFace</code> (<code>--onnx</code>) là phi thương mại để benchmark.</li>
+<li><strong>License model</strong>: Toàn bộ bộ model mặc định v4 (<code>YuNet</code>, <code>SFace</code>, <code>YOLOX-Nano</code>, <code>MiniFASNet</code>, <code>MediaPipe WASM</code>) đều dùng giấy phép <strong>Apache-2.0 / MIT</strong>, thương mại hóa được. EdgeFace-XS, 3DDFA_V2 (Basel Face Model) và InsightFace SCRFD/ArcFace đã bị gỡ hoàn toàn do giấy phép phi thương mại (feature 002).</li>
 <li><strong>Ngưỡng &amp; Đổi backend</strong>: Các ngưỡng trong <code>config.yaml</code> (<code>decision.tau_threshold: 0.45</code>, <code>margin_base: 0.70</code>, <code>liveness.threshold: 0.70</code>) cần hiệu chỉnh theo bộ dữ liệu thực địa <code>K0</code>. Sau khi đổi backend nhận diện phải đăng ký lại hoặc chạy backfill theo <code>model_version</code>.</li>
 <li><strong>Chống giả mạo &amp; Legal Hold</strong>: Clip nghi ngờ giả mạo (<code>spoof</code>) hoặc lượt <code>profile_verified</code> cần hậu kiểm tự động gắn cờ <code>legal_hold = 1</code> để không bị xóa khi đầy đĩa; HR chỉ gỡ khóa sau khi đối soát xong.</li>
 <li><strong>Dữ liệu sinh trắc học &amp; Bảo mật</strong>: Chỉ thu thập khi có đồng ý của nhân viên (<code>deploy/consent-template-k0.md</code>). Trước khi mở <code>server.host: 0.0.0.0</code> cho mạng nội bộ, bắt buộc bật <code>security.auth_enabled: true</code> và đặt <code>FACEGATE_BIOMETRIC_KEY</code>, <code>FACEGATE_HMAC_SECRET</code>, <code>FACEGATE_AUTH_SECRET</code>.</li>

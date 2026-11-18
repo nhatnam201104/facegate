@@ -476,7 +476,7 @@ async function loadEmployees() {
     <td>${esc(e.code)}</td><td>${esc(e.name)}</td>
     <td><span class="pill ${e.status}">${STATUS[e.status] || e.status}</span></td>
     <td>${e.n_emb}</td>
-    <td class="warn">${(e.report?.warnings || []).map(esc).join("<br>")}${e.n_emb === 0 ? "Không có embedding cho model hiện tại — cần đăng ký lại" : ""}</td>
+    <td class="warn">${(e.report?.warnings || []).map(esc).join("<br>")}${(e.needs_reenroll ?? e.n_emb === 0) ? "Cần đăng ký lại (đổi model nhận diện): không có embedding cho model hiện tại" : ""}</td>
     <td><div class="acts">
       ${e.status !== "active" ? `<button onclick="empAct(${e.id},'approve')">Duyệt</button>` : ""}
       ${e.status === "active" ? `<button onclick="empAct(${e.id},'disable')">Khóa</button>` : ""}

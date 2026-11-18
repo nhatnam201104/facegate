@@ -15,10 +15,9 @@ camera:
   overlay_offset_ms: 0
 
 pipeline:
-  # edgeface : YuNet + 3DDFA_V2 + EdgeFace-XS (Apache-2.0 / MIT) -> mac dinh v4, ho tro +-90 do tren CPU
-  # opencv   : YuNet + SFace (OpenCV Zoo, Apache-2.0)
-  # onnx     : SCRFD-500M + ArcFace MobileFaceNet (InsightFace, CHI dung nghien cuu/benchmark)
-  backend: edgeface
+  # opencv : YuNet (OpenCV Zoo, MIT) + SFace (OpenCV Zoo, Apache-2.0) - backend duy nhat (feature 002)
+  # edgeface / onnx da bi go do giay phep phi thuong mai -> dat gia tri nay se bi tu choi khi khoi dong
+  backend: opencv
   execution_provider: cpu            # cpu | openvino (chi bat sau khi vuot cong Replay K4)
   detect_fps: 6
   det_score: 0.55
@@ -29,8 +28,17 @@ pipeline:
   always_fallback_unmatched: true    # quet bo sung toan khung neu YOLOX miss nguoi thu 2
   fallback_det_width: 1280
 
+license:                   # kiem tra giay phep model theo server/models/manifest.json (feature 002)
+  research_mode: false     # CHI dung noi bo khi dev: true -> loi giay phep model chi canh bao. KHONG BAO GIO bat cho khach hang
+                           # (thieu/hong manifest va backend da go van tu choi khoi dong ke ca khi true)
+
+pose:                      # uoc luong tu the dau (feature 002)
+  engine: pnp5             # pnp5 = cv2.solvePnP tren 5 diem YuNet (khong dung du lieu BFM) | mediapipe (tuy chon, xem T042)
+  max_reliable_yaw: 60     # |yaw| lon hon nguong nay -> pose_reliable=false -> khong chot danh tinh tu khung do
+  ema_tau_sec: 0.3         # hang so thoi gian lam muot yaw/pitch theo GIAY (khong theo so frame)
+
 quality:
-  min_face: 60             # canh ngan nho nhat cua mat (pixel)
+  min_face: 60            # canh ngan nho nhat cua mat (pixel)
   min_blur: 35             # phuong sai Laplacian toi thieu tren vung da nhin thay
   min_brightness: 45
   max_brightness: 225
@@ -42,15 +50,9 @@ recognition:
   frontal_max_yaw: 40
   pose_hysteresis: 5
   thresholds:
-    edgeface:
-      frontal: 0.40
-      profile: 0.46
     opencv:
       frontal: 0.42
       profile: 0.48
-    onnx:
-      frontal: 0.40
-      profile: 0.46
   margin: 0.06
   profile_margin: 0.08
   min_good_frames: 2
@@ -139,8 +141,8 @@ enrollment:
     enable_profile_90: true
     yaw_enter: 15          # do lech ngang (so voi luc nhin thang) de tinh la da quay
     yaw_center: 9          # trong khoang nay la "nhin thang"
-    profile_yaw_min: 65
-    profile_yaw_max: 88
+    profile_yaw_min: 45      # feature 002: PnP 5 diem chi tin cay toi ~60 do
+    profile_yaw_max: 60
     pitch_enter: 10        # do lech doc de tinh la da ngang/cui
     pitch_center: 8
     hold_seconds: 0.7      # phai giu dung goc lien tuc chung nay
@@ -154,7 +156,7 @@ audit_and_safety:
 
 audio_prompt:              # phat chuong canh bao tren loa camera Tapo C310 (kem chuong Web du phong khi demo)
   enabled: true            # bat tu dong keu chuong khi phat hien gia mao hoac nhac nhin thang
-  backend: tapo            # tapo | web
+  backend: web             # web (mac dinh) | tapo: API TP-Link KHONG chinh thuc (pytapo) - chi bat khi khach chap nhan rui ro ToS
   host: ""                 # IP camera Tapo (vd: 192.168.50.10, hoac de trong lay tu bien moi truong CAM_IP / TAPO_HOST)
   user: admin
   password: ""             # mat khau Camera Account hoac TP-Link Cloud (khuyen nghi dat qua TAPO_PASSWORD / TAPO_CLOUD_PASSWORD)

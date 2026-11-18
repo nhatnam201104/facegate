@@ -1,10 +1,15 @@
-"""Uoc luong tu the dau 3D (yaw, pitch, roll) va 68 diem moc 3D toi +-90 do bang 3DDFA_V2 ONNX (MIT)."""
+"""Uoc luong tu the dau (yaw, pitch, roll) bang cv2.solvePnP tren 5 diem moc YuNet (feature 002).
+
+Khong dung model hay du lieu ben thu ba (thay cho 3DDFA_V2 + Basel Face Model):
+mo hinh 3D 5 diem FACE5_3D la gia tri nhan trac trung binh TU UOC LUONG, khong phai sinh tu BFM.
+Quy uoc dau giu nguyen nhu ban truoc: yaw > 0 khi mui lech sang phai-anh so voi trung diem hai mat.
+Diem moc YuNet kem tin cay khi |yaw| > ~60 do -> pose_reliable=False de pipeline khong chot danh tinh (Hien phap II).
+"""
 from __future__ import annotations
 
 import logging
 import math
 from dataclasses import dataclass
-from pathlib import Path
 
 import cv2
 import numpy as np
@@ -19,6 +24,19 @@ IDX_RIGHT_EYE = list(range(42, 48))
 IDX_MOUTH_LEFT = 48
 IDX_MOUTH_RIGHT = 54
 
+# Mo hinh 3D 5 diem (mm). He truc: x sang phai-anh, y xuong duoi, z HUONG RA XA camera.
+# Gia tri tu uoc luong theo nhan trac trung binh nguoi truong thanh, KHONG phai sinh tu BFM.
+# Thu tu khop kps YuNet: mat trai-anh, mat phai-anh, dau mui, khoe mieng trai-anh, khoe mieng phai-anh.
+FACE5_3D = np.array([
+    [-32.0, -35.0, 25.0],
+    [32.0, -35.0, 25.0],
+    [0.0, 0.0, 0.0],
+    [-24.0, 32.0, 22.0],
+    [24.0, 32.0, 22.0],
+], dtype=np.float64)
+
+MAX_REPROJ_RATIO = 0.25  # loi chieu lai trung binh / khoang cach hai mat
+
 
 @dataclass
 class PoseResult:
@@ -29,6 +47,7 @@ class PoseResult:
     landmarks3d: np.ndarray
     kps5: np.ndarray
     visibility: float = 1.0
+    pose_reliable: bool = True
 
 
 def classify_pose_group(yaw: float, prev_group: str | None = None,
@@ -50,14 +69,6 @@ def classify_pose_group(yaw: float, prev_group: str | None = None,
     return "frontal"
 
 
-def _orthogonalize_rows(M: np.ndarray) -> np.ndarray:
-    r1 = M[0] / (np.linalg.norm(M[0]) + 1e-9)
-    r2 = M[1] - np.dot(M[1], r1) * r1
-    r2 = r2 / (np.linalg.norm(r2) + 1e-9)
-    r3 = np.cross(r1, r2)
-    return np.stack([r1, r2, r3], axis=0).astype(np.float32)
-
-
 def euler_from_relative_rotation(R_rel: np.ndarray) -> tuple[float, float, float]:
     yaw = math.degrees(math.atan2(float(R_rel[0, 2]), float(R_rel[2, 2])))
     yaw = max(-95.0, min(95.0, yaw))
@@ -65,42 +76,6 @@ def euler_from_relative_rotation(R_rel: np.ndarray) -> tuple[float, float, float
     pitch = math.degrees(math.asin(sin_p))
     roll = math.degrees(math.atan2(-float(R_rel[1, 0]), float(R_rel[1, 1]))) if abs(sin_p) < 0.9999 else 0.0
     return float(yaw), float(pitch), float(roll)
-
-
-def _parse_roi_box(bbox: np.ndarray) -> tuple[float, float, float, float]:
-    x1, y1, x2, y2 = (float(v) for v in bbox[:4])
-    old_size = (x2 - x1 + y2 - y1) / 2.0
-    cx = x2 - (x2 - x1) / 2.0
-    cy = y2 - (y2 - y1) / 2.0 + old_size * 0.14
-    size = max(16.0, old_size * 1.58)
-    return cx - size / 2.0, cy - size / 2.0, cx + size / 2.0, cy + size / 2.0
-
-
-def _crop_roi(img: np.ndarray, roi_box: tuple[float, float, float, float], dst_size: int = 120) -> np.ndarray:
-    h, w = img.shape[:2]
-    sx, sy, ex, ey = (int(round(v)) for v in roi_box)
-    dh, dw = max(1, ey - sy), max(1, ex - sx)
-    res = np.zeros((dh, dw, 3), dtype=np.uint8)
-    dsx = -sx if sx < 0 else 0
-    sx = max(0, sx)
-    dex = dw - (ex - w) if ex > w else dw
-    ex = min(w, ex)
-    dsy = -sy if sy < 0 else 0
-    sy = max(0, sy)
-    dey = dh - (ey - h) if ey > h else dh
-    ey = min(h, ey)
-    if ex > sx and ey > sy and dex > dsx and dey > dsy:
-        res[dsy:dey, dsx:dex] = img[sy:ey, sx:ex]
-    return cv2.resize(res, (dst_size, dst_size), interpolation=cv2.INTER_LINEAR)
-
-
-def _kps5_from_68(pts68: np.ndarray) -> np.ndarray:
-    le = pts68[IDX_LEFT_EYE, :2].mean(axis=0)
-    re = pts68[IDX_RIGHT_EYE, :2].mean(axis=0)
-    nose = pts68[IDX_NOSE_TIP, :2]
-    lm = pts68[IDX_MOUTH_LEFT, :2]
-    rm = pts68[IDX_MOUTH_RIGHT, :2]
-    return np.stack([le, re, nose, lm, rm], axis=0).astype(np.float32)
 
 
 def _fallback_from_5pt(bbox: np.ndarray, kps: np.ndarray) -> tuple[float, float, float, np.ndarray]:
@@ -125,62 +100,99 @@ def _fallback_from_5pt(bbox: np.ndarray, kps: np.ndarray) -> tuple[float, float,
     return yaw, pitch, roll, pts68
 
 
+def camera_matrix(w: int, h: int) -> np.ndarray:
+    f = float(max(w, h))
+    return np.array([[f, 0.0, w / 2.0], [0.0, f, h / 2.0], [0.0, 0.0, 1.0]], dtype=np.float64)
+
+
+def pose_from_rotation(R: np.ndarray) -> tuple[float, float, float]:
+    """Doi ma tran quay (mo hinh -> camera) sang (yaw, pitch, roll) theo quy uoc dau cua he thong."""
+    yaw, pitch, roll = euler_from_relative_rotation(R)
+    # Quay duong quanh truc y (he z ra xa camera) day mat sang phai-anh -> mui lech trai-anh -> yaw he thong am.
+    # Pitch giu cung dau voi _fallback_from_5pt / quality.estimate_pose (duong = mui thap xuong so voi mat).
+    return -yaw, pitch, roll
+
+
+def solve_pnp_5pt(kps: np.ndarray, w: int, h: int) -> tuple[np.ndarray, float] | None:
+    """Tra ve (R, loi chieu lai trung binh px) hoac None neu that bai."""
+    img_pts = np.asarray(kps, dtype=np.float64).reshape(5, 2)
+    K = camera_matrix(w, h)
+    try:
+        ok, rvec, tvec = cv2.solvePnP(FACE5_3D, img_pts, K, None, flags=cv2.SOLVEPNP_EPNP)
+        if not ok:
+            return None
+        ok, rvec, tvec = cv2.solvePnP(FACE5_3D, img_pts, K, None, rvec, tvec,
+                                      useExtrinsicGuess=True, flags=cv2.SOLVEPNP_ITERATIVE)
+        if not ok or float(tvec[2, 0]) <= 0:
+            return None
+    except cv2.error:
+        return None
+    proj, _ = cv2.projectPoints(FACE5_3D, rvec, tvec, K, None)
+    err = float(np.mean(np.linalg.norm(proj.reshape(5, 2) - img_pts, axis=1)))
+    R, _ = cv2.Rodrigues(rvec)
+    return R, err
+
+
 class PoseEstimator3D:
-    def __init__(self, models_dir: Path | None = None, frontal_max_yaw: float = 40.0, hysteresis: float = 5.0):
+    """Giu ten lop cu de khong vo cac noi goi; models_dir bi bo qua (khong con model pose)."""
+
+    def __init__(self, models_dir=None, frontal_max_yaw: float = 40.0, hysteresis: float = 5.0,
+                 max_reliable_yaw: float = 60.0, ema_tau_sec: float = 0.3):
         self.frontal_max = frontal_max_yaw
         self.hysteresis = hysteresis
-        self.session = None
-        self.in_name = ""
-        self._r_ref: np.ndarray | None = None
-        if models_dir is not None:
-            onnx_p = models_dir / "3ddfa_v2_mb1_120x120.onnx"
-            mean_p = models_dir / "tddfa_param_mean.bin"
-            std_p = models_dir / "tddfa_param_std.bin"
-            u_p = models_dir / "tddfa_u_base.bin"
-            w_shp_p = models_dir / "tddfa_w_shp_base.bin"
-            w_exp_p = models_dir / "tddfa_w_exp_base.bin"
-            if all(p.exists() for p in (onnx_p, mean_p, std_p, u_p, w_shp_p, w_exp_p)):
-                import onnxruntime as ort
-                so = ort.SessionOptions()
-                so.log_severity_level = 3
-                self.session = ort.InferenceSession(str(onnx_p), so, providers=["CPUExecutionProvider"])
-                self.in_name = self.session.get_inputs()[0].name
-                self.param_mean = np.fromfile(str(mean_p), dtype=np.float32)
-                self.param_std = np.fromfile(str(std_p), dtype=np.float32)
-                self.u_base = np.fromfile(str(u_p), dtype=np.float32).reshape(-1, 1)
-                self.w_shp = np.fromfile(str(w_shp_p), dtype=np.float32).reshape(-1, 40)
-                self.w_exp = np.fromfile(str(w_exp_p), dtype=np.float32).reshape(-1, 10)
-                p0 = self.param_mean[:12].reshape(3, 4)[:, :3]
-                self._r_ref = _orthogonalize_rows(p0)
+        self.max_reliable_yaw = float(max_reliable_yaw)
+        self.ema_tau_sec = float(ema_tau_sec)
+        self._ema: dict[int, tuple[float, float, float]] = {}  # track_id -> (ts, yaw, pitch)
 
-    def estimate(self, img: np.ndarray, face, prev_group: str | None = None) -> PoseResult:
-        if self.session is None:
-            yaw, pitch, roll, pts68 = _fallback_from_5pt(face.bbox, face.kps)
-            grp = classify_pose_group(yaw, prev_group, self.frontal_max, self.hysteresis)
-            return PoseResult(yaw, pitch, roll, grp, pts68, face.kps.astype(np.float32), 1.0)
+    def _smooth(self, track_id: int | None, ts: float | None, yaw: float, pitch: float) -> tuple[float, float]:
+        if track_id is None or ts is None or self.ema_tau_sec <= 0:
+            return yaw, pitch
+        prev = self._ema.get(track_id)
+        if prev is None or ts <= prev[0]:
+            self._ema[track_id] = (ts, yaw, pitch)
+            return yaw, pitch
+        alpha = 1.0 - math.exp(-(ts - prev[0]) / self.ema_tau_sec)
+        y = prev[1] + alpha * (yaw - prev[1])
+        p = prev[2] + alpha * (pitch - prev[2])
+        self._ema[track_id] = (ts, y, p)
+        if len(self._ema) > 512:
+            for k in sorted(self._ema, key=lambda k: self._ema[k][0])[:256]:
+                self._ema.pop(k, None)
+        return y, p
 
-        roi = _parse_roi_box(face.bbox)
-        crop = _crop_roi(img, roi, 120)
-        blob = ((crop.astype(np.float32) - 127.5) / 128.0).transpose(2, 0, 1)[None]
-        param = self.session.run(None, {self.in_name: blob})[0][0]
-        param = param * self.param_std + self.param_mean
-        P = param[:12].reshape(3, 4)
-        R_curr = _orthogonalize_rows(P[:, :3])
-        R_rel = R_curr @ self._r_ref.T if self._r_ref is not None else R_curr
-        yaw, pitch, roll = euler_from_relative_rotation(R_rel)
+    def forget(self, track_id: int) -> None:
+        self._ema.pop(track_id, None)
 
-        alpha_shp = param[12:52].reshape(-1, 1)
-        alpha_exp = param[52:62].reshape(-1, 1)
-        pts3d = (self.u_base + self.w_shp @ alpha_shp + self.w_exp @ alpha_exp).reshape(3, -1, order="F")
-        pts_cam = P[:, :3] @ pts3d + P[:, 3:4]
-        pts_cam[1, :] = 121.0 - pts_cam[1, :]
-        sx, sy, ex, ey = roi
-        scale_x, scale_y = (ex - sx) / 120.0, (ey - sy) / 120.0
-        pts_img = np.zeros((68, 3), dtype=np.float32)
-        pts_img[:, 0] = pts_cam[0, :] * scale_x + sx
-        pts_img[:, 1] = pts_cam[1, :] * scale_y + sy
-        pts_img[:, 2] = pts_cam[2, :] * ((scale_x + scale_y) * 0.5)
-
+    def estimate(self, img: np.ndarray, face, prev_group: str | None = None,
+                 track_id: int | None = None, ts: float | None = None) -> PoseResult:
+        h, w = img.shape[:2]
+        kps = face.kps.astype(np.float32)
+        fb_yaw, fb_pitch, fb_roll, pts68 = _fallback_from_5pt(face.bbox, kps)
+        eye_dist = max(float(np.linalg.norm(kps[1] - kps[0])), 1.0)
+        res = solve_pnp_5pt(kps, w, h)
+        reliable = True
+        if res is not None and res[1] <= MAX_REPROJ_RATIO * eye_dist:
+            yaw, pitch, roll = pose_from_rotation(res[0])
+        else:
+            yaw, pitch, roll = fb_yaw, fb_pitch, fb_roll
+            reliable = False
+        yaw, pitch = self._smooth(track_id, ts, yaw, pitch)
+        if abs(yaw) > self.max_reliable_yaw:
+            reliable = False
         grp = classify_pose_group(yaw, prev_group, self.frontal_max, self.hysteresis)
         vis = float(max(0.2, math.cos(math.radians(min(85.0, abs(yaw))))))
-        return PoseResult(yaw, pitch, roll, grp, pts_img, _kps5_from_68(pts_img), vis)
+        return PoseResult(float(yaw), float(pitch), float(roll), grp, pts68, kps, vis, reliable)
+
+
+def create_pose_estimator(cfg: dict) -> PoseEstimator3D:
+    rc = cfg.get("recognition", {})
+    pc = cfg.get("pose", {})
+    engine = str(pc.get("engine", "pnp5"))
+    if engine != "pnp5":
+        raise ValueError(f"pose.engine={engine!r} chưa được hỗ trợ (chỉ 'pnp5'; 'mediapipe' xem T042)")
+    return PoseEstimator3D(
+        frontal_max_yaw=float(rc.get("frontal_max_yaw", 40.0)),
+        hysteresis=float(rc.get("pose_hysteresis", 5.0)),
+        max_reliable_yaw=float(pc.get("max_reliable_yaw", 60.0)),
+        ema_tau_sec=float(pc.get("ema_tau_sec", 0.3)),
+    )
