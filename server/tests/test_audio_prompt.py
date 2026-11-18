@@ -166,6 +166,7 @@ def test_camera_chime_api_endpoint_and_factory(tmp_path: Path, monkeypatch):
     assert create_look_prompter(cfg) is None
 
     cfg["audio_prompt"]["enabled"] = True
+    cfg["audio_prompt"]["backend"] = "tapo"  # nhanh tapo phan cung (mac dinh da doi sang web - feature 002)
     cfg["audio_prompt"]["host"] = ""
     cfg["audio_prompt"]["password"] = ""
     # Khong co host/pass va khong truyen on_event -> bo qua phan cung

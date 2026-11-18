@@ -9,6 +9,12 @@ data/
 
 # Model tai bang setup.sh / setup.bat / scripts/download_models.py
 server/models/*.onnx
+# Feature 002: chặn commit lại model/dữ liệu phi thương mại (EdgeFace, 3DDFA_V2/BFM, InsightFace)
+server/models/tddfa_*
+*edgeface*
+*3ddfa*
+*w600k*
+*scrfd*
 models/*.onnx
 models/*.bin
 
@@ -20,6 +26,12 @@ models/*.bin
 *.tmp
 *.log
 .ua/
-.specify/
-specs/
+.specify/*
+# Hiến pháp dự án: sửa đổi cần PM + Pháp chế phê duyệt bằng văn bản -> phải được version
+!.specify/memory/
+.specify/memory/*
+!.specify/memory/constitution.md
+specs/*
+# 002: hồ sơ chuyển đổi giấy phép (baseline, kết quả đo, phê duyệt) là bằng chứng pháp lý -> phải được version
+!specs/002-license-compliant-models/
 deploy/

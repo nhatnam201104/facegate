@@ -88,9 +88,9 @@ footer{max-width:1180px;margin:0 auto;padding:0 24px 40px;color:var(--muted);fon
 <h2 id="1-tom-tat">1. Tóm tắt</h2>
 <p>FaceGate là giải pháp cho phần <strong>HRM</strong> của dự án <em>"camera nhận diện nhân viên và hàng hóa"</em>, đã được tái kiến trúc lên phiên bản <strong>v4 (Clean-Slate 3-Plane Architecture)</strong> để sẵn sàng chuyển từ PoC sang triển khai thử nghiệm hiện trường trên camera <strong>TP-Link Tapo C310</strong>:</p>
 <ol>
-<li>Nhân viên đăng ký khuôn mặt qua giao diện hướng dẫn tới <strong>7 góc</strong> (5 góc chữ thập + 2 góc nghiêng ~80°) hoặc tải video ngắn; hỗ trợ soi gương <code>0 ms</code> bằng WASM trên trình duyệt.</li>
+<li>Nhân viên đăng ký khuôn mặt qua giao diện hướng dẫn tới <strong>7 góc</strong> (5 góc chữ thập + 2 góc nghiêng ~45–60°) hoặc tải video ngắn; hỗ trợ soi gương <code>0 ms</code> bằng WASM trên trình duyệt.</li>
 <li>HR duyệt hồ sơ nhân viên.</li>
-<li>Nhân viên đi qua cổng (hỗ trợ tối đa <strong>10 khuôn mặt đồng thời</strong> và góc nghiêng tới <strong>±90°</strong>).</li>
+<li>Nhân viên đi qua cổng (hỗ trợ tối đa <strong>10 khuôn mặt đồng thời</strong> và góc nghiêng tới khoảng <strong>±60°</strong>).</li>
 <li>Hệ thống nhận diện liên tục bằng điểm log-odds <code>LLR</code>, kiểm tra người thật, cách ly giao cắt (<code>Crossing Quarantine</code>), ghi nhận vào <strong>sổ cái bất biến</strong> và đồng bộ hai chiều sang HRM.</li>
 </ol>
 <p>Hệ thống <strong>chạy 100% trên CPU</strong> (không cần GPU riêng), hỗ trợ đầy đủ cả <strong>Linux Server</strong> (Ubuntu/Debian — ưu tiên vận hành thực tế với <code>MediaMTX</code>, <code>tmpfs</code> RAM và đồng bộ giờ <code>chrony</code> NTP) lẫn <strong>Windows 10/11</strong> (phát triển và chạy demo với webcam, file video hoặc RTSP).</p>
@@ -104,7 +104,7 @@ footer{max-width:1180px;margin:0 auto;padding:0 24px 40px;color:var(--muted);fon
 </thead>
 <tbody>
 <tr>
-<td>Nhận diện đa góc tới <strong>±90°</strong> (<code>YuNet</code> + <code>3DDFA_V2</code> + <code>EdgeFace-XS</code>), batch tối đa <strong>10 khuôn mặt</strong> trên CPU</td>
+<td>Nhận diện đa góc tới khoảng <strong>±60°</strong> (<code>YuNet</code> + PnP 5 điểm + <code>SFace</code>), batch tối đa <strong>10 khuôn mặt</strong> trên CPU</td>
 <td><span class="st ok">Đã triển khai</span></td>
 </tr>
 <tr>
@@ -163,8 +163,8 @@ footer{max-width:1180px;margin:0 auto;padding:0 24px 40px;color:var(--muted);fon
 2. PERCEPTION PROCESS (app/worker_perception.py — tiến trình riêng cô lập lỗi, NDJSON IPC)
    Lịch thức theo ca (/stream1 giờ cao điểm | /stream2 chế độ ngủ)
       ──► YOLOX-Nano (640px tìm người &amp; màn hình) ──► Cắt ROI Đầu-Vai 1:1 trên khung 3MP gốc
-      ──► YuNet (detect mặt) ──► 3DDFA_V2 (yaw/pitch/roll &amp; 68 mốc 3D ±90°)
-      ──► EdgeFace-XS (batch tới 10 mặt) + MiniFASNet V2/V1SE
+      ──► YuNet (detect mặt) ──► PnP 5 điểm (yaw/pitch/roll, tin cậy tới ~±60°)
+      ──► SFace (batch tới 10 mặt) + MiniFASNet V2/V1SE
       ──► IoU Tracker + Crossing Quarantine ──► Tích lũy LLR 4 tham số + Novelty Gate
 
 3. CONTROL &amp; BUSINESS PLANE (FastAPI + Ledger + Security)
@@ -206,12 +206,12 @@ footer{max-width:1180px;margin:0 auto;padding:0 24px 40px;color:var(--muted);fon
 </tr>
 <tr>
 <td>Ước lượng tư thế 3D</td>
-<td><strong>3DDFA_V2</strong> MobileNet-120x120 (68 mốc 3D)</td>
-<td>MIT; ước lượng yaw/pitch/roll và căn chỉnh đa góc tới ±90°</td>
+<td><strong>cv2.solvePnP</strong> trên 5 điểm YuNet (mô hình 3D tự định nghĩa)</td>
+<td>Apache-2.0 (OpenCV), không dùng dữ liệu bên thứ ba; tin cậy tới ~±60°, quá ngưỡng trả <code>Unknown</code></td>
 </tr>
 <tr>
 <td>Nhận diện (Embedding)</td>
-<td><strong>EdgeFace-XS</strong> (mặc định, MIT) · giữ <code>SFace</code> (Apache-2.0) &amp; <code>SCRFD+ArcFace</code> (nghiên cứu) để so sánh</td>
+<td><strong>SFace</strong> (OpenCV Zoo, Apache-2.0). EdgeFace-XS (CC BY-NC-SA) và SCRFD/ArcFace (InsightFace) đã bị gỡ do giấy phép phi thương mại</td>
 <td>Hỗ trợ batch tới 10 mặt trên CPU; tùy chọn <code>OpenVINOExecutionProvider</code> ở K4</td>
 </tr>
 <tr>
@@ -248,15 +248,15 @@ footer{max-width:1180px;margin:0 auto;padding:0 24px 40px;color:var(--muted);fon
 </table></div>
 <p>Toàn bộ thông số nằm trong <code>config.yaml</code>. Tổng mã nguồn hiện khoảng <strong>8.170 dòng</strong> (gồm backend, worker, media/security, frontend và script đánh giá).</p>
 <h2 id="4-cac-bai-toan-a-giai-quyet">4. Các bài toán đã giải quyết</h2>
-<h3 id="41-nhan-dien-tin-cay-da-goc-90-khong-oan-ten">4.1. Nhận diện tin cậy đa góc (±90°), không đoán tên</h3>
+<h3 id="41-nhan-dien-tin-cay-da-goc-90-khong-oan-ten">4.1. Nhận diện tin cậy đa góc (~±60°), không đoán tên</h3>
 <ul>
 <li><strong>Khai thác trọn vẹn 3MP của Tapo C310:</strong> Thay vì bóp cả khung hình xuống 960px, pipeline thu nhỏ khung <code>2304×1296</code> về 640px tìm vùng người bằng <code>YOLOX-Nano</code> rồi cắt vùng Đầu–Vai tỷ lệ <strong>1:1 trên khung gốc</strong> để giữ đủ <code>80–110 px</code> bề ngang mặt ở cự ly 2–3 m.</li>
-<li><strong>Ước lượng tư thế 3D &amp; tích lũy liên tục LLR:</strong> <code>3DDFA_V2</code> cung cấp yaw/pitch/roll chính xác tới ±90°; điểm tương đồng cosine được quy đổi qua hàm logistic 4 tham số <code>LLR(s, yaw, q)</code> và lọc bớt frame trùng lặp nhờ <strong>Novelty Gate</strong> (<code>Δt ≥ 250 ms</code> hoặc <code>|Δyaw| ≥ 8°</code>).</li>
+<li><strong>Ước lượng tư thế 3D &amp; tích lũy liên tục LLR:</strong> <code>solvePnP</code> 5 điểm cung cấp yaw/pitch/roll tin cậy tới ~±60° (quá ngưỡng thì không dùng khung đó để chốt danh tính); điểm tương đồng cosine được quy đổi qua hàm logistic 4 tham số <code>LLR(s, yaw, q)</code> và lọc bớt frame trùng lặp nhờ <strong>Novelty Gate</strong> (<code>Δt ≥ 250 ms</code> hoặc <code>|Δyaw| ≥ 8°</code>).</li>
 <li><strong>Rào cứng kép theo góc nhìn:</strong> Chỉ chốt danh tính khi đồng thời đạt <code>LLR(top1) ≥ tau_threshold</code> và biên độ cách biệt <code>LLR(top1) - LLR(top2) ≥ μ(yaw)</code> (siết chặt dần khi mặt quay nghiêng). Thiếu dữ liệu thì luôn hiển thị <strong>Unknown</strong>.</li>
 </ul>
 <h3 id="42-ang-ky-khuon-mat-7-goc-tach-tai-nguyen">4.2. Đăng ký khuôn mặt tới 7 góc, tách tài nguyên cổng</h3>
 <ul>
-<li>Hỗ trợ quay trực tiếp có hướng dẫn tới <strong>7 góc</strong> (5 góc chữ thập + 2 góc nghiêng sâu ~80° qua <code>enable_profile_90</code>), cho phép đăng ký bổ sung góc nghiêng (<code>supplement_only</code>) hoặc tải video 6–10 giây.</li>
+<li>Hỗ trợ quay trực tiếp có hướng dẫn tới <strong>7 góc</strong> (5 góc chữ thập + 2 góc nghiêng ~45–60° qua <code>enable_profile_90</code>), cho phép đăng ký bổ sung góc nghiêng (<code>supplement_only</code>) hoặc tải video 6–10 giây.</li>
 <li>Trình duyệt có sẵn module <code>MediaPipe Face Landmarker</code> WASM (<code>guided_wasm.js</code>) phản hồi góc soi gương tức thì, trong khi ảnh mẫu trích vector vẫn chụp chuẩn từ camera cổng để tránh lệch miền ảnh và phải qua bước HR bấm <strong>Duyệt</strong>.</li>
 <li>Enrollment dùng session suy luận riêng (<code>enroll_engine</code>), không khóa luồng nhận diện tại cổng; đồng thời tắt vĩnh viễn <code>auto_enroll_online</code> để chống đầu độc mẫu.</li>
 </ul>
@@ -318,8 +318,8 @@ footer{max-width:1180px;margin:0 auto;padding:0 24px 40px;color:var(--muted);fon
 <tr>
 <td>Tư thế &amp; Nhận diện</td>
 <td>Heuristic 5 điểm + <code>SFace</code> (giới hạn <code>±40°</code>)</td>
-<td><strong>3DDFA_V2</strong> (±90°) + <strong>EdgeFace-XS</strong> (MIT)</td>
-<td>Hỗ trợ nhận diện liên tục tới ±90°, batch nhanh trên CPU và giữ nguyên license thương mại</td>
+<td><strong>PnP 5 điểm</strong> (~±60°) + <strong>SFace</strong> (Apache-2.0)</td>
+<td>Nhận diện liên tục tới ~±60°, chạy trên CPU, giấy phép thương mại sạch cho cả code lẫn trọng số (feature 002)</td>
 </tr>
 <tr>
 <td>Quyết định danh tính</td>
@@ -348,7 +348,7 @@ footer{max-width:1180px;margin:0 auto;padding:0 24px 40px;color:var(--muted);fon
 <tr>
 <td>Đăng ký khuôn mặt</td>
 <td>5 góc chữ thập từ camera/video</td>
-<td><strong>Tối đa 7 góc</strong> (5 + 2 góc nghiêng ~80°), tùy chọn <strong>MediaPipe WASM</strong></td>
+<td><strong>Tối đa 7 góc</strong> (5 + 2 góc nghiêng ~45–60°), tùy chọn <strong>MediaPipe WASM</strong></td>
 <td>Phản hồi soi gương 0 ms ở client nhưng vẫn giữ mẫu chuẩn từ camera cổng, bổ sung góc nghiêng</td>
 </tr>
 <tr>

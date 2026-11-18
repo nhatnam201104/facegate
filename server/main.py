@@ -41,7 +41,9 @@ from .attendance.ledger import hold_clip_if_pending_audit, record_auto_checkin
 from .vision.liveness import create_liveness
 from .vision.media_clips import cleanup_clips_safe, fetch_playback_clip, write_signed_sidecar
 from .vision.pipeline import FULL_ZONE, Pipeline
-from .vision.pose3d import PoseEstimator3D
+from .vision.pose3d import create_pose_estimator
+from .vision.engines import REMOVED_BACKENDS
+from .vision.license_guard import LicenseError
 from .api.records import router as records_router
 from .api.security import BiometricCipher, issue_rbac_token, require_role
 from .api.state import bc, ctx
@@ -205,7 +207,7 @@ async def lifespan(app: FastAPI):
     # Session suy luan rieng cho Enrollment de khong bao gio khoa cong cham cong (P6, T028)
     ctx.enroll_engine = create_engine(cfg)
     ctx.enroll_lock = threading.Lock()
-    ctx.pose = PoseEstimator3D(cfg["_paths"]["models"])
+    ctx.pose = create_pose_estimator(cfg)
     ctx.gallery = Gallery(ctx.db, ctx.engine.model_version)
     ctx.camera = Camera(cfg["camera"]["source"], cfg["camera"].get("loop_file", True)).start()
     ctx.hrm = HRMWorker(cfg, ctx.db, on_update=lambda i, s: bc({"type": "hrm", "id": i, "status": s}))
@@ -403,7 +405,21 @@ def status():
     st["model_profile"] = ctx.cfg["camera"].get("model_profile", "tapo_c310")
     chime = getattr(ctx, "chime", None)
     st["camera_chime"] = chime.status() if chime is not None else {"hardware_configured": False}
+    st.update(license_status(ctx.cfg))
     return st
+
+
+def license_status(cfg: dict) -> dict:
+    """Truong giay phep cho /api/status (contracts/runtime-license-guard.md §3)."""
+    from .vision.license_guard import is_commercial_ok, load_manifest, research_mode, summary
+
+    out = {"pose_engine": str(cfg.get("pose", {}).get("engine", "pnp5"))}
+    try:
+        manifest = load_manifest(cfg["_paths"]["models"])
+    except LicenseError:
+        return {**out, "license_ok": False, "license_models": []}
+    ok = all(is_commercial_ok(manifest, m) for m in manifest["models"]) and not research_mode(cfg)
+    return {**out, "license_ok": ok, "license_models": summary(manifest)}
 
 
 def _sync_chime_from_disk_and_camera() -> object:
@@ -690,6 +706,8 @@ def employees():
     rows = ctx.db.list_employees(ctx.engine.model_version)
     for r in rows:
         r["report"] = json.loads(r["report"]) if r.get("report") else None
+        # Feature 002: khong co embedding o model_version hien tai (vd sau khi doi model ma migration khong tao duoc)
+        r["needs_reenroll"] = int(r.get("n_emb") or 0) == 0
     return rows
 
 
@@ -789,8 +807,24 @@ def events_csv():
                     headers={"Content-Disposition": f"attachment; filename=events_{int(time.time())}.csv"})
 
 
+def license_preflight(cfg: dict) -> None:
+    """Kiem tra giay phep truoc khi khoi dong (contracts/runtime-license-guard.md §2-3). Raise LicenseError."""
+    from .vision.license_guard import load_manifest
+
+    load_manifest(cfg["_paths"]["models"])  # thieu/hong manifest -> luon tu choi
+    backend = str(cfg["pipeline"]["backend"])
+    if backend in REMOVED_BACKENDS:
+        raise LicenseError(f"LICENSE: backend '{backend}' đã bị gỡ do giấy phép phi thương mại; dùng 'opencv'")
+
+
 def main():
     cfg = load_config()
+    try:
+        license_preflight(cfg)
+    except LicenseError as e:
+        logging.basicConfig(level=logging.INFO)
+        log.error("%s", e)
+        sys.exit(2)
     uvicorn.run("server.main:app", host=cfg["server"]["host"], port=int(cfg["server"]["port"]), log_level="info")
 
 
