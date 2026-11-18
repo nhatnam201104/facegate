@@ -31,7 +31,7 @@ V4_COMMERCIAL_MODELS = {
     ),
     # 3DDFA_V2 MobileNet-120x120 + BFM base params (cleardusk/3DDFA_V2 - MIT): uoc luong tu the 3D
     "3ddfa_v2_mb1_120x120.onnx": (
-        "https://huggingface.co/Stable-Human/3ddfa_v2/resolve/main/mb1_120x120.onnx",
+        "https://huggingface.co/Stable-Human/3ddfa_v2/resolve/17a696712794fd5e0f8eb4cb04f2d2a2721baee9/mb1_120x120.onnx",
         1_000_000,
     ),
     # YOLOX-Nano COCO (Megvii-BaseDetection/YOLOX - Apache-2.0): phat hien nguoi & vat chua gia mao
@@ -39,6 +39,16 @@ V4_COMMERCIAL_MODELS = {
         "https://github.com/Megvii-BaseDetection/YOLOX/releases/download/0.1.1rc0/yolox_nano.onnx",
         1_000_000,
     ),
+}
+
+MODEL_SHA256 = {
+    "face_detection_yunet_2023mar.onnx": "8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4",
+    "face_recognition_sface_2021dec.onnx": "0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79",
+    "edgeface_xs_gamma_06.onnx": "9206e2eb13a2761d7b5b76e13016d4b9acd3fa3535a9a09939f3adacd139a5ff",
+    "3ddfa_v2_mb1_120x120.onnx": "1c0a8acd50db28987773324a9b2b816361468e3aa13cb6b212c911b889e08c3e",
+    "yolox_nano_coco.onnx": "c789161ed43c8269fcd4e67c67eeeb4e80c622da2eb296a20bc6007bd18a0b7d",
+    "MiniFASNetV2.onnx": "b32929adc2d9c34b9486f8c4c7bc97c1b69bc0ea9befefc380e4faae4e463907",
+    "MiniFASNetV1SE.onnx": "ebab7f90c7833fbccd46d3a555410e78d969db5438e169b6524be444862b3676",
 }
 
 TDDFA_PARAM_FILES = (
@@ -74,23 +84,32 @@ ONNX_MODELS = {
 }
 
 
-def sha256_short(path: Path) -> str:
+def sha256_file(path: Path) -> str:
     h = hashlib.sha256()
     with open(path, "rb") as f:
         for chunk in iter(lambda: f.read(65536), b""):
             h.update(chunk)
-    return h.hexdigest()[:16]
+    return h.hexdigest()
 
 
-def download(name: str, spec: tuple[str, int], expected_sha_prefix: str | None = None) -> bool:
+def sha256_short(path: Path) -> str:
+    return sha256_file(path)[:16]
+
+
+def download(
+    name: str,
+    spec: tuple[str, int],
+    expected_sha_prefix: str | None = None,
+    models_dir: Path = MODELS_DIR,
+) -> bool:
     url, min_bytes = spec
-    dst = MODELS_DIR / name
+    dst = models_dir / name
     if dst.exists() and dst.stat().st_size >= min_bytes:
-        digest = sha256_short(dst)
-        if expected_sha_prefix and not digest.startswith(expected_sha_prefix):
-            print(f"[loi]  {name} sai checksum ({digest} != {expected_sha_prefix}*)")
+        digest_full = sha256_file(dst)
+        if expected_sha_prefix and not digest_full.startswith(expected_sha_prefix):
+            print(f"[loi]  {name} sai checksum ({digest_full[:16]} != {expected_sha_prefix[:16]}*)")
             return False
-        print(f"[ok]   {name} da co (sha256={digest}...)")
+        print(f"[ok]   {name} da co (sha256={digest_full[:16]}...)")
         return True
     print(f"[tai]  {name} ...", end=" ", flush=True)
     try:
@@ -103,8 +122,12 @@ def download(name: str, spec: tuple[str, int], expected_sha_prefix: str | None =
     if len(data) < min_bytes:
         print("LOI: file tai ve qua nho (co the la con tro Git LFS)")
         return False
+    digest_full = hashlib.sha256(data).hexdigest()
+    if expected_sha_prefix and not digest_full.startswith(expected_sha_prefix):
+        print(f"LOI: sai checksum ({digest_full[:16]} != {expected_sha_prefix[:16]}*)")
+        return False
     dst.write_bytes(data)
-    print(f"{len(data) / 1e6:.1f} MB (sha256={sha256_short(dst)}...)")
+    print(f"{len(data) / 1e6:.1f} MB (sha256={digest_full[:16]}...)")
     return True
 
 
@@ -121,8 +144,14 @@ def main() -> None:
         ok = True
         for name, (_, min_b) in todo.items():
             p = MODELS_DIR / name
+            exp = MODEL_SHA256.get(name)
             if p.exists() and p.stat().st_size >= min_b:
-                print(f"[ok]   {name} ({p.stat().st_size / 1e6:.2f} MB, sha256={sha256_short(p)}...)")
+                digest_full = sha256_file(p)
+                if exp and not digest_full.startswith(exp):
+                    print(f"[loi]  {name} sai checksum ({digest_full[:16]} != {exp[:16]}*)")
+                    ok = False
+                else:
+                    print(f"[ok]   {name} ({p.stat().st_size / 1e6:.2f} MB, sha256={digest_full[:16]}...)")
             else:
                 print(f"[thieu] {name}")
                 ok = False
@@ -131,7 +160,7 @@ def main() -> None:
             if bp.exists() and bp.stat().st_size > 0:
                 print(f"[ok]   {bname} (sha256={sha256_short(bp)}...)")
         sys.exit(0 if ok else 1)
-    ok = all(download(n, s) for n, s in todo.items())
+    ok = all(download(n, s, expected_sha_prefix=MODEL_SHA256.get(n)) for n, s in todo.items())
     if not ok:
         print("\nMot so model tai that bai. Tai thu cong bang trinh duyet tu cac link tren")
         print(f"va dat vao thu muc: {MODELS_DIR}")

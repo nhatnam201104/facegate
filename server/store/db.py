@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import threading
 import time
@@ -11,6 +12,19 @@ import numpy as np
 
 # Phai trung voi server.api.security.MAGIC_PREFIX (khong import de tranh keo fastapi vao tang DB)
 ENCRYPTED_PREFIX = b"FG1$"
+SKU_CODE_RE = re.compile(r"^[A-Za-z0-9_.\-]{1,64}$")
+SKU_EVENT_COLS = (
+    "ts", "camera", "sku_id", "code", "name", "barcode", "method",
+    "score", "inliers", "direction", "qty", "uom", "track_id",
+    "snapshot", "clip", "meta_json",
+)
+
+
+def validate_sku_code(code: str) -> str:
+    c = (code or "").strip()
+    if not SKU_CODE_RE.match(c) or c in {".", ".."}:
+        raise ValueError("Mã SKU chỉ gồm chữ, số, - _ . (tối đa 64 ký tự)")
+    return c
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS employees (
@@ -519,12 +533,18 @@ class DB:
 
     def upsert_sku_item(self, code: str, name: str, barcode: str | None = None,
                         uom: str = "pcs", status: str = "active") -> int:
-        code_c = code.strip()
-        name_c = name.strip()
+        code_c = validate_sku_code(code)
+        name_c = (name or "").strip()
+        if not name_c:
+            raise ValueError("Tên SKU không được rỗng")
         b_c = (barcode or "").strip() or None
         uom_c = (uom or "pcs").strip() or "pcs"
         now = time.time()
         existing = self.get_sku_by_code(code_c)
+        if b_c:
+            dup_bc = self.get_sku_by_barcode(b_c)
+            if dup_bc is not None and (not existing or int(dup_bc["id"]) != int(existing["id"])):
+                raise ValueError(f"Mã vạch '{b_c}' đã thuộc về SKU '{dup_bc['code']}'")
         if existing:
             self.x(
                 "UPDATE sku_items SET name=?, barcode=?, uom=?, status=?, updated_at=? WHERE id=?",
@@ -637,13 +657,20 @@ class DB:
         return items, templates
 
     def add_sku_event(self, **kw) -> int:
-        if "meta" in kw and "meta_json" not in kw:
-            meta_val = kw.pop("meta")
-            kw["meta_json"] = json.dumps(meta_val, ensure_ascii=False) if meta_val is not None else None
-        kw.setdefault("ts", time.time())
-        kw.setdefault("qty", 1.0)
-        cols = ",".join(kw)
-        return self.x(f"INSERT INTO sku_events({cols}) VALUES({','.join('?' * len(kw))})", tuple(kw.values()))
+        data = dict(kw)
+        if "meta" in data and "meta_json" not in data:
+            meta_val = data.pop("meta")
+            data["meta_json"] = json.dumps(meta_val, ensure_ascii=False) if meta_val is not None else None
+        data.setdefault("ts", time.time())
+        data.setdefault("qty", 1.0)
+        unknown = set(data) - set(SKU_EVENT_COLS)
+        if unknown:
+            raise ValueError(f"Cột sku_events không hợp lệ: {', '.join(sorted(unknown))}")
+        ordered_cols = [c for c in SKU_EVENT_COLS if c in data]
+        return self.x(
+            f"INSERT INTO sku_events({','.join(ordered_cols)}) VALUES({','.join('?' * len(ordered_cols))})",
+            tuple(data[c] for c in ordered_cols),
+        )
 
     def list_sku_events(
         self,

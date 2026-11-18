@@ -214,3 +214,77 @@ def test_projected_quad_geometric_gate_rejects_self_intersecting_and_tiny():
     # Tu giac loi binh thuong -> hop le
     good = np.array([[120, 90], [360, 100], [350, 290], [110, 280]], dtype=np.float32)
     assert is_valid_projected_quad(good, (480, 640))
+
+
+def test_security_path_traversal_duplicate_barcode_and_sql_whitelist(tmp_path: Path):
+    cfg = _make_cfg(tmp_path, "orb")
+    db = DB(cfg["_paths"]["db"])
+    gal = SkuGallery(db, feature_type="orb")
+    scanner = SkuScanner(cfg, gal)
+    pkg = _make_textured_package(seed=7, title="SAFE PKG")
+
+    # 1. Chan ma SKU chua ky tu thoat thu muc hoac rong
+    for bad_code in ("../escape", "..\\escape", "SKU/01", "", ".."):
+        with pytest.raises(ValueError, match="Mã SKU"):
+            scanner.register_template(db, bad_code, "Bad", img=pkg, save_dir=cfg["_paths"]["data"])
+    assert not (cfg["_paths"]["data"].parent / "escape").exists()
+
+    with pytest.raises(ValueError, match="Tên SKU"):
+        db.upsert_sku_item("SKU-VALID-1", "   ")
+
+    # 2. Chan trung barcode giua 2 SKU khac nhau nhung cho phep cap nhat chinh SKU do
+    scanner.register_template(db, "SKU-A", "Sản phẩm A", barcode="8930009998887")
+    scanner.register_template(db, "SKU-A", "Sản phẩm A (đổi tên)", barcode="8930009998887")
+    with pytest.raises(ValueError, match="đã thuộc về SKU 'SKU-A'"):
+        scanner.register_template(db, "SKU-B", "Sản phẩm B", barcode="8930009998887")
+
+    # Uu tien explicit barcode khong phu thuoc thu tu dang ky trong SkuGallery
+    scanner.register_template(db, "BC-SHARED-CODE", "Sản phẩm trùng mã", barcode=None)
+    scanner.register_template(db, "SKU-OWNER", "Sản phẩm gắn mã vạch tường minh", barcode="BC-SHARED-CODE")
+    hit = gal.lookup_code_string("BC-SHARED-CODE")
+    assert hit is not None and hit["code"] == "SKU-OWNER"
+
+    # 3. Whitelist cot SQL trong add_sku_event
+    with pytest.raises(ValueError, match="Cột sku_events không hợp lệ"):
+        db.add_sku_event(code="SKU-A", method="qr", **{"qty); DROP TABLE sku_items;--": 1})
+
+
+def test_download_models_enforces_sha256_integrity(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    import hashlib
+    import io
+    import urllib.request
+    from server.scripts import download_models as dm
+
+    payload = b"x" * 120_000
+    good_sha = hashlib.sha256(payload).hexdigest()
+
+    def _fake_urlopen(req, timeout=120):
+        return io.BytesIO(payload)
+
+    monkeypatch.setattr(urllib.request, "urlopen", _fake_urlopen)
+
+    # Checksum sai -> tu choi va KHONG ghi file xuong dia
+    ok_bad = dm.download(
+        "dummy.onnx",
+        ("https://example.com/dummy.onnx", 100_000),
+        expected_sha_prefix="0000000000000000",
+        models_dir=tmp_path,
+    )
+    assert not ok_bad
+    assert not (tmp_path / "dummy.onnx").exists()
+
+    # Checksum dung -> ghi file va verify lai thanh cong
+    ok_good = dm.download(
+        "dummy.onnx",
+        ("https://example.com/dummy.onnx", 100_000),
+        expected_sha_prefix=good_sha,
+        models_dir=tmp_path,
+    )
+    assert ok_good and (tmp_path / "dummy.onnx").is_file()
+    assert not dm.download(
+        "dummy.onnx",
+        ("https://example.com/dummy.onnx", 100_000),
+        expected_sha_prefix="ffffffffffffffff",
+        models_dir=tmp_path,
+    )
+

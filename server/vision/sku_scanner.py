@@ -11,6 +11,7 @@ import cv2
 import numpy as np
 
 from ..api.ipc import TrackedObject
+from ..store.db import validate_sku_code
 
 log = logging.getLogger("sku_scanner")
 
@@ -217,7 +218,8 @@ class SkuGallery:
                 bc_val = (it.get("barcode") or "").strip()
                 if bc_val:
                     self.by_barcode[bc_val] = it
-                # Cho phep ma QR chua chinh sku_code (vd QR in noi bo "SKU-001")
+            for it in items:
+                # Cho phep ma QR chua chinh sku_code nhung khong bao gio ghi de barcode khai bao tuong minh
                 self.by_barcode.setdefault(str(it["code"]), it)
             self.templates = [t for t in templates if int(t["num_kps"]) >= 4]
             self.version += 1
@@ -295,7 +297,8 @@ class SkuScanner:
         replace_templates: bool = False,
     ) -> dict:
         """Dang ky hoac cap nhat 1 SKU kem anh mau phang (khong bat buoc anh neu chi dung QR/Barcode)."""
-        sku_id = db.upsert_sku_item(code=code, name=name, barcode=barcode, uom=uom, status="active")
+        code_c = validate_sku_code(code)
+        sku_id = db.upsert_sku_item(code=code_c, name=name, barcode=barcode, uom=uom, status="active")
         if replace_templates:
             db.clear_sku_templates(sku_id, feature_type=self.feature_type)
 
@@ -310,12 +313,15 @@ class SkuScanner:
             )
             rel_path = None
             if save_dir is not None:
-                sku_folder = save_dir / "sku" / code.strip()
+                sku_root = (Path(save_dir) / "sku").resolve()
+                sku_folder = (sku_root / code_c).resolve()
+                if sku_root not in sku_folder.parents:
+                    raise ValueError("Đường dẫn lưu mẫu SKU không hợp lệ")
                 sku_folder.mkdir(parents=True, exist_ok=True)
                 fname = f"{int(time.time() * 1000)}_{self.feature_type}.jpg"
                 out_file = sku_folder / fname
                 cv2.imwrite(str(out_file), feat["resized_img"])
-                rel_path = f"sku/{code.strip()}/{fname}"
+                rel_path = f"sku/{code_c}/{fname}"
 
             tpl_id = None
             if feat["num_kps"] >= 4:
@@ -340,7 +346,7 @@ class SkuScanner:
             }
 
         self.gallery.reload()
-        return {"sku_id": sku_id, "code": code.strip(), "barcode": barcode, "template": tpl_report}
+        return {"sku_id": sku_id, "code": code_c, "barcode": barcode, "template": tpl_report}
 
     def _scan_codes(self, img: np.ndarray, offset_xy: tuple[int, int], orig_scale: float) -> list[SkuDetection]:
         ox, oy = offset_xy
