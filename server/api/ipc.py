@@ -106,11 +106,13 @@ class IPCServer:
     """May chu IPC nhan luong NDJSON tu Perception Process va gui lenh dieu khien nguoc lai."""
 
     def __init__(self, sock_path: Path | None = None, host: str = "127.0.0.1", port: int = 18091,
-                 on_message: Callable[[dict], None] | None = None):
+                 on_message: Callable[[dict], None] | None = None,
+                 on_connect: Callable[[], None] | None = None):
         self.sock_path = sock_path
         self.host = host
         self.port = port
         self.on_message = on_message
+        self.on_connect = on_connect
         self._server: asyncio.AbstractServer | None = None
         self._writers: set[asyncio.StreamWriter] = set()
         self.bound_port: int = port
@@ -131,6 +133,13 @@ class IPCServer:
 
     async def _handle_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         self._writers.add(writer)
+        if self.on_connect is not None:
+            try:
+                res = self.on_connect()
+                if asyncio.iscoroutine(res):
+                    await res
+            except Exception:  # noqa: BLE001
+                pass
         try:
             while not reader.at_eof():
                 line = await reader.readline()

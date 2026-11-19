@@ -67,7 +67,7 @@ def load_manifest(models_dir: Path) -> dict:
     """Nap va kiem tra cau truc manifest. Luon fail-closed."""
     p = Path(models_dir) / MANIFEST_NAME
     if not p.exists():
-        raise LicenseError("LICENSE: thiếu server/models/manifest.json")
+        raise LicenseError(f"LICENSE: thiếu {p}")
     try:
         data = json.loads(p.read_text(encoding="utf-8"))
     except (OSError, ValueError) as e:
@@ -124,6 +124,8 @@ def check_artifact(manifest: dict, file_name: str, models_dir: Path, verify_sha:
         raise LicenseError(f"LICENSE: {file_name} không có trong manifest")
     if not is_commercial_ok(manifest, entry):
         raise LicenseError(f"LICENSE: {file_name} không được phép thương mại")
+    if entry.get("training_data_risk") == "blocking":
+        raise LicenseError(f"LICENSE: {file_name} có training_data_risk=blocking")
     p = Path(models_dir) / file_name
     if verify_sha and p.exists() and sha256_file(p) != entry["sha256"]:
         raise LicenseError(f"LICENSE: {file_name} sai checksum")

@@ -28,6 +28,7 @@ from fastapi.staticfiles import StaticFiles
 from .attendance.shift import Shift, greeting
 from .vision.audio_prompt import build_chime_notifier, create_look_prompter
 from .vision.camera import Camera, can_read_video
+from .vision.runtime_threads import apply_cv_threads
 from .vision.clips import ClipRecorder
 from .config import ROOT, load_config
 from .store.db import DB
@@ -35,6 +36,7 @@ from .vision.engines import create_engine
 from .enrollment.video import EnrollError, backfill_legacy_embeddings, process_enrollment, read_video_frames
 from .enrollment.gallery import Gallery
 from .enrollment.guided import NO_FRONTAL_MSG, GuidedSession, known_frontal_embeddings
+from .attendance.erp_sku import SkuERPWorker
 from .attendance.hrm import HRMWorker
 from .api.ipc import IPCServer
 from .attendance.ledger import hold_clip_if_pending_audit, record_auto_checkin
@@ -46,7 +48,11 @@ from .vision.engines import REMOVED_BACKENDS
 from .vision.license_guard import LicenseError
 from .api.records import router as records_router
 from .api.security import BiometricCipher, issue_rbac_token, require_role
+from .api.sku import router as sku_router
+from .api.zones import router as zones_router
 from .api.state import bc, ctx
+from .vision.sku_scanner import SkuGallery, SkuScanner
+from .vision.zone_engine import ZoneEngine
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("app")
@@ -85,6 +91,13 @@ def _handle_worker_ipc(msg: dict) -> None:
         ctx.last_worker_hb = now
         ctx.worker_hb = msg
         return
+    # Che do Hang hoa / Khu vuc xuong: worker van chay nhung khong duoc cham cong hay ve de len overlay SKU/Zone.
+    # Van cho qua appearance_closed de khong mat lich su cua track dang mo luc chuyen mode.
+    if getattr(ctx, "pipeline", None) is not None and ctx.pipeline.mode in ("sku", "zone"):
+        if mtype == "camera_chime" or mtype == "frame_overlay":
+            return
+        if mtype == "track_event" and msg.get("event_kind") in ("checkin", "spoof"):
+            return
     if mtype == "camera_chime":
         bc(msg)
         return
@@ -200,6 +213,7 @@ def _archive_playback_clip_bg(app_id: int, msg: dict, hist: list[dict]) -> None:
 async def lifespan(app: FastAPI):
     bc.loop = asyncio.get_running_loop()
     cfg = load_config()
+    apply_cv_threads(cfg)
     ctx.cfg = cfg
     ctx.cipher = BiometricCipher.from_env_or_cfg(cfg)
     ctx.db = DB(cfg["_paths"]["db"], database_url=cfg["storage"].get("database_url", ""), cipher=ctx.cipher)
@@ -209,21 +223,34 @@ async def lifespan(app: FastAPI):
     ctx.enroll_lock = threading.Lock()
     ctx.pose = create_pose_estimator(cfg)
     ctx.gallery = Gallery(ctx.db, ctx.engine.model_version)
+    sku_ft = str((cfg.get("sku") or {}).get("feature_type", "orb")).lower()
+    ctx.sku_gallery = SkuGallery(ctx.db, feature_type=sku_ft)
+    ctx.sku_scanner = SkuScanner(cfg, ctx.sku_gallery)
+    ctx.sku_erp = SkuERPWorker(
+        cfg, ctx.db, sku_gallery=ctx.sku_gallery,
+        on_update=lambda bid, st, doc: bc({"type": "sku_erp", "batch_id": bid, "status": st, "remote_doc_id": doc}),
+    )
+    ctx.zone_engine = ZoneEngine(cfg, ctx.db)
     ctx.camera = Camera(cfg["camera"]["source"], cfg["camera"].get("loop_file", True)).start()
     ctx.hrm = HRMWorker(cfg, ctx.db, on_update=lambda i, s: bc({"type": "hrm", "id": i, "status": s}))
     ctx.shift = Shift.from_cfg(cfg)
     ctx.clips = ClipRecorder(cfg)
     ctx.chime = build_chime_notifier(cfg, on_event=bc)
     from .vision.context_detector import create_context_detector
+    shared_ctx_det = create_context_detector(cfg)
     isolated = bool(cfg["pipeline"].get("isolated_worker") or os.environ.get("FACEGATE_ISOLATED_WORKER") == "1")
-    # Che do isolated: worker_perception la bo nhan dien duy nhat; Pipeline o day chi cap khung xem truoc (CR2).
-    # Ngoai le webcam USB (isolated=False): Pipeline dung chung loi v4 (PoseEstimator3D + ContextDetector + LLR).
+    # Che do isolated: worker_perception la bo nhan dien duy nhat; Pipeline o day chi cap khung xem truoc (CR2),
+    # nhung khi sang mode 'zone' thi Pipeline dung zone_detector (YOLOX-Nano nhe) va tat FaceID nang.
     ctx.pipeline = Pipeline(cfg, ctx.db, ctx.engine, ctx.gallery, ctx.camera, ctx.hrm, bc,
                             liveness=None if isolated else create_liveness(cfg),
                             clips=None if isolated else ctx.clips,
                             recognize=not isolated,
                             pose=None if isolated else ctx.pose,
-                            context_detector=None if isolated else create_context_detector(cfg)).start()
+                            context_detector=None if isolated else shared_ctx_det,
+                            sku_scanner=ctx.sku_scanner,
+                            sku_gallery=ctx.sku_gallery,
+                            zone_engine=ctx.zone_engine,
+                            zone_detector=shared_ctx_det).start()
     zone = _load_settings().get("motion_zone")
     if zone:
         try:
@@ -238,8 +265,12 @@ async def lifespan(app: FastAPI):
     ctx.worker_hb = {}
     ctx.disk_status = {"disk_warning": False, "free_disk_gb": 99.0}
 
+    async def _on_worker_connect() -> None:
+        if getattr(ctx, "pipeline", None) is not None and getattr(ctx, "ipc", None) is not None:
+            await ctx.ipc.send_command({"cmd": "set_mode", "mode": ctx.pipeline.mode})
+
     sock_path = cfg["_paths"]["run"] / "perception.sock"
-    ctx.ipc = IPCServer(sock_path=sock_path, port=0, on_message=_handle_worker_ipc)
+    ctx.ipc = IPCServer(sock_path=sock_path, port=0, on_message=_handle_worker_ipc, on_connect=_on_worker_connect)
     await ctx.ipc.start()
 
     stop_sup = asyncio.Event()
@@ -253,9 +284,11 @@ async def lifespan(app: FastAPI):
                     if proc is not None:
                         log.warning("worker_perception thoat voi ma %s -> tu khoi dong lai sau 1s", proc.returncode)
                         await asyncio.sleep(1.0)
+                    cur_mode = getattr(getattr(ctx, "pipeline", None), "mode", "attendance")
                     proc = subprocess.Popen([
                         sys.executable, "-m", "server.vision.worker_perception",
                         "--sock", str(sock_path), "--port", str(ctx.ipc.bound_port),
+                        "--mode", str(cur_mode),
                     ])
                     ctx.worker_proc = proc
                 if time.time() - last_disk_chk >= 60.0:
@@ -297,11 +330,17 @@ async def lifespan(app: FastAPI):
     ctx.clips.close()
     ctx.camera.stop()
     ctx.hrm.stop()
+    if getattr(ctx, "sku_erp", None) is not None:
+        ctx.sku_erp.stop()
+    if getattr(ctx, "zone_engine", None) is not None:
+        ctx.zone_engine.reset_runtime()
 
 
 app = FastAPI(title="FaceGate demo", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=ROOT / "webapp"), name="static")
 app.include_router(records_router)
+app.include_router(sku_router)
+app.include_router(zones_router)
 
 
 @app.get("/")
@@ -409,17 +448,44 @@ def status():
     return st
 
 
+_LICENSE_GATE_CACHE: dict = {}
+
+
+def _license_gate_cached(models_dir: Path) -> tuple[bool, list[str]]:
+    """Chay cung bo quy tac voi CI (run_gate: checksum, blocking, file cam, file la). Cache theo (ten, mtime, size)
+    cua thu muc model de khong bam SHA-256 moi lan goi /api/status."""
+    from .scripts.license_gate import run_gate
+
+    models_dir = Path(models_dir)
+    try:
+        key = (str(models_dir), tuple(sorted((p.name, p.stat().st_mtime_ns, p.stat().st_size)
+                                             for p in models_dir.iterdir() if p.is_file())))
+    except OSError:
+        return False, ["FAIL không đọc được thư mục model"]
+    hit = _LICENSE_GATE_CACHE.get("v")
+    if hit is not None and hit[0] == key:
+        return hit[1]
+    ok, msgs, _ = run_gate(models_dir, tracked_files=[], strict=False)
+    _LICENSE_GATE_CACHE["v"] = (key, (ok, msgs))
+    return ok, msgs
+
+
 def license_status(cfg: dict) -> dict:
     """Truong giay phep cho /api/status (contracts/runtime-license-guard.md §3)."""
-    from .vision.license_guard import is_commercial_ok, load_manifest, research_mode, summary
+    from .vision.license_guard import load_manifest, research_mode, summary
 
     out = {"pose_engine": str(cfg.get("pose", {}).get("engine", "pnp5"))}
     try:
         manifest = load_manifest(cfg["_paths"]["models"])
     except LicenseError:
         return {**out, "license_ok": False, "license_models": []}
-    ok = all(is_commercial_ok(manifest, m) for m in manifest["models"]) and not research_mode(cfg)
-    return {**out, "license_ok": ok, "license_models": summary(manifest)}
+    gate_ok, msgs = _license_gate_cached(cfg["_paths"]["models"])
+    ok = gate_ok and not research_mode(cfg)
+    res = {**out, "license_ok": ok, "license_models": summary(manifest)}
+    errors = [m for m in msgs if m.startswith("FAIL")]
+    if errors:
+        res["license_errors"] = errors
+    return res
 
 
 def _sync_chime_from_disk_and_camera() -> object:

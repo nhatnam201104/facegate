@@ -258,8 +258,10 @@ def record_bundle(video_source: str, out_dir: Path, layout: str = "side_walk",
                     if crop.size > 0:
                         cv2.imwrite(str(out_dir / crop_rel), crop, [cv2.IMWRITE_JPEG_QUALITY, 95])
 
-                    yaw_val = float(pose.yaw if pose is not None else q.yaw)
-                    pitch_val = float(pose.pitch if pose is not None else q.pitch)
+                    # Ghi yaw/pitch THO: replay_eval doc truong nay de hieu chuan tau/margin va danh gia SC-002/SC-006,
+                    # nen phai cung tin hieu voi production (production dung gate_yaw cho moi cong quyet dinh).
+                    yaw_val = float(pose.gate_yaw() if pose is not None else q.yaw)
+                    pitch_val = float(pose.gate_pitch() if pose is not None else q.pitch)
                     roll_val = float(pose.roll if pose is not None else q.roll)
                     pose_grp = str(pose.pose_group if pose is not None else q.pose_group)
                     ctx_eval = evaluate_face_context(

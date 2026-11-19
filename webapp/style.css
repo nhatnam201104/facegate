@@ -180,3 +180,22 @@ button:focus-visible,.btn:focus-visible,input:focus-visible,select:focus-visible
 .grid9 div.done{background:#1c3b30;border-color:var(--accent);color:var(--accent)}
 #enrollCancel{margin-top:8px;background:none;border:1px solid var(--line);color:var(--muted);padding:8px 14px;border-radius:6px;cursor:pointer;font:inherit}
 .grid9 div.empty{background:none;border-color:transparent}
+/* ---- chuyen mode & tab Hang hoa (Phase 2) ---- */
+.modesw{display:inline-flex;background:var(--bg);border:1px solid var(--line);border-radius:7px;padding:2px;gap:2px}
+.modesw .mbtn{background:none;border:0;color:var(--muted);padding:4px 10px;border-radius:5px;cursor:pointer;font:inherit;font-size:12px;font-weight:600}
+.modesw .mbtn.active{background:var(--accent);color:#06140f}
+.sku-row2{display:grid;grid-template-columns:2fr 1fr;gap:10px}
+.zone-grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.sku-cam-wrap{margin:6px 0 10px}
+.sku-chk{display:flex!important;align-items:center;gap:8px;color:var(--text)!important;margin:8px 0 12px}
+.sku-chk input{width:auto!important;margin:0!important}
+.sku-toolbar{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:flex-end;gap:12px}
+.sku-cfg-inline{display:flex;flex-wrap:wrap;align-items:flex-end;gap:8px}
+.sku-cfg-inline label{margin:0;font-size:12px;color:var(--muted)}
+.sku-cfg-inline select{margin-top:4px;min-width:160px}
+.sku-erp-opts{display:flex;flex-wrap:wrap;align-items:center;gap:14px;margin-top:10px;padding-top:10px;border-top:1px solid var(--line)}
+.sku-erp-opts label{margin:0;display:inline-flex;align-items:center;gap:6px;font-size:13px}
+.zone-edit-svg{position:absolute;inset:0;width:100%;height:100%;z-index:3}
+.zone-edit-svg polygon{fill:rgba(60,200,90,.22);stroke:#3cc85a;stroke-width:2}
+.zone-edit-svg polyline{fill:none;stroke:#3cc85a;stroke-width:2;stroke-dasharray:5 3}
+.zone-edit-svg circle{fill:#3cc85a;stroke:#06140f;stroke-width:2}

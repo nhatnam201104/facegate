@@ -4,7 +4,8 @@ const fmtTime = ts => new Date(ts * 1000).toLocaleString("vi-VN");
 const fmtHM = ts => ts ? new Date(ts * 1000).toLocaleTimeString("vi-VN", {hour: "2-digit", minute: "2-digit"}) : "—";
 const isoDay = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 const file = p => p ? `/files/${p}` : "";
-const REASON = {small:"mặt nhỏ", blur:"mờ", light:"ánh sáng", yaw:"quay ngang", cut:"bị cắt"};
+const REASON = {small:"mặt nhỏ", blur:"mờ", light:"ánh sáng", yaw:"quay ngang", cut:"bị cắt",
+  pose_unreliable:"quay quá nghiêng, cần nhìn vào camera"};
 const isActive = tab => $("#tab-" + tab).classList.contains("active");
 
 // ---------- tabs (attendance.js / history.js dang ky them vao tabHooks)
@@ -15,6 +16,8 @@ document.querySelectorAll("nav button").forEach(b => b.onclick = () => {
   tabHooks[b.dataset.tab]?.();
   syncLiveStreamVisibility();
   updateEnrollPreview();
+  window.updateSkuPreview?.();
+  window.updateZonePreview?.();
 });
 
 function syncLiveStreamVisibility() {
@@ -67,6 +70,23 @@ function connectWS() {
       if (isActive("events")) loadEvents();
       if (isActive("attendance")) tabHooks.attendance?.();
     }
+    if (msg.type === "sku_event") {
+      addSkuFeed(msg.event, true);
+      showSkuGreet(msg.event);
+      if (isActive("sku")) tabHooks.skuLive?.();
+    }
+    if (msg.type === "sku_items" && isActive("sku")) tabHooks.skuItems?.();
+    if (msg.type === "sku_erp" && isActive("sku")) tabHooks.skuBatches?.();
+    if (msg.type === "zone_session") {
+      addZoneFeed(msg.session, false);
+      if (isActive("zones")) tabHooks.zonesLive?.();
+    }
+    if (msg.type === "zone_alert") {
+      addZoneFeed(msg.alert, true);
+      beep(false);
+      if (isActive("zones")) tabHooks.zonesLive?.();
+    }
+    if (msg.type === "zones" && isActive("zones")) tabHooks.zonesItems?.();
     if (msg.type === "greet") showGreet({kind: "dup", name: msg.name, code: msg.code, ts: msg.last_ts});
     if (msg.type === "appearance" && isActive("history")) tabHooks.historyLive?.();
     if (msg.type === "employees") { loadPeople(); if (isActive("employees")) loadEmployees(); }
@@ -78,8 +98,13 @@ function showStatus(s) {
   lastStatus = s;
   const black = s.source.black, live = s.camera_connected && s.camera_fps > 0 && !black;
   $("#camDot").classList.toggle("on", s.camera_connected);
-  $("#statusLine").textContent =
-    `${s.backend} · ngưỡng ${s.threshold} · cam ${s.camera_connected ? s.camera_fps + " FPS" : "MẤT KẾT NỐI"} · detect ${s.detect_fps} FPS / ${s.detect_ms} ms · ${s.gallery} NV active · HRM ${s.hrm}`;
+  const mode = s.mode || "attendance";
+  document.querySelectorAll(".modesw .mbtn").forEach(b => b.classList.toggle("active", b.dataset.mode === mode));
+  $("#statusLine").textContent = mode === "sku"
+    ? `SKU (${s.sku_count_mode || "hold"}) · cam ${s.camera_connected ? s.camera_fps + " FPS" : "MẤT KẾT NỐI"} · detect ${s.detect_fps} FPS / ${s.detect_ms} ms · ${s.sku_gallery ?? 0} SKU (${s.sku_templates ?? 0} mẫu)`
+    : mode === "zone"
+      ? `ZONE (YOLOX-Nano · FaceID OFF) · cam ${s.camera_connected ? s.camera_fps + " FPS" : "MẤT KẾT NỐI"} · detect ${s.detect_fps} FPS / ${s.detect_ms} ms · ${s.zones ?? 0} khu vực`
+      : `${s.backend} · ngưỡng ${s.threshold} · cam ${s.camera_connected ? s.camera_fps + " FPS" : "MẤT KẾT NỐI"} · detect ${s.detect_fps} FPS / ${s.detect_ms} ms · ${s.gallery} NV active · HRM ${s.hrm}`;
   // nguon + trang thai nhan dien
   const kindName = {webcam: "Webcam", file: "File video", rtsp: "RTSP"}[s.source.kind] || s.source.kind;
   $("#srcLabel").textContent = `${s.source.label} (${kindName})`;
@@ -153,6 +178,68 @@ function addFeed(e, isNew) {
   ul.prepend(li);
   while (ul.children.length > 30) ul.lastChild.remove();
 }
+function addSkuFeed(e, isNew) {
+  const ul = $("#feed");
+  if (ul.querySelector(".muted")) ul.innerHTML = "";
+  const li = document.createElement("li");
+  const known = Boolean(e.sku_id && e.code);
+  li.className = `${isNew ? "new " : ""}${known ? "k-checkin" : "k-unknown"}`;
+  const dirTxt = e.direction === "OUT" ? "Xuất" : "Nhập";
+  const tag = `<span class="tag">${esc(dirTxt)} · ${esc(e.method || "sku")}</span>`;
+  const sub = known ? `${esc(e.code)} · +${e.qty ?? 1} ${esc(e.uom || "pcs")}` : "Mã chưa đăng ký";
+  li.innerHTML = `${e.snapshot ? `<img src="${file(e.snapshot)}" alt="">` : ""}
+    <div><b>${esc(e.name || "Unknown SKU")}</b> ${tag}
+    <span class="t">${fmtTime(e.ts)} · ${sub} · score ${Number(e.score || 0).toFixed(2)}</span></div>`;
+  ul.prepend(li);
+  while (ul.children.length > 30) ul.lastChild.remove();
+}
+function addZoneFeed(ev, isAlert) {
+  const ul = $("#feed");
+  if (ul.querySelector(".muted")) ul.innerHTML = "";
+  const li = document.createElement("li");
+  li.className = `new ${isAlert ? "k-spoof" : "k-checkin"}`;
+  if (isAlert) {
+    li.innerHTML = `<div><b>⚠ Trống vị trí: ${esc(ev.zone_name)} (${esc(ev.zone_code)})</b>
+      <span class="t">${fmtTime(ev.ts)} · hiện có ${ev.present_count}/${ev.min_persons} người · trống ${ev.empty_sec}s</span></div>`;
+  } else {
+    li.innerHTML = `<div><b>${esc(ev.zone_name)} (${esc(ev.zone_code)})</b> <span class="tag">Phiên</span>
+      <span class="t">${fmtTime(ev.exit_ts)} · Track #${ev.person_track_id} · đứng ${ev.dwell_sec}s</span></div>`;
+  }
+  ul.prepend(li);
+  while (ul.children.length > 30) ul.lastChild.remove();
+}
+function showSkuGreet(e) {
+  const box = $("#greet");
+  const known = Boolean(e.sku_id && e.code);
+  const dirLbl = e.direction === "OUT" ? "XUẤT KHO (OUT)" : "NHẬP KHO (IN)";
+  box.className = `greet g-${known ? "ok" : "warn"}`;
+  $("#greetKind").textContent = known ? `${dirLbl} · ${e.method} · ${fmtHM(e.ts)}` : `Mã lạ · ${e.method}`;
+  $("#greetName").textContent = known ? `${e.code} · ${e.name}` : (e.barcode ? `Mã ${e.barcode}` : "Unknown SKU");
+  $("#greetSub").textContent = known ? `+${e.qty ?? 1} ${e.uom || "pcs"} · score ${Number(e.score || 0).toFixed(2)}` : "Chưa có trong danh mục SKU";
+  $("#greetImg").hidden = !e.snapshot;
+  if (e.snapshot) $("#greetImg").src = file(e.snapshot);
+  box.hidden = false;
+  beep(known);
+  clearTimeout(greetTimer);
+  greetTimer = setTimeout(() => box.hidden = true, 4000);
+}
+document.querySelectorAll(".modesw .mbtn").forEach(btn => {
+  btn.onclick = async () => {
+    const mode = btn.dataset.mode;
+    if (!mode || btn.classList.contains("active")) return;
+    btn.disabled = true;
+    try {
+      const r = await fetch("/api/mode", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({mode})});
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.detail || r.statusText);
+      if (lastStatus) showStatus({...lastStatus, mode: data.mode});
+    } catch (e) {
+      alert(e.message || "Không đổi được chế độ");
+    } finally {
+      btn.disabled = false;
+    }
+  };
+});
 fetch("/api/events?limit=15").then(r => r.json()).then(evs => evs.reverse().forEach(e => addFeed(e, false)));
 
 // ---------- man hinh chao kieu may cham cong

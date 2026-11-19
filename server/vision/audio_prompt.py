@@ -697,9 +697,16 @@ def build_chime_notifier(
     cfg: dict,
     on_event: Callable[[dict], None] | None = None,
     camera_source: str | int | None = None,
+    allow_hardware: bool | None = None,
 ) -> TapoChimeNotifier:
-    """Khoi tao TapoChimeNotifier tu config + bien moi truong CAM_IP / CAM_USER / CAM_PASS + nguon RTSP dang chay."""
+    """Khoi tao TapoChimeNotifier tu config + bien moi truong CAM_IP / CAM_USER / CAM_PASS + nguon RTSP dang chay.
+
+    allow_hardware=None -> chi goi loa Tapo (pytapo, API TP-Link KHONG chinh thuc) khi audio_prompt.backend == "tapo".
+    Voi backend "web" (mac dinh, FR-009) notifier khong co host/mat khau -> luon phat du phong tren Web.
+    """
     ac = cfg.get("audio_prompt") or {}
+    if allow_hardware is None:
+        allow_hardware = str(ac.get("backend", "web")).strip().lower() == "tapo"
     cam_cfg = cfg.get("camera") or {}
     src_str = str(camera_source if camera_source is not None else cam_cfg.get("source", ""))
     rtsp_host, rtsp_user, rtsp_pass = _extract_host_creds_from_rtsp(src_str)
@@ -715,6 +722,8 @@ def build_chime_notifier(
     cloud_password = str(ac.get("cloud_password") or os.environ.get("TAPO_CLOUD_PASSWORD") or "").strip()
     if password == "changeme":
         password = ""
+    if not allow_hardware:
+        host, password, cloud_password = "", "", ""
 
     prompt_wav_cfg = str(ac.get("prompt_wav", "") or "").strip()
     if prompt_wav_cfg:

@@ -27,6 +27,8 @@ pipeline:
   two_stage_roi: true                # resize chinh frame /stream1 ve 640px tim nguoi -> cat ROI 1:1 tren 3MP
   always_fallback_unmatched: true    # quet bo sung toan khung neu YOLOX miss nguoi thu 2
   fallback_det_width: 1280
+  cv_threads: 2                      # so luong OpenCV (YuNet/SFace); 0 = mac dinh OpenCV (moi loi). Nang 3-4 neu chu ky p90 > 150 ms o 10 mat
+  ort_allow_spinning: false          # true = de luong ONNX Runtime quay vong cho viec (ton ~2 loi/camera, khong nhanh hon ro ret)
 
 license:                   # kiem tra giay phep model theo server/models/manifest.json (feature 002)
   research_mode: false     # CHI dung noi bo khi dev: true -> loi giay phep model chi canh bao. KHONG BAO GIO bat cho khach hang
@@ -38,11 +40,11 @@ pose:                      # uoc luong tu the dau (feature 002)
   ema_tau_sec: 0.3         # hang so thoi gian lam muot yaw/pitch theo GIAY (khong theo so frame)
 
 quality:
-  min_face: 60            # canh ngan nho nhat cua mat (pixel)
+  min_face: 60             # canh ngan nho nhat cua mat (pixel)
   min_blur: 35             # phuong sai Laplacian toi thieu tren vung da nhin thay
   min_brightness: 45
   max_brightness: 225
-  max_yaw: 90              # do, ho tro nhan dien toi goc nghieng suon +-90 do
+  max_yaw: 90              # do, tran cung cua quality gate; nhan dien tin cay toi ~+-60 do (pose.max_reliable_yaw)
   max_pitch: 35
   max_roll: 35
 
@@ -137,7 +139,7 @@ enrollment:
   outlier_min_cosine: 0.42
   cross_pose_min_cosine: 0.20
   keep_video: false        # mac dinh xoa video goc sau khi xu ly
-  guided:                  # dang ky quay tu camera: 7 goc (5 chu thap + 2 nghieng suon ~80 do)
+  guided:                  # dang ky quay tu camera: 7 goc (5 chu thap + 2 nghieng suon 45-60 do)
     enable_profile_90: true
     yaw_enter: 15          # do lech ngang (so voi luc nhin thang) de tinh la da quay
     yaw_center: 9          # trong khoang nay la "nhin thang"
@@ -180,6 +182,36 @@ hrm:
     api_key: ""
     api_secret: ""
     device_id: gate-1
+    warehouse: "Stores - MSW"   # kho mac dinh khi day Draft Stock Entry tu SKU
+
+sku:                       # Phase 2A: Nhan dien Hang hoa / SKU & kiem dem kho (tat FaceID nang)
+  feature_type: orb        # orb (nhanh tren CPU) | sift
+  orb_nfeatures: 800
+  sift_nfeatures: 600
+  min_template_kps: 30
+  min_inliers: 12
+  min_inlier_ratio: 0.25
+  ratio_thresh: 0.75
+  ransac_reproj_thresh: 4.5
+  min_blur: 20.0
+  scan_max_width: 960
+  max_instances: 4         # so hop cung ma SKU toi da tim trong 1 khung (Sequential RANSAC Experimental)
+  count_mode: hold         # hold (giu on dinh min_hold_sec) | line (cat qua vach IN/OUT)
+  min_hold_sec: 0.4
+  cooldown_sec: 4.0
+  track_max_age: 1.2
+  line: [[0.0, 0.55], [1.0, 0.55]]  # vach dem chuan hoa 0..1 khi count_mode: line
+  in_when: down            # down | up | right | left (chieu di chuyen tinh la Nhap kho IN)
+  log_unknown: true
+  prefer_code_short_circuit: true
+
+zones:                     # Phase 2A: Giam sat hien dien khu vuc xuong (Time-Based YOLOX-Nano, tat FaceID)
+  person_conf: 0.45
+  enter_confirm_sec: 1.0   # dung trong vung >= N giay moi xac nhan vao vung
+  min_dwell_sec: 3.0       # phien hien dien >= N giay moi luu DB
+  exit_grace_sec: 2.0      # mat dau qua N giay moi dong phien
+  alert_empty_sec: 0.0     # > 0: canh bao khi vung thieu nguoi (< min_persons) qua N giay
+  alert_cooldown_sec: 30.0
 
 storage:
   data_dir: data

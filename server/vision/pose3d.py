@@ -40,6 +40,13 @@ MAX_REPROJ_RATIO = 0.25  # loi chieu lai trung binh / khoang cach hai mat
 
 @dataclass
 class PoseResult:
+    """Ket qua uoc luong tu the mot khung.
+
+    yaw/pitch da lam muot EMA theo track -> CHI dung de hien thi (goi y "nhin vao camera", overlay).
+    raw_yaw/raw_pitch la gia tri THO cua khung nay -> moi cong quyet dinh (quality, liveness, LLR, pose_reliable,
+    pose_group, min_abs_yaw) phai doc raw_* vi EMA tre pha khi quay dau nhanh.
+    """
+
     yaw: float
     pitch: float
     roll: float
@@ -48,6 +55,16 @@ class PoseResult:
     kps5: np.ndarray
     visibility: float = 1.0
     pose_reliable: bool = True
+    raw_yaw: float | None = None
+    raw_pitch: float | None = None
+
+    def gate_yaw(self) -> float:
+        """Yaw tho de quyet dinh (fallback ve yaw khi khong co raw)."""
+        return float(self.yaw if self.raw_yaw is None else self.raw_yaw)
+
+    def gate_pitch(self) -> float:
+        """Pitch tho de quyet dinh (fallback ve pitch khi khong co raw)."""
+        return float(self.pitch if self.raw_pitch is None else self.raw_pitch)
 
 
 def classify_pose_group(yaw: float, prev_group: str | None = None,
@@ -170,18 +187,21 @@ class PoseEstimator3D:
         fb_yaw, fb_pitch, fb_roll, pts68 = _fallback_from_5pt(face.bbox, kps)
         eye_dist = max(float(np.linalg.norm(kps[1] - kps[0])), 1.0)
         res = solve_pnp_5pt(kps, w, h)
-        reliable = True
         if res is not None and res[1] <= MAX_REPROJ_RATIO * eye_dist:
-            yaw, pitch, roll = pose_from_rotation(res[0])
+            raw_yaw, raw_pitch, roll = pose_from_rotation(res[0])
+            # Do tin cay + nhom tu the quyet dinh tren yaw THO cua khung nay: EMA tre pha khi quay dau nhanh
+            # (0 -> 80 do trong 1 khung van chi ra ~34 do) se de lot mat nghieng vao gallery chinh dien.
+            reliable = abs(raw_yaw) <= self.max_reliable_yaw
+            yaw, pitch = self._smooth(track_id, ts, raw_yaw, raw_pitch)
         else:
-            yaw, pitch, roll = fb_yaw, fb_pitch, fb_roll
+            # PnP that bai: gia tri du phong khong duoc ghi vao trang thai EMA
+            raw_yaw, raw_pitch, roll = fb_yaw, fb_pitch, fb_roll
+            yaw, pitch = raw_yaw, raw_pitch
             reliable = False
-        yaw, pitch = self._smooth(track_id, ts, yaw, pitch)
-        if abs(yaw) > self.max_reliable_yaw:
-            reliable = False
-        grp = classify_pose_group(yaw, prev_group, self.frontal_max, self.hysteresis)
-        vis = float(max(0.2, math.cos(math.radians(min(85.0, abs(yaw))))))
-        return PoseResult(float(yaw), float(pitch), float(roll), grp, pts68, kps, vis, reliable)
+        grp = classify_pose_group(raw_yaw, prev_group, self.frontal_max, self.hysteresis)
+        vis = float(max(0.2, math.cos(math.radians(min(85.0, abs(raw_yaw))))))
+        return PoseResult(float(yaw), float(pitch), float(roll), grp, pts68, kps, vis, reliable,
+                          float(raw_yaw), float(raw_pitch))
 
 
 def create_pose_estimator(cfg: dict) -> PoseEstimator3D:

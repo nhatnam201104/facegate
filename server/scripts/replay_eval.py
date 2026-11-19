@@ -42,9 +42,13 @@ def pairwise_impostor_far(embeddings_by_subject: dict[str, list[np.ndarray]], th
             sims = m1 @ m2.T
             total_pairs += int(sims.size)
             if groups_by_subject and threshold_by_group:
+                # Cap impostor doi xung (ben nao cung co the la probe) -> lay nguong THAP hon cua 2 nhom:
+                # khong phu thuoc thu tu sap xep subject va cho FAR than trong (bi quan)
                 g1 = groups_by_subject.get(s1) or ["frontal"] * m1.shape[0]
-                thr_rows = np.array([threshold_by_group.get(g, threshold) for g in g1], dtype=np.float32)[:, None]
-                false_accepts += int(np.sum(sims >= thr_rows))
+                g2 = groups_by_subject.get(s2) or ["frontal"] * m2.shape[0]
+                t1 = np.array([threshold_by_group.get(g, threshold) for g in g1], dtype=np.float32)[:, None]
+                t2 = np.array([threshold_by_group.get(g, threshold) for g in g2], dtype=np.float32)[None, :]
+                false_accepts += int(np.sum(sims >= np.minimum(t1, t2)))
             else:
                 false_accepts += int(np.sum(sims >= threshold))
     rate = (false_accepts / total_pairs) if total_pairs else 0.0
@@ -488,7 +492,7 @@ def evaluate_observations(obs_path: Path, threshold: float = 0.42, fas_threshold
                 continue
             vec = vec / (np.linalg.norm(vec) + 1e-9)
             q = f.get("quality", {})
-            yaw = float(q.get("yaw", f.get("yaw", 0.0)))
+            yaw = float(f.get("yaw", q.get("yaw", 0.0)))  # cung thu tu uu tien voi vong embs_by_subj
             q_score = float(q.get("score", 0.8))
             pose_grp = _infer_pose_group(yaw, f.get("pose_group"), frontal_max=40.0)
             band = "frontal_le40" if abs(yaw) <= 40.0 else "profile_gt40"

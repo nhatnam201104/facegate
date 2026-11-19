@@ -44,6 +44,8 @@ def _embed_crop(engine, pose_est, img: np.ndarray, pose_group: str) -> np.ndarra
         return None
     f = max(faces, key=lambda x: x.w * x.h)
     pose = pose_est.estimate(img, f) if pose_est is not None else None
+    if pose is not None and not pose.pose_reliable:
+        return None  # khong tin cay (PnP that bai / |yaw| > max_reliable_yaw) -> tinh la that bai, can dang ky lai
     aligned = engine.align(img, f, pose=pose, pose_group=pose_group)
     return engine.embed_aligned(aligned)
 
@@ -64,13 +66,14 @@ def migrate(db, engine, data_dir: Path, from_version: str, to_version: str | Non
         have = {(r["crop_path"], r["source"]) for r in db.q(
             "SELECT crop_path, source FROM embeddings WHERE employee_id=? AND model_version=?",
             (emp["id"], to_version))}
-        have_paths = {p for p, _ in have}
+        # Chi tinh vector CHINH (khong phai ban lat guong) la da xong; neu chi co migrate_mirror thi van thu lai ban chinh
+        have_main_paths = {p for p, src in have if src != "migrate_mirror"}
         added, failed, todo = 0, 0, 0
         for r in rows:
             crop = r["crop_path"]
             if not crop:
                 continue
-            want_main = crop not in have_paths
+            want_main = crop not in have_main_paths
             want_mirror = mirror_profiles and r["pose_group"] in MIRROR_GROUP and (crop, "migrate_mirror") not in have
             if not (want_main or want_mirror):
                 continue

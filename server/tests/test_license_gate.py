@@ -208,3 +208,25 @@ def test_opencv_backend_checks_manifest(tmp_path, monkeypatch):
     (d / "face_recognition_sface_2021dec.onnx").write_bytes(b"tampered")
     with pytest.raises(LicenseError, match="sai checksum"):
         create_engine(_engine_cfg(d, "opencv"))
+
+
+def test_check_artifact_rejects_blocking_training_data(tmp_path):
+    data = b"m"
+    d = _setup(tmp_path, [_entry("m.onnx", data, training_data_risk="blocking")], {"m.onnx": data})
+    with pytest.raises(LicenseError):
+        check_artifact(load_manifest(d), "m.onnx", d)
+
+
+def test_status_license_ok_false_on_checksum_mismatch_or_forbidden_file(tmp_path):
+    from server.main import _LICENSE_GATE_CACHE, license_status
+
+    data = b"model-bytes"
+    d = _setup(tmp_path, [_entry("m.onnx", data)], {"m.onnx": data})
+    _LICENSE_GATE_CACHE.clear()
+    assert license_status(_cfg(d))["license_ok"] is True
+    (d / "edgeface_xs_gamma_06.onnx").write_bytes(b"old")
+    st = license_status(_cfg(d))
+    assert st["license_ok"] is False and st["license_errors"]
+    (d / "edgeface_xs_gamma_06.onnx").unlink()
+    (d / "m.onnx").write_bytes(b"swapped-model")
+    assert license_status(_cfg(d))["license_ok"] is False

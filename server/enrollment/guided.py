@@ -227,6 +227,11 @@ class GuidedSession:
             self.stats["multi_face"] += 1
             return None, None, "Chỉ một người trong khung hình", None
         pose = pose_est.estimate(frame, faces[0]) if pose_est is not None else None
+        if pose is not None and not pose.pose_reliable:
+            # Feature 002: PnP that bai hoac |yaw| > pose.max_reliable_yaw -> khong dua vao gallery
+            # (cung dieu kien nhu pipeline / worker_perception khi nhan dien)
+            self.stats["rejected"]["pose_unreliable"] = self.stats["rejected"].get("pose_unreliable", 0) + 1
+            return None, None, "Quay lại một chút", pose
         q = assess(frame, faces[0], self.qcfg, pose=pose)
         if not q.ok:
             self.stats["rejected"][q.reason] = self.stats["rejected"].get(q.reason, 0) + 1

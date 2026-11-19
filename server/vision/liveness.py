@@ -13,6 +13,7 @@ import cv2
 import numpy as np
 
 from .license_guard import require
+from .runtime_threads import ort_session_options
 
 log = logging.getLogger("liveness")
 
@@ -41,8 +42,7 @@ class Liveness:
             raise FileNotFoundError(f"Thieu model chong gia mao {missing}. Chay: python server/scripts/download_models.py")
         for n, _ in MODELS:
             require(cfg, n, models_dir)
-        so = ort.SessionOptions()
-        so.log_severity_level = 3
+        so = ort_session_options(cfg)
         self.sessions = [(ort.InferenceSession(str(models_dir / n), so, providers=["CPUExecutionProvider"]), sc)
                          for n, sc in MODELS]
 

@@ -204,6 +204,10 @@ def test_extract_rtsp_with_at_sign_in_password_and_hot_reload_from_config(tmp_pa
     cfg["camera"]["source"] = "rtsp://namnhat:P@ss@word@192.168.1.24:554/stream1"
     cfg["audio_prompt"]["host"] = ""
     cfg["audio_prompt"]["password"] = ""
+    # backend web (mac dinh): KHONG lay host/mat khau tu RTSP -> khong bao gio goi pytapo
+    cfg["audio_prompt"]["backend"] = "web"
+    assert build_chime_notifier(cfg).hardware_configured is False
+    cfg["audio_prompt"]["backend"] = "tapo"
     n = build_chime_notifier(cfg)
     assert n.hardware_configured is True
     assert n.host == "192.168.1.24"

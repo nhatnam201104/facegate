@@ -275,3 +275,18 @@ def test_t035_enrollment_uses_frontal_mean_config_outliers_and_backfills_new_ver
     rows = db.q("SELECT COUNT(*) AS n FROM embeddings WHERE employee_id=? AND model_version=?",
                 (rep["employee_id"], "opencv_test_v41_next"))
     assert rows[0]["n"] == 5
+
+
+def test_unreliable_pose_frames_are_never_enrolled(env):
+    ctx, cam = env
+
+    class _UnreliablePose:
+        def estimate(self, img, face, *a, **k):
+            return SimpleNamespace(pose_reliable=False, yaw=0.0, pitch=0.0, roll=0.0, pose_group="frontal",
+                                   kps5=face.kps, visibility=1.0)
+
+    ctx.pose = _UnreliablePose()
+    g = GuidedSession(ctx, "NV010", "K").start()
+    assert wait(lambda: g.stats["rejected"].get("pose_unreliable", 0) >= 5)
+    assert g.step == 0
+    g.cancel()

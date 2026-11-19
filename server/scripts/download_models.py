@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import os
+import shutil
 import sys
 import urllib.request
 from pathlib import Path
@@ -47,7 +49,10 @@ def download(entry: dict, models_dir: Path) -> bool:
     if digest != expected:
         print(f"LOI: sai checksum ({digest[:16]}... != {expected[:16]}...), đã huỷ file")
         return False
-    dst.write_bytes(data)
+    # Ghi nguyen tu: file .part roi doi ten -> bi ngat giua chung khong de lai file do dang (lan sau se bi tu choi)
+    tmp = dst.with_name(dst.name + ".part")
+    tmp.write_bytes(data)
+    os.replace(tmp, dst)
     print(f"{len(data) / 1e6:.1f} MB (sha256 khớp)")
     return True
 
@@ -74,6 +79,12 @@ def main() -> None:
     args = ap.parse_args()
     models_dir = Path(args.models_dir)
     models_dir.mkdir(parents=True, exist_ok=True)
+    # Thu muc dich moi (vd --models-dir tren may trien khai) chua co manifest -> dung manifest cua repo va chep sang,
+    # vi runtime (license_guard) doc manifest.json tu chinh thu muc model.
+    repo_manifest = MODELS_DIR / "manifest.json"
+    if not (models_dir / "manifest.json").exists() and repo_manifest.exists() and not args.verify_only:
+        shutil.copy2(repo_manifest, models_dir / "manifest.json")
+        print(f"[manifest] chép {repo_manifest} -> {models_dir}")
     try:
         manifest = load_manifest(models_dir)
     except LicenseError as e:

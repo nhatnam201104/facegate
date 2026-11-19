@@ -122,3 +122,26 @@ def test_inactive_employees_skipped(tmp_path):
     eid = _employee(db, data, "NV8", {"00.jpg": "frontal"}, status="disabled")
     res = migrate(db, StubEngine(), data, OLD)
     assert res.migrated == [] and _rows(db, eid) == []
+
+
+def test_mirror_only_row_does_not_block_retrying_main(tmp_path):
+    db, data = _db(tmp_path)
+    eid = _employee(db, data, "NV8", {"05.jpg": "left_profile"})
+    # Lan truoc: ban chinh that bai, chi ban lat guong duoc ghi
+    db.add_embedding(eid, np.ones(128, np.float32) / np.sqrt(128), NEW, 0.9, "05", "enroll/NV8/05.jpg",
+                     source="migrate_mirror", pose_group="right_profile", yaw=0.0, pitch=0.0)
+    res = migrate(db, StubEngine(), data, OLD, mirror_profiles=True)
+    assert res.vectors_added == 1
+    assert sorted(r["pose_group"] for r in _rows(db, eid)) == ["left_profile", "right_profile"]
+
+
+def test_unreliable_pose_is_not_migrated(tmp_path):
+    class _Unreliable:
+        def estimate(self, img, face, *a, **k):
+            from types import SimpleNamespace
+            return SimpleNamespace(pose_reliable=False, pose_group="frontal", kps5=face.kps, yaw=75.0, pitch=0.0)
+
+    db, data = _db(tmp_path)
+    _employee(db, data, "NV9", {"00.jpg": "frontal"})
+    res = migrate(db, StubEngine(), data, OLD, pose_est=_Unreliable())
+    assert res.vectors_added == 0 and res.needs_reenroll == ["NV9"]

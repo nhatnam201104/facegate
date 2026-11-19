@@ -279,3 +279,18 @@ def test_sweep_grid_and_markdown(tmp_path: Path):
     assert by[(0.4, 0.4)]["frr_yaw_40_60"] == 0.0 and by[(0.4, 0.6)]["frr_yaw_40_60"] == 1.0
     md = render_sweep_markdown(rows)
     assert "latency_p90" in md and md.count("\n|") >= 10
+
+
+def test_pairwise_far_by_group_is_independent_of_subject_order():
+    import numpy as np
+    from server.scripts.replay_eval import pairwise_impostor_far
+
+    a = np.array([1.0, 0.0], np.float32)
+    b = np.array([0.9, np.sqrt(1 - 0.81)], np.float32)  # cos(a, b) = 0.9
+    thr = {"frontal": 0.95, "right_profile": 0.85}
+    counts = set()
+    for first in ("A", "Z"):  # "A" xep truoc "B", "Z" xep sau "B"
+        res = pairwise_impostor_far({first: [a], "B": [b]}, 0.5,
+                                    {first: ["frontal"], "B": ["right_profile"]}, thr)
+        counts.add(res["false_accepts"])
+    assert counts == {1}

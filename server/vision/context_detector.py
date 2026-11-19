@@ -9,6 +9,7 @@ import cv2
 import numpy as np
 
 from .license_guard import require
+from .runtime_threads import ort_session_options
 
 log = logging.getLogger("context")
 
@@ -139,8 +140,7 @@ class ContextDetector:
         if not model_path.exists():
             raise FileNotFoundError(f"Thieu model {self.MODEL_FILE}")
         require(cfg, self.MODEL_FILE, models_dir)
-        so = ort.SessionOptions()
-        so.log_severity_level = 3
+        so = ort_session_options(cfg)
         self.session = ort.InferenceSession(str(model_path), so, providers=providers or ["CPUExecutionProvider"])
         inp = self.session.get_inputs()[0]
         self.in_name = inp.name

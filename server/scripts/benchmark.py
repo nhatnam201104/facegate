@@ -18,6 +18,7 @@ from server.config import load_config  # noqa: E402
 from server.vision.engines import create_engine  # noqa: E402
 from server.vision.pose3d import create_pose_estimator  # noqa: E402
 from server.vision.quality import assess  # noqa: E402
+from server.vision.runtime_threads import apply_cv_threads  # noqa: E402
 from server.vision.worker_perception import detect_faces_two_stage_3mp  # noqa: E402
 
 
@@ -193,7 +194,7 @@ def run_full_pipeline(cfg: dict, video: str, backend: str | None = None, min_fac
                 t = time.perf_counter()
                 aligned.append(engine.align(frame, f, pose=pose, pose_group=pose.pose_group))
                 st["align"] += (time.perf_counter() - t) * 1000.0
-                if abs(pose.yaw) <= frontal_max:
+                if abs(pose.gate_yaw()) <= frontal_max:
                     live_faces.append(f)
         if aligned:
             t = time.perf_counter()
@@ -254,6 +255,7 @@ def main() -> None:
     ap.add_argument("--ep", choices=["cpu", "openvino"], default="cpu")
     args = ap.parse_args()
     cfg = load_config()
+    apply_cv_threads(cfg)
     cfg["pipeline"]["execution_provider"] = args.ep
     if args.full_pipeline:
         if not args.video:

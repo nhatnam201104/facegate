@@ -89,3 +89,50 @@ def test_no_bfm_or_3ddfa_dependency():
     import server.vision.pose3d as m
     src = open(m.__file__, encoding="utf-8").read()
     assert "tddfa_" not in src and "InferenceSession" not in src
+
+
+def test_fast_turn_reliability_and_group_use_raw_yaw_not_ema():
+    # 6 fps, tau 0.3 s: 0 -> 80 do trong 1 khung, EMA chi ~34 do nhung khung nay KHONG duoc tin cay
+    est = PoseEstimator3D(max_reliable_yaw=60.0, ema_tau_sec=0.3)
+    est.estimate(IMG, _face(0), track_id=1, ts=1.0)
+    r = est.estimate(IMG, _face(80), track_id=1, ts=1.0 + 1 / 6)
+    assert r.yaw < 60.0
+    assert r.raw_yaw > 60.0
+    assert r.pose_reliable is False
+    assert r.pose_group == "right_profile"
+
+
+def test_failed_pnp_does_not_update_ema(monkeypatch):
+    import server.vision.pose3d as m
+    est = PoseEstimator3D(ema_tau_sec=0.3)
+    est.estimate(IMG, _face(0), track_id=1, ts=1.0)
+    monkeypatch.setattr(m, "solve_pnp_5pt", lambda *a, **k: None)
+    bad = est.estimate(IMG, _face(50), track_id=1, ts=1.1)
+    assert bad.pose_reliable is False
+    assert est._ema[1] == (1.0, pytest.approx(0.0, abs=1.0), pytest.approx(0.0, abs=1.0))
+
+
+def test_gate_yaw_is_raw_not_ema_and_feeds_quality_liveness_and_llr():
+    """Pressure test cho review PR #1 (F1/F2).
+
+    EMA tre pha khi quay dau nhanh: 0 -> 55 do trong mot khung van chi ra ~23 do. Neu bat ky cong
+    quyet dinh nao (quality gate, cua liveness |yaw|<=40, LLR, min_abs_yaw) doc pose.yaw thay vi
+    gate_yaw() thi nguoi dang quay 55 do van duoc lay mau liveness va van duoc cham diem nhu mat chinh dien.
+    """
+    from server.vision.quality import assess
+
+    qcfg = {"min_face": 60, "min_blur": 0, "min_brightness": 0, "max_brightness": 255,
+            "max_yaw": 90, "max_pitch": 35, "max_roll": 35}
+    est = PoseEstimator3D(max_reliable_yaw=60.0, ema_tau_sec=0.3)
+    est.estimate(IMG, _face(0), track_id=1, ts=1.0)
+    pose = est.estimate(IMG, _face(55), track_id=1, ts=1.0 + 1 / 6)
+
+    assert pose.raw_yaw > 50.0 and pose.yaw < 30.0          # EMA thuc su tre pha
+    assert pose.gate_yaw() == pytest.approx(pose.raw_yaw)   # cong quyet dinh phai thay gia tri tho
+    assert pose.gate_pitch() == pytest.approx(pose.raw_pitch)
+
+    q = assess(IMG, _face(55), qcfg, pose=pose)
+    assert q.yaw == pytest.approx(pose.raw_yaw), "quality.assess phai cham tren yaw tho"
+    assert abs(q.yaw) > 40.0, "cua liveness frontal (|yaw|<=40) phai chan khung 55 do"
+
+
