@@ -1,169 +1,105 @@
-"""Tai va kiem tra checksum day du cac mo hinh thuong mai cho FaceGate v4 (Apache-2.0 / MIT / BSD-3).
+"""Tai va kiem tra SHA-256 day du cac model thuong mai hoa duoc cua FaceGate (doc tu server/models/manifest.json).
 
-    python server/scripts/download_models.py           # YuNet + SFace + EdgeFace-XS + 3DDFA_V2 + YOLOX-Nano + MiniFASNet
-    python server/scripts/download_models.py --onnx    # them SCRFD + ArcFace (CHI dung nghien cuu / benchmark)
+    python server/scripts/download_models.py               # YuNet + SFace + YOLOX-Nano + MiniFASNet (theo manifest)
+    python server/scripts/download_models.py --verify-only # chi kiem tra ton tai + checksum
+
+Danh sach model, URL, SHA-256 va giay phep chi khai bao trong manifest.json (feature 002-license-compliant-models).
+Khong con model phi thuong mai (EdgeFace, 3DDFA_V2/BFM, InsightFace SCRFD/ArcFace).
 """
+from __future__ import annotations
+
 import argparse
 import hashlib
+import os
+import shutil
 import sys
 import urllib.request
 from pathlib import Path
 
-MODELS_DIR = Path(__file__).resolve().parent.parent / "models"
+ROOT = Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(ROOT))
+from server.vision.license_guard import LicenseError, is_commercial_ok, load_manifest, sha256_file  # noqa: E402
 
-OPENCV_MODELS = {
-    # OpenCV Zoo - Apache-2.0
-    "face_detection_yunet_2023mar.onnx": (
-        "https://github.com/opencv/opencv_zoo/raw/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx",
-        100_000,
-    ),
-    "face_recognition_sface_2021dec.onnx": (
-        "https://github.com/opencv/opencv_zoo/raw/main/models/face_recognition_sface/face_recognition_sface_2021dec.onnx",
-        100_000,
-    ),
-}
-
-V4_COMMERCIAL_MODELS = {
-    # EdgeFace-XS (otroshi/edgeface / yakhyo/edgeface-onnx): nhan dien da goc toi +-90 do tren CPU
-    "edgeface_xs_gamma_06.onnx": (
-        "https://github.com/yakhyo/edgeface-onnx/releases/download/weights/edgeface_xs_gamma_06.onnx",
-        1_000_000,
-    ),
-    # 3DDFA_V2 MobileNet-120x120 + BFM base params (cleardusk/3DDFA_V2 - MIT): uoc luong tu the 3D
-    "3ddfa_v2_mb1_120x120.onnx": (
-        "https://huggingface.co/Stable-Human/3ddfa_v2/resolve/17a696712794fd5e0f8eb4cb04f2d2a2721baee9/mb1_120x120.onnx",
-        1_000_000,
-    ),
-    # YOLOX-Nano COCO (Megvii-BaseDetection/YOLOX - Apache-2.0): phat hien nguoi & vat chua gia mao
-    "yolox_nano_coco.onnx": (
-        "https://github.com/Megvii-BaseDetection/YOLOX/releases/download/0.1.1rc0/yolox_nano.onnx",
-        1_000_000,
-    ),
-}
-
-MODEL_SHA256 = {
-    "face_detection_yunet_2023mar.onnx": "8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4",
-    "face_recognition_sface_2021dec.onnx": "0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79",
-    "edgeface_xs_gamma_06.onnx": "9206e2eb13a2761d7b5b76e13016d4b9acd3fa3535a9a09939f3adacd139a5ff",
-    "3ddfa_v2_mb1_120x120.onnx": "1c0a8acd50db28987773324a9b2b816361468e3aa13cb6b212c911b889e08c3e",
-    "yolox_nano_coco.onnx": "c789161ed43c8269fcd4e67c67eeeb4e80c622da2eb296a20bc6007bd18a0b7d",
-    "MiniFASNetV2.onnx": "b32929adc2d9c34b9486f8c4c7bc97c1b69bc0ea9befefc380e4faae4e463907",
-    "MiniFASNetV1SE.onnx": "ebab7f90c7833fbccd46d3a555410e78d969db5438e169b6524be444862b3676",
-}
-
-TDDFA_PARAM_FILES = (
-    "tddfa_param_mean.bin",
-    "tddfa_param_std.bin",
-    "tddfa_u_base.bin",
-    "tddfa_w_exp_base.bin",
-    "tddfa_w_shp_base.bin",
-)
-
-LIVENESS_MODELS = {
-    # MiniFASNet (Minivision Silent-Face-Anti-Spoofing, Apache-2.0)
-    "MiniFASNetV2.onnx": (
-        "https://github.com/yakhyo/face-anti-spoofing/releases/download/weights/MiniFASNetV2.onnx",
-        100_000,
-    ),
-    "MiniFASNetV1SE.onnx": (
-        "https://github.com/yakhyo/face-anti-spoofing/releases/download/weights/MiniFASNetV1SE.onnx",
-        100_000,
-    ),
-}
-
-ONNX_MODELS = {
-    # Weights InsightFace: chi dung cho nghien cuu / benchmark, KHONG dung thuong mai
-    "scrfd_500m_kps.onnx": (
-        "https://github.com/yakhyo/uniface/releases/download/weights/scrfd_500m_kps.onnx",
-        100_000,
-    ),
-    "w600k_mbf.onnx": (
-        "https://github.com/yakhyo/uniface/releases/download/weights/w600k_mbf.onnx",
-        100_000,
-    ),
-}
+MODELS_DIR = ROOT / "server" / "models"
 
 
-def sha256_file(path: Path) -> str:
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(65536), b""):
-            h.update(chunk)
-    return h.hexdigest()
-
-
-def sha256_short(path: Path) -> str:
-    return sha256_file(path)[:16]
-
-
-def download(
-    name: str,
-    spec: tuple[str, int],
-    expected_sha_prefix: str | None = None,
-    models_dir: Path = MODELS_DIR,
-) -> bool:
-    url, min_bytes = spec
+def download(entry: dict, models_dir: Path) -> bool:
+    name, url, expected, min_bytes = entry["file"], entry["source_url"], entry["sha256"], int(entry["min_bytes"])
     dst = models_dir / name
-    if dst.exists() and dst.stat().st_size >= min_bytes:
-        digest_full = sha256_file(dst)
-        if expected_sha_prefix and not digest_full.startswith(expected_sha_prefix):
-            print(f"[loi]  {name} sai checksum ({digest_full[:16]} != {expected_sha_prefix[:16]}*)")
+    if dst.exists():
+        digest = sha256_file(dst)
+        if digest != expected:
+            print(f"[loi]  {name} đã có nhưng sai checksum ({digest[:16]}... != {expected[:16]}...), không ghi đè."
+                  f" Xoá file thủ công rồi chạy lại.")
             return False
-        print(f"[ok]   {name} da co (sha256={digest_full[:16]}...)")
+        print(f"[ok]   {name} đã có (sha256 khớp)")
         return True
     print(f"[tai]  {name} ...", end=" ", flush=True)
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": "facegate-v4"})
+        req = urllib.request.Request(url, headers={"User-Agent": "facegate-model-fetch"})
         with urllib.request.urlopen(req, timeout=120) as r:
             data = r.read()
     except Exception as e:  # noqa: BLE001
         print(f"LOI: {e}")
         return False
     if len(data) < min_bytes:
-        print("LOI: file tai ve qua nho (co the la con tro Git LFS)")
+        print("LOI: file tải về quá nhỏ (có thể là con trỏ Git LFS)")
         return False
-    digest_full = hashlib.sha256(data).hexdigest()
-    if expected_sha_prefix and not digest_full.startswith(expected_sha_prefix):
-        print(f"LOI: sai checksum ({digest_full[:16]} != {expected_sha_prefix[:16]}*)")
+    digest = hashlib.sha256(data).hexdigest()
+    if digest != expected:
+        print(f"LOI: sai checksum ({digest[:16]}... != {expected[:16]}...), đã huỷ file")
         return False
-    dst.write_bytes(data)
-    print(f"{len(data) / 1e6:.1f} MB (sha256={digest_full[:16]}...)")
+    # Ghi nguyen tu: file .part roi doi ten -> bi ngat giua chung khong de lai file do dang (lan sau se bi tu choi)
+    tmp = dst.with_name(dst.name + ".part")
+    tmp.write_bytes(data)
+    os.replace(tmp, dst)
+    print(f"{len(data) / 1e6:.1f} MB (sha256 khớp)")
+    return True
+
+
+def verify(entry: dict, models_dir: Path) -> bool:
+    p = models_dir / entry["file"]
+    if not p.exists():
+        print(f"[thieu] {entry['file']}")
+        return False
+    if p.stat().st_size < int(entry["min_bytes"]):
+        print(f"[loi]  {entry['file']} nhỏ hơn min_bytes")
+        return False
+    if sha256_file(p) != entry["sha256"]:
+        print(f"[loi]  {entry['file']} sai checksum")
+        return False
+    print(f"[ok]   {entry['file']} ({p.stat().st_size / 1e6:.2f} MB, {entry['license_weights']})")
     return True
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--onnx", action="store_true", help="tai them model cho backend onnx (chi nghien cuu)")
-    ap.add_argument("--verify-only", action="store_true", help="chi kiem tra su ton tai va in sha256 cua cac model")
+    ap = argparse.ArgumentParser(description="Tải model FaceGate theo server/models/manifest.json")
+    ap.add_argument("--verify-only", action="store_true", help="chỉ kiểm tra tồn tại và SHA-256 đầy đủ")
+    ap.add_argument("--models-dir", default=str(MODELS_DIR))
     args = ap.parse_args()
-    MODELS_DIR.mkdir(parents=True, exist_ok=True)
-    todo = {**OPENCV_MODELS, **V4_COMMERCIAL_MODELS, **LIVENESS_MODELS}
-    if args.onnx:
-        todo.update(ONNX_MODELS)
-    if args.verify_only:
-        ok = True
-        for name, (_, min_b) in todo.items():
-            p = MODELS_DIR / name
-            exp = MODEL_SHA256.get(name)
-            if p.exists() and p.stat().st_size >= min_b:
-                digest_full = sha256_file(p)
-                if exp and not digest_full.startswith(exp):
-                    print(f"[loi]  {name} sai checksum ({digest_full[:16]} != {exp[:16]}*)")
-                    ok = False
-                else:
-                    print(f"[ok]   {name} ({p.stat().st_size / 1e6:.2f} MB, sha256={digest_full[:16]}...)")
-            else:
-                print(f"[thieu] {name}")
-                ok = False
-        for bname in TDDFA_PARAM_FILES:
-            bp = MODELS_DIR / bname
-            if bp.exists() and bp.stat().st_size > 0:
-                print(f"[ok]   {bname} (sha256={sha256_short(bp)}...)")
-        sys.exit(0 if ok else 1)
-    ok = all(download(n, s, expected_sha_prefix=MODEL_SHA256.get(n)) for n, s in todo.items())
+    models_dir = Path(args.models_dir)
+    models_dir.mkdir(parents=True, exist_ok=True)
+    # Thu muc dich moi (vd --models-dir tren may trien khai) chua co manifest -> dung manifest cua repo va chep sang,
+    # vi runtime (license_guard) doc manifest.json tu chinh thu muc model.
+    repo_manifest = MODELS_DIR / "manifest.json"
+    if not (models_dir / "manifest.json").exists() and repo_manifest.exists() and not args.verify_only:
+        shutil.copy2(repo_manifest, models_dir / "manifest.json")
+        print(f"[manifest] chép {repo_manifest} -> {models_dir}")
+    try:
+        manifest = load_manifest(models_dir)
+    except LicenseError as e:
+        print(e)
+        sys.exit(1)
+    entries = [m for m in manifest["models"] if is_commercial_ok(manifest, m)]
+    skipped = [m["file"] for m in manifest["models"] if not is_commercial_ok(manifest, m)]
+    for name in skipped:
+        print(f"[bo qua] {name}: không được phép thương mại theo manifest")
+    fn = verify if args.verify_only else download
+    ok = all([fn(m, models_dir) for m in entries])
     if not ok:
-        print("\nMot so model tai that bai. Tai thu cong bang trinh duyet tu cac link tren")
-        print(f"va dat vao thu muc: {MODELS_DIR}")
+        if not args.verify_only:
+            print("\nMột số model tải thất bại. Tải thủ công từ source_url trong server/models/manifest.json")
+            print(f"và đặt vào thư mục: {models_dir}")
         sys.exit(1)
     print("\nXong.")
 

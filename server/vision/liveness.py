@@ -12,6 +12,8 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from .license_guard import require
+
 log = logging.getLogger("liveness")
 
 MODELS = (("MiniFASNetV2.onnx", 2.7), ("MiniFASNetV1SE.onnx", 4.0))
@@ -30,12 +32,15 @@ def _crop(img: np.ndarray, bbox: np.ndarray, scale: float) -> np.ndarray:
 
 
 class Liveness:
-    def __init__(self, models_dir: Path):
+    def __init__(self, models_dir: Path, cfg: dict | None = None):
         import onnxruntime as ort
 
+        models_dir = Path(models_dir)
         missing = [n for n, _ in MODELS if not (models_dir / n).exists()]
         if missing:
             raise FileNotFoundError(f"Thieu model chong gia mao {missing}. Chay: python server/scripts/download_models.py")
+        for n, _ in MODELS:
+            require(cfg, n, models_dir)
         so = ort.SessionOptions()
         so.log_severity_level = 3
         self.sessions = [(ort.InferenceSession(str(models_dir / n), so, providers=["CPUExecutionProvider"]), sc)
@@ -57,4 +62,4 @@ def create_liveness(cfg: dict) -> Liveness | None:
     if not lc.get("enabled", False):
         log.warning("Chong gia mao dang TAT (liveness.enabled=false): anh/man hinh dien thoai co the duoc cham cong")
         return None
-    return Liveness(cfg["_paths"]["models"])
+    return Liveness(cfg["_paths"]["models"], cfg=cfg)

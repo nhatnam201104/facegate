@@ -8,6 +8,8 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from .license_guard import require
+
 log = logging.getLogger("context")
 
 COCO_PERSON = 0
@@ -130,11 +132,13 @@ class ContextDetector:
     MODEL_FILE = "yolox_nano_coco.onnx"
 
     def __init__(self, models_dir: Path, person_conf: float = 0.45, medium_conf: float = 0.35,
-                 providers: list[str] | None = None):
+                 providers: list[str] | None = None, cfg: dict | None = None):
         import onnxruntime as ort
+        models_dir = Path(models_dir)
         model_path = models_dir / self.MODEL_FILE
         if not model_path.exists():
             raise FileNotFoundError(f"Thieu model {self.MODEL_FILE}")
+        require(cfg, self.MODEL_FILE, models_dir)
         so = ort.SessionOptions()
         so.log_severity_level = 3
         self.session = ort.InferenceSession(str(model_path), so, providers=providers or ["CPUExecutionProvider"])
@@ -205,4 +209,5 @@ def create_context_detector(cfg: dict) -> ContextDetector | None:
         models_dir,
         person_conf=float(lc.get("person_conf", 0.45)),
         medium_conf=float(lc.get("medium_conf", 0.35)),
+        cfg=cfg,
     )

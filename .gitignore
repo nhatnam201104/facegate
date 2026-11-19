@@ -9,6 +9,12 @@ data/
 
 # Model tai bang setup.sh / setup.bat / scripts/download_models.py
 server/models/*.onnx
+# Feature 002: chặn commit lại model/dữ liệu phi thương mại (EdgeFace, 3DDFA_V2/BFM, InsightFace)
+server/models/tddfa_*
+*edgeface*
+*3ddfa*
+*w600k*
+*scrfd*
 models/*.onnx
 models/*.bin
 
@@ -20,6 +26,8 @@ models/*.bin
 *.tmp
 *.log
 .ua/
-.specify/
-specs/
+.specify/*
+
+specs/*
+
 deploy/

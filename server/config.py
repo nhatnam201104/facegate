@@ -24,7 +24,7 @@ def _apply_v4_defaults(cfg: dict) -> dict:
     cam["overlay_offset_ms"] = float(cam.get("overlay_offset_ms", 0.0))
 
     pl = cfg.setdefault("pipeline", {})
-    pl.setdefault("backend", "edgeface")
+    pl.setdefault("backend", "opencv")
     pl.setdefault("execution_provider", "cpu")
     pl["detect_fps"] = _clamp(pl.get("detect_fps", 6.0), 0.5, 30.0)
     pl["det_score"] = _clamp(pl.get("det_score", 0.55), 0.2, 0.99)
@@ -51,13 +51,19 @@ def _apply_v4_defaults(cfg: dict) -> dict:
     q.setdefault("max_pitch", 35)
     q.setdefault("max_roll", 35)
 
+    # Feature 002: kiem tra giay phep model + uoc luong tu the dau sach giay phep
+    lic = cfg.setdefault("license", {})
+    lic["research_mode"] = bool(lic.get("research_mode", False))
+    pose_cfg = cfg.setdefault("pose", {})
+    pose_cfg.setdefault("engine", "pnp5")
+    pose_cfg["max_reliable_yaw"] = _clamp(pose_cfg.get("max_reliable_yaw", 60.0), 20.0, 90.0)
+    pose_cfg["ema_tau_sec"] = _clamp(pose_cfg.get("ema_tau_sec", 0.3), 0.0, 5.0)
+
     rc = cfg.setdefault("recognition", {})
     rc.setdefault("frontal_max_yaw", 40)
     rc.setdefault("pose_hysteresis", 5)
     thrs = rc.setdefault("thresholds", {})
-    thrs.setdefault("edgeface", {"frontal": 0.40, "profile": 0.46})
     thrs.setdefault("opencv", {"frontal": 0.42, "profile": 0.48})
-    thrs.setdefault("onnx", {"frontal": 0.40, "profile": 0.46})
     rc.setdefault("margin", 0.06)
     rc.setdefault("profile_margin", 0.08)
     rc.setdefault("min_good_frames", 2)
@@ -113,8 +119,8 @@ def _apply_v4_defaults(cfg: dict) -> dict:
     enr.setdefault("keep_video", False)
     gd = enr.setdefault("guided", {})
     gd.setdefault("enable_profile_90", True)
-    gd.setdefault("profile_yaw_min", 65.0)
-    gd.setdefault("profile_yaw_max", 88.0)
+    gd.setdefault("profile_yaw_min", 45.0)
+    gd.setdefault("profile_yaw_max", 60.0)
 
     aud = cfg.setdefault("audit_and_safety", {})
     aud["profile_audit_sample_rate"] = _clamp(aud.get("profile_audit_sample_rate", 0.05), 0.0, 1.0)
@@ -124,7 +130,7 @@ def _apply_v4_defaults(cfg: dict) -> dict:
 
     ap_cfg = cfg.setdefault("audio_prompt", {})
     ap_cfg["enabled"] = bool(ap_cfg.get("enabled", True))
-    ap_cfg.setdefault("backend", "tapo")
+    ap_cfg.setdefault("backend", "web")
     ap_cfg.setdefault("host", "")
     ap_cfg.setdefault("user", "admin")
     ap_cfg.setdefault("password", "")

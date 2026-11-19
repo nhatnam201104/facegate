@@ -28,7 +28,9 @@ def wilson_upper_95(errors: int, total: int) -> float:
     return round(min(1.0, (center + rad) / denom), 6)
 
 
-def pairwise_impostor_far(embeddings_by_subject: dict[str, list[np.ndarray]], threshold: float) -> dict:
+def pairwise_impostor_far(embeddings_by_subject: dict[str, list[np.ndarray]], threshold: float,
+                          groups_by_subject: dict[str, list[str]] | None = None,
+                          threshold_by_group: dict[str, float] | None = None) -> dict:
     """Ghep cheo moi cap khac nguoi (H12a) de tao hang nghin cap impostor do FAR muc embedding."""
     subjects = sorted(k for k, v in embeddings_by_subject.items() if k and len(v) > 0)
     total_pairs = 0
@@ -39,7 +41,16 @@ def pairwise_impostor_far(embeddings_by_subject: dict[str, list[np.ndarray]], th
             m2 = np.stack(embeddings_by_subject[s2]).astype(np.float32)
             sims = m1 @ m2.T
             total_pairs += int(sims.size)
-            false_accepts += int(np.sum(sims >= threshold))
+            if groups_by_subject and threshold_by_group:
+                # Cap impostor doi xung (ben nao cung co the la probe) -> lay nguong THAP hon cua 2 nhom:
+                # khong phu thuoc thu tu sap xep subject va cho FAR than trong (bi quan)
+                g1 = groups_by_subject.get(s1) or ["frontal"] * m1.shape[0]
+                g2 = groups_by_subject.get(s2) or ["frontal"] * m2.shape[0]
+                t1 = np.array([threshold_by_group.get(g, threshold) for g in g1], dtype=np.float32)[:, None]
+                t2 = np.array([threshold_by_group.get(g, threshold) for g in g2], dtype=np.float32)[None, :]
+                false_accepts += int(np.sum(sims >= np.minimum(t1, t2)))
+            else:
+                false_accepts += int(np.sum(sims >= threshold))
     rate = (false_accepts / total_pairs) if total_pairs else 0.0
     return {
         "impostor_pairs": total_pairs,
@@ -190,6 +201,7 @@ def replay_sessions_stateful(
     crossing_sessions_total = 0
     crossing_false_checkins = 0
     session_details: list[dict] = []
+    checkin_latencies: list[float] = []
 
     for sid, s_rows in sessions.items():
         s_rows = sorted(s_rows, key=lambda x: int(x.get("frame_idx", 0)))
@@ -201,6 +213,8 @@ def replay_sessions_stateful(
 
         tracker = IoUTracker(max_age=2.0, crossing_face_iou=0.25, crossing_person_iou=0.40)
         committed_codes: list[str] = []
+        first_face_ts: float | None = None
+        commit_ts: float | None = None
         spoof_flagged = False
         had_identified_locked = False
 
@@ -222,6 +236,8 @@ def replay_sessions_stateful(
             scene = ContextScene(persons=pboxes, mediums=mboxes) if has_scene_data else None
 
             raw_faces = r.get("faces") or []
+            if raw_faces and first_face_ts is None:
+                first_face_ts = now_sec
             det_faces: list[Face] = []
             for fi, fd in enumerate(raw_faces):
                 bb = fd.get("bbox")
@@ -313,6 +329,8 @@ def replay_sessions_stateful(
                     acc.mark_committed()
                     t.event_done = True
                     committed_codes.append(t.code)
+                    if commit_ts is None and (not allowed_subjects or t.code in allowed_subjects):
+                        commit_ts = now_sec
 
         if gt == "spoof":
             # Mot phien spoof bi coi la LOT (attack passed) neu he thong phat checkin HOAC vuot qua liveness ma khong bi chan
@@ -329,6 +347,8 @@ def replay_sessions_stateful(
                     crossing_false_checkins += 1
             if allowed_subjects and any(c in allowed_subjects for c in committed_codes):
                 bonafide_checkin_correct += 1
+                if commit_ts is not None and first_face_ts is not None:
+                    checkin_latencies.append(max(0.0, commit_ts - first_face_ts))
             elif spoof_flagged or had_identified_locked:
                 bonafide_rejected_by_liveness += 1
         elif gt == "stranger":
@@ -381,6 +401,12 @@ def replay_sessions_stateful(
             "crossing_sessions": crossing_sessions_total,
             "id_switch_false_checkins": crossing_false_checkins,
         },
+        "checkin_latency_s": {
+            "n": len(checkin_latencies),
+            "mean": round(float(np.mean(checkin_latencies)), 3) if checkin_latencies else None,
+            "p50": round(float(np.percentile(checkin_latencies, 50)), 3) if checkin_latencies else None,
+            "p90": round(float(np.percentile(checkin_latencies, 90)), 3) if checkin_latencies else None,
+        },
         "iso_30107_3_track_level": {
             "apcer_by_pai": track_apcer_by_pai,
             "bpcer": {
@@ -394,9 +420,21 @@ def replay_sessions_stateful(
     }
 
 
-def evaluate_observations(obs_path: Path, threshold: float = 0.42, fas_threshold: float = 0.70) -> dict:
-    rows = [json.loads(line) for line in obs_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+def evaluate_observations(obs_path: Path, threshold: float = 0.42, fas_threshold: float = 0.70,
+                          threshold_frontal: float | None = None, threshold_profile: float | None = None,
+                          rows: list[dict] | None = None) -> dict:
+    """threshold_frontal/threshold_profile (feature 002, T039) mac dinh = threshold.
+
+    LUU Y: nguong cos chi tac dong chi so CAP KHUNG (embedding_far, frr_by_yaw_band). Quyet dinh cap su kien
+    (event_far/event_frr/latency) do bo tich luy LLR quyet (decision.llr_weights, tau_threshold) -> dung --calibrate-llr.
+    """
+    thr_f = float(threshold if threshold_frontal is None else threshold_frontal)
+    thr_p = float(threshold if threshold_profile is None else threshold_profile)
+    thr_by_group = {"frontal": thr_f, "left_profile": thr_p, "right_profile": thr_p}
+    if rows is None:
+        rows = [json.loads(line) for line in obs_path.read_text(encoding="utf-8").splitlines() if line.strip()]
     embs_by_subj: dict[str, list[np.ndarray]] = {}
+    grps_by_subj: dict[str, list[str]] = {}
     pai_trials: dict[str, list[bool]] = {}   # True = spoof accepted (attack passed)
     bonafide_trials: list[bool] = []         # True = bonafide rejected by liveness
     blur_by_layout: dict[str, list[float]] = {}
@@ -417,6 +455,8 @@ def evaluate_observations(obs_path: Path, threshold: float = 0.42, fas_threshold
             if vec.size > 0 and gt == "bonafide" and subj:
                 norm = np.linalg.norm(vec) + 1e-9
                 embs_by_subj.setdefault(subj, []).append(vec / norm)
+                fyaw = float(f.get("yaw", q.get("yaw", 0.0)))
+                grps_by_subj.setdefault(subj, []).append(_infer_pose_group(fyaw, f.get("pose_group"), frontal_max=40.0))
             fas = f.get("fas_prob")
             if fas is not None:
                 if gt == "spoof":
@@ -438,7 +478,7 @@ def evaluate_observations(obs_path: Path, threshold: float = 0.42, fas_threshold
     bp_err = sum(1 for x in bonafide_trials if x)
     bp_n = len(bonafide_trials)
     # Danh gia FRR & chuan bi mau calibrate LLR 4 tham so khop Gallery.all_employee_similarities theo pose_group (T042)
-    frr_by_band = {"frontal_le40": [0, 0], "profile_gt40": [0, 0]}
+    frr_by_band = {"frontal_le40": [0, 0], "profile_gt40": [0, 0], "yaw_40_60": [0, 0], "yaw_gt60": [0, 0]}
     llr_samples: list[tuple[float, float, float, int]] = []
     gallery_refs_path = obs_path.parent / "gallery_refs.json"
     code_to_id, id_to_code, ref_entries = _build_reference_bank(rows, gallery_refs_path=gallery_refs_path, frontal_max=40.0)
@@ -452,7 +492,7 @@ def evaluate_observations(obs_path: Path, threshold: float = 0.42, fas_threshold
                 continue
             vec = vec / (np.linalg.norm(vec) + 1e-9)
             q = f.get("quality", {})
-            yaw = float(q.get("yaw", f.get("yaw", 0.0)))
+            yaw = float(f.get("yaw", q.get("yaw", 0.0)))  # cung thu tu uu tien voi vong embs_by_subj
             q_score = float(q.get("score", 0.8))
             pose_grp = _infer_pose_group(yaw, f.get("pose_group"), frontal_max=40.0)
             band = "frontal_le40" if abs(yaw) <= 40.0 else "profile_gt40"
@@ -462,9 +502,14 @@ def evaluate_observations(obs_path: Path, threshold: float = 0.42, fas_threshold
                 own_eid = code_to_id[subj]
                 if own_eid in sims_by_eid:
                     sim_pos = sims_by_eid[own_eid]
-                    frr_by_band[band][1] += 1
-                    if sim_pos < threshold:
-                        frr_by_band[band][0] += 1
+                    thr_here = thr_by_group.get(pose_grp, thr_f)
+                    fine = None if abs(yaw) <= 40.0 else ("yaw_40_60" if abs(yaw) <= 60.0 else "yaw_gt60")
+                    for b in (band, fine):
+                        if b is None:
+                            continue
+                        frr_by_band[b][1] += 1
+                        if sim_pos < thr_here:
+                            frr_by_band[b][0] += 1
                     llr_samples.append((sim_pos, yaw, q_score, 1))
                 neg_sims = [s for eid, s in sims_by_eid.items() if eid != own_eid]
                 if neg_sims:
@@ -501,7 +546,9 @@ def evaluate_observations(obs_path: Path, threshold: float = 0.42, fas_threshold
         "infer_ms_p90": round(float(np.percentile(infer_ms, 90)), 2) if infer_ms else 0.0,
         "blur_median_by_layout": {k: round(float(np.median(v)), 2) for k, v in blur_by_layout.items() if v},
         "face_width_median_by_layout": {k: round(float(np.median(v)), 1) for k, v in face_widths_by_layout.items() if v},
-        "embedding_far": pairwise_impostor_far(embs_by_subj, threshold=threshold),
+        "thresholds": {"frontal": thr_f, "profile": thr_p},
+        "embedding_far": pairwise_impostor_far(embs_by_subj, threshold=thr_f, groups_by_subject=grps_by_subj,
+                                               threshold_by_group=thr_by_group),
         "frr_by_yaw_band": {
             b: {
                 "trials": tot,
@@ -603,10 +650,55 @@ def render_k0_5_markdown_summary(report: dict, bundle_dir: Path) -> str:
     return "\n".join(lines)
 
 
+def _parse_grid(spec: str) -> list[float]:
+    lo, hi, step = (float(x) for x in spec.split(":"))
+    n = int(round((hi - lo) / step)) + 1
+    return [round(lo + i * step, 4) for i in range(max(1, n))]
+
+
+def sweep_thresholds(obs_path: Path, grid: list[float], fas_threshold: float = 0.70) -> list[dict]:
+    """Quet cap (frontal, profile) tren luoi (feature 002, T039/T026). Tra ve moi dong 1 cap nguong."""
+    rows = [json.loads(line) for line in obs_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    out = []
+    for tf in grid:
+        for tp in grid:
+            rep = evaluate_observations(obs_path, threshold=tf, fas_threshold=fas_threshold,
+                                        threshold_frontal=tf, threshold_profile=tp, rows=rows)
+            trk, band = rep["track_level"], rep["frr_by_yaw_band"]
+            out.append({
+                "frontal": tf, "profile": tp,
+                "embedding_far": rep["embedding_far"].get("far_point"),
+                "frr_yaw_le40": band["frontal_le40"]["frr"],
+                "frr_yaw_40_60": band["yaw_40_60"]["frr"],
+                "frr_yaw_gt60": band["yaw_gt60"]["frr"],
+                "event_frr": trk["event_frr"]["frr"],
+                "false_checkins": trk["event_far"]["false_checkins"],
+                "far_ci95_upper": trk["event_far"]["far_ci95_upper"],
+                "id_switch_false_checkins": trk["crossing_quarantine"]["id_switch_false_checkins"],
+                "latency_p90": trk["checkin_latency_s"]["p90"],
+            })
+    return out
+
+
+def render_sweep_markdown(rows: list[dict]) -> str:
+    cols = ["frontal", "profile", "embedding_far", "frr_yaw_le40", "frr_yaw_40_60", "frr_yaw_gt60",
+            "event_frr", "false_checkins", "far_ci95_upper", "id_switch_false_checkins", "latency_p90"]
+    lines = ["| " + " | ".join(cols) + " |", "|" + "---|" * len(cols)]
+    for r in rows:
+        lines.append("| " + " | ".join("" if r.get(c) is None else str(r.get(c)) for c in cols) + " |")
+    lines.append("")
+    lines.append("> Nguong cos chi doi cac cot cap khung (embedding_far, frr_yaw_*). Cac cot cap su kien "
+                 "(event_frr, false_checkins, latency_p90) do LLR quyet -> hieu chinh bang --calibrate-llr.")
+    return "\n".join(lines)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Chay Replay ngoai tuyen (Frame + Track-level) tren goi K0")
     ap.add_argument("bundle_dir", help="Thu muc chua observations.jsonl")
     ap.add_argument("--threshold", type=float, default=0.42)
+    ap.add_argument("--threshold-frontal", type=float, default=None, help="Nguong cos nhom frontal (mac dinh = --threshold)")
+    ap.add_argument("--threshold-profile", type=float, default=None, help="Nguong cos nhom profile (mac dinh = --threshold)")
+    ap.add_argument("--sweep", default="", help="Quet luoi 'lo:hi:step' cho ca frontal va profile, vd 0.30:0.60:0.01")
     ap.add_argument("--fas-threshold", type=float, default=0.70)
     ap.add_argument("--calibrate-llr", action="store_true", help="Fit LLR 4 tham so dong bo Gallery pose_group")
     ap.add_argument("--out", default="", help="Duong dan ghi JSON ket qua")
@@ -615,7 +707,17 @@ def main() -> None:
     bundle = Path(args.bundle_dir)
     obs = bundle / "observations.jsonl"
     evaluate_observations._calibrate_llr = bool(args.calibrate_llr)
-    report = evaluate_observations(obs, threshold=args.threshold, fas_threshold=args.fas_threshold)
+    if args.sweep:
+        rows = sweep_thresholds(obs, _parse_grid(args.sweep), fas_threshold=args.fas_threshold)
+        if args.out:
+            Path(args.out).write_text(json.dumps(rows, indent=2, ensure_ascii=False), encoding="utf-8")
+        md = render_sweep_markdown(rows)
+        if args.report_md:
+            Path(args.report_md).write_text(md, encoding="utf-8")
+        print(md)
+        return
+    report = evaluate_observations(obs, threshold=args.threshold, fas_threshold=args.fas_threshold,
+                                   threshold_frontal=args.threshold_frontal, threshold_profile=args.threshold_profile)
     txt = json.dumps(report, indent=2, ensure_ascii=False)
     if args.out:
         Path(args.out).write_text(txt, encoding="utf-8")

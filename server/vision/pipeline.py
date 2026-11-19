@@ -353,14 +353,20 @@ class Pipeline:
     def _update_track(self, t: Track, f: Face, frame: np.ndarray, now: float, scene=None,
                       prev_meta: tuple[float, float] | None = None) -> None:
         pose = (
-            self.pose.estimate(frame, f, prev_group=t.pose_group if t.hits > 1 else None)
+            self.pose.estimate(frame, f, prev_group=t.pose_group if t.hits > 1 else None, track_id=t.id, ts=now)
             if self.pose is not None else None
         )
         q = assess(frame, f, self.qcfg, pose=pose)
         t.last_reason = q.reason
+        # Feature 002: |yaw| vuot pose.max_reliable_yaw hoac PnP that bai -> khong lay khung nay lam bang chung danh tinh
+        # (Hien phap II: Unknown thay vi doan). Van theo doi track va hien goi y nhin vao camera.
+        pose_ok = pose is None or getattr(pose, "pose_reliable", True)
+        if q.ok and not pose_ok:
+            t.last_reason = "pose_unreliable"
         if pose is not None:
-            t.pose_group, t.last_yaw = pose.pose_group, pose.yaw
-            t.min_abs_yaw = min(t.min_abs_yaw, abs(pose.yaw))
+            # t.last_yaw la yaw THO: dung cho min_abs_yaw/ledger va hien thi, khong dung ban EMA cua pose.yaw
+            t.pose_group, t.last_yaw = pose.pose_group, pose.gate_yaw()
+            t.min_abs_yaw = min(t.min_abs_yaw, abs(pose.gate_yaw()))
         ctx_eval = None
         if scene is not None:
             from .context_detector import evaluate_face_context
@@ -376,7 +382,7 @@ class Pipeline:
             else:
                 t.unattached_streak = 0
 
-        if q.ok and not t.crossing_active and not t.spoof:
+        if q.ok and pose_ok and not t.crossing_active and not t.spoof:
             with self.engine_lock:
                 aligned = (
                     self.engine.align(frame, f, pose=pose, pose_group=pose.pose_group if pose is not None else None)
@@ -393,7 +399,7 @@ class Pipeline:
                 self._on_track_end(t)
                 t = self.tracker.split(t, f, now)
                 if pose is not None:
-                    t.pose_group, t.last_yaw, t.min_abs_yaw = pose.pose_group, pose.yaw, abs(pose.yaw)
+                    t.pose_group, t.last_yaw, t.min_abs_yaw = pose.pose_group, pose.gate_yaw(), abs(pose.gate_yaw())
                 t.last_reason = q.reason
                 if ctx_eval is not None and ctx_eval["spoof_reason"] == "unattached_face":
                     t.unattached_streak = 1
@@ -437,9 +443,11 @@ class Pipeline:
             t.best_crop = crop_with_margin(frame, f.bbox)
 
         body_coupled = ctx_eval["body_coupled"] if ctx_eval is not None else False
+        # Cong liveness/LLR dung yaw THO (q.yaw sau khi sua quality.assess); prompter/overlay dung EMA
         state = self._live_state(t, yaw=q.yaw, body_coupled=body_coupled)
         if self.look_prompter is not None:
-            self.look_prompter.update(t.id, now, q.yaw, state, spoof=t.spoof, event_done=t.event_done)
+            self.look_prompter.update(t.id, now, pose.yaw if pose is not None else q.yaw, state,
+                                      spoof=t.spoof, event_done=t.event_done)
         if t.decision_acc is not None:
             t.decision_acc.apply_liveness(state)
         if state == "spoof" and not t.event_done:
@@ -536,6 +544,8 @@ class Pipeline:
         return "IN" if going_down == down_is_in else "OUT"
 
     def _on_track_end(self, t: Track) -> None:
+        if self.pose is not None and hasattr(self.pose, "forget"):
+            self.pose.forget(t.id)
         if self.look_prompter is not None:
             self.look_prompter.forget(t.id)
         if t.spoof:
@@ -701,4 +711,5 @@ class Pipeline:
                 "direction": self.ecfg.get("direction"), "hrm": self.hrm.kind}
 
 
-_REASON = {"small": "mặt nhỏ", "blur": "mờ", "light": "ánh sáng", "yaw": "quay ngang", "cut": "bị cắt"}
+_REASON = {"small": "mặt nhỏ", "blur": "mờ", "light": "ánh sáng", "yaw": "quay ngang", "cut": "bị cắt",
+           "pose_unreliable": "quay quá nghiêng, hãy nhìn vào camera"}
