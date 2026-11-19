@@ -1,0 +1,144 @@
+# Ke hoach Ca Quay Thuc dia Pha K0 Chuan Hoa (Tapo C310 / RTSP / Video File)
+# Dung voi: python scripts/k0_field_runner.py --plan deploy/k0_session_plan.yaml --source rtsp://127.0.0.1:8554/gate1_main
+#
+# Moi muc trong `sessions` co the lap lai theo `repeats` hoac theo danh sach `subjects`.
+# Phien nao da co file `manifests/<session_id>.json` se duoc tu dong BO QUA (an toan khi ngat quang giua chung).
+
+bundle_dir: data/k0_bundle
+default_lux: 300.0
+default_mode: day_mode
+default_capture_seconds: 8.0
+default_max_frames: 300
+delete_raw_after_extract: false
+
+# Danh sach tinh nguyen vien tham gia (thay bang ma nhan vien that da dang ky trong Gallery + ma don dong y H11)
+volunteers:
+  - code: NV001
+    consent_ref: FG-CONSENT-K0-NV001
+  - code: NV002
+    consent_ref: FG-CONSENT-K0-NV002
+
+# Ma don dong y cho tinh nguyen vien dong vai nguoi la (chua dang ky trong Gallery)
+stranger_consents:
+  - FG-CONSENT-K0-STRANGER-01
+  - FG-CONSENT-K0-STRANGER-02
+
+sessions:
+  # --- NHOM 1: Nguoi that (Bonafide) tren Bo cuc Di Thang (frontal_corridor, +-40 do) ---
+  - id_prefix: bf_frontal_2m
+    title: "Nhan vien di thang tu nhien nhin ve phia cong (cu ly 2.0m, >=300 lux)"
+    layout: frontal_corridor
+    label: bonafide
+    scenario: walk_frontal
+    distance_m: 2.0
+    lux: 300.0
+    capture_seconds: 7.0
+    per_volunteer: true
+    repeats: 2
+
+  - id_prefix: bf_frontal_close
+    title: "Nhan vien dung gan 1.4m bi cat vai sat mep duoi khung hinh (kiem tra viewport_bottom_grace)"
+    layout: frontal_corridor
+    label: bonafide
+    scenario: close_truncated
+    distance_m: 1.4
+    lux: 300.0
+    capture_seconds: 6.0
+    per_volunteer: true
+    repeats: 1
+
+  # --- NHOM 2: Nguoi that (Bonafide) tren Bo cuc Di Ngang (side_walk, +-90 do) ---
+  - id_prefix: bf_side_2m
+    title: "Nhan vien di ngang tu do khong dung lai (cu ly 2.2m, kiem tra LLR goc nghieng & blur)"
+    layout: side_walk
+    label: bonafide
+    scenario: walk_side
+    distance_m: 2.2
+    lux: 300.0
+    capture_seconds: 7.0
+    per_volunteer: true
+    repeats: 2
+
+  - id_prefix: bf_backlight
+    title: "Nhan vien buoc tu vung nguoc sang cua ra vao (~120 lux) tien vao vung den cong"
+    layout: frontal_corridor
+    label: bonafide
+    scenario: backlight
+    distance_m: 2.0
+    lux: 120.0
+    capture_seconds: 8.0
+    per_volunteer: true
+    repeats: 1
+
+  # --- NHOM 3: Hai nguoi mac dong phuc di giao cat / noi duoi (Crossing Quarantine H3) ---
+  - id_prefix: bf_crossing_pair
+    title: "2 nhan vien mac dong phuc di luot cheo / noi duoi cach 0.8m (kiem tra 0 ID-Switch)"
+    layout: side_walk
+    label: bonafide
+    scenario: crossing
+    distance_m: 2.2
+    lux: 300.0
+    capture_seconds: 9.0
+    pair_volunteers: true
+    repeats: 3
+
+  # --- NHOM 4: Nguoi la ngoai doi thuc (Open-Set Stranger -> do Event FAR & Calibrate LLR) ---
+  - id_prefix: stranger_walk
+    title: "Nguoi chua dang ky trong he thong di qua cong (kiem tra Open-Set threshold + margin)"
+    layout: frontal_corridor
+    label: stranger
+    scenario: walk_frontal
+    distance_m: 2.0
+    lux: 300.0
+    capture_seconds: 7.0
+    use_stranger_consents: true
+    repeats: 3
+
+  # --- NHOM 5: Tan cong Gia mao theo chuan ISO/IEC 30107-3 (4 loai PAI, tang repeats len >=5-20 khi nghiem thu chinh thuc) ---
+  - id_prefix: pai_print
+    title: "PAI 1 - Anh in mau giay A4 cua nhan vien giu truoc nguc/mat o nhieu goc"
+    layout: frontal_corridor
+    label: spoof
+    pai_type: print
+    scenario: pai_attack
+    distance_m: 1.8
+    lux: 300.0
+    capture_seconds: 7.0
+    per_volunteer: true
+    repeats: 5
+
+  - id_prefix: pai_phone_photo
+    title: "PAI 2 - Anh chan dung do phan giai cao mo tren man hinh dien thoai OLED"
+    layout: frontal_corridor
+    label: spoof
+    pai_type: phone_photo
+    scenario: pai_attack
+    distance_m: 1.8
+    lux: 300.0
+    capture_seconds: 7.0
+    per_volunteer: true
+    repeats: 5
+
+  - id_prefix: pai_phone_video
+    title: "PAI 3 - Video quay san khuon mat nhan vien dang chop mat phat tren dien thoai"
+    layout: frontal_corridor
+    label: spoof
+    pai_type: phone_video
+    scenario: pai_attack
+    distance_m: 1.8
+    lux: 300.0
+    capture_seconds: 7.0
+    per_volunteer: true
+    repeats: 5
+
+  - id_prefix: pai_large_screen
+    title: "PAI 4 - Anh/Video hien thi tren iPad hoac Laptop kho lon dat truoc ong kinh"
+    layout: frontal_corridor
+    label: spoof
+    pai_type: large_screen
+    scenario: pai_attack
+    distance_m: 2.0
+    lux: 300.0
+    capture_seconds: 7.0
+    per_volunteer: true
+    repeats: 5

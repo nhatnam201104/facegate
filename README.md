@@ -1,6 +1,6 @@
 # FaceGate – Hệ thống chấm công khuôn mặt tại cổng (Kiến trúc v4)
 
-**FaceGate** là giải pháp nhận diện khuôn mặt chấm công tại cổng phục vụ phần HRM của dự án *camera nhận diện nhân viên và hàng hóa*. Camera nhận diện nhân viên theo thời gian thực (hỗ trợ đa góc tới **±90°** và tối đa **10 khuôn mặt đồng thời**), kiểm tra người thật chống giả mạo, ghi nhận check-in qua sổ cái bất biến và đồng bộ hai chiều sang HRM (**ERPNext** / mock).
+**FaceGate** là giải pháp nhận diện khuôn mặt chấm công tại cổng phục vụ phần HRM của dự án *camera nhận diện nhân viên và hàng hóa*. Camera nhận diện nhân viên theo thời gian thực (nhận diện đa góc tới khoảng **±60°** và tối đa **10 khuôn mặt đồng thời**), kiểm tra người thật chống giả mạo, ghi nhận check-in qua sổ cái bất biến và đồng bộ hai chiều sang HRM (**ERPNext** / mock).
 
 Hệ thống chạy hoàn toàn trên **CPU phổ thông** (không cần GPU riêng), hỗ trợ triển khai trên **Linux Server** (Ubuntu/Debian — ưu tiên vận hành thực tế với `MediaMTX`, `tmpfs` và `chrony` NTP) lẫn **Windows 10/11** (phát triển và chạy demo). Nguồn video hỗ trợ **TP-Link Tapo C310 / Camera IP (RTSP qua MediaMTX)**, webcam (`/dev/video0` hoặc chỉ số `0`) hoặc file video quay sẵn.
 
@@ -26,10 +26,10 @@ Hệ thống chạy hoàn toàn trên **CPU phổ thông** (không cần GPU ri�
 
 | Hạng mục | Trạng thái |
 |---|---|
-| Nhận diện đa góc tới **±90°** (`YuNet` + `3DDFA_V2` + `EdgeFace-XS`), batch tối đa **10 khuôn mặt** trên CPU | ✅ Đã triển khai |
+| Nhận diện đa góc tới khoảng **±60°** (`YuNet` + ước lượng tư thế `solvePnP` 5 điểm + `SFace`), batch tối đa **10 khuôn mặt** trên CPU. Quá ±60° hệ thống trả `Unknown` và nhắc nhìn vào camera | ✅ Đã triển khai (feature 002) |
 | Báo `"Unknown"` khi không đạt rào cứng kép (`LLR >= tau_threshold` và `margin >= μ(yaw)`), không đoán tên | ✅ Đã triển khai |
 | Chống tráo tên khi đi giao cắt (`Crossing Quarantine`) & ngữ cảnh cơ thể (`YOLOX-Nano` Viewport-Aware) | ✅ Đã triển khai |
-| Đăng ký khuôn mặt có hướng dẫn tới **7 góc** (5 góc chữ thập + 2 góc nghiêng ~80°), tùy chọn WASM soi gương `0 ms`, HR duyệt | ✅ Đã triển khai |
+| Đăng ký khuôn mặt có hướng dẫn tới **7 góc** (5 góc chữ thập + 2 góc nghiêng ~45–60°), tùy chọn WASM soi gương `0 ms`, HR duyệt | ✅ Đã triển khai |
 | Chống giả mạo thụ động (`MiniFASNet V2 + V1SE`) kết hợp phát hiện màn hình/điện thoại (`YOLOX-Nano`) | ✅ Đã triển khai (giảm rủi ro phần mềm) |
 | Media Plane (`MediaMTX` Single RTSP Puller, lọc bỏ âm thanh `-an`, WebRTC WHEP + `<canvas>`, vòng đệm `tmpfs` fMP4) | ✅ Đã triển khai |
 | Clip bằng chứng MP4 H.264 gốc sạch + sidecar `.meta.json` ký `HMAC-SHA256`, xuất MP4 burn-in FFmpeg & khóa `legal_hold` | ✅ Đã triển khai |
@@ -37,7 +37,7 @@ Hệ thống chạy hoàn toàn trên **CPU phổ thông** (không cần GPU ri�
 | Sổ cái chấm công bất biến (`attendance_ledger`), hậu kiểm ngoại lệ 5%, nhập bù dự phòng & đồng bộ ERPNext hai chiều | ✅ Đã triển khai (ERPNext cần thử nghiệm với server thật) |
 | Bảo mật vận hành: mã hóa sinh trắc học `AES-256-GCM`, phân quyền RBAC 3 vai trò (`viewer`/`hr`/`admin`), `audit_logs` & PostgreSQL đa cổng | ✅ Đã triển khai |
 | Số liệu thực địa pha `K0` trên **TP-Link Tapo C310** (FAR/FRR, APCER/BPCER, độ trễ `<canvas>`, tải 10 mặt thực tế) | 🟡 Đã có sẵn công cụ đo (`record_k0_bundle.py`, `replay_eval.py`, `benchmark.py`), cần quay footage hiện trường |
-| Nhận diện hàng hóa / SKU & zone sản xuất (Phase 2) | ⬜ Chưa làm (đã chuẩn hóa schema `TrackedObject` chờ sẵn) |
+| Nhận diện hàng hóa / SKU & zone sản xuất (Phase 2) | 🟡 Đã triển khai và chạy qua test với ERP **giả lập (mock)**; chưa thử ERPNext staging, camera và bao bì thật. Gồm: QR/Barcode (`zxing-cpp` là tùy chọn, mặc định dùng OpenCV) đẩy Draft `Stock Entry`, `Multi-Instance ORB/SIFT RANSAC` *Experimental*, đếm `IN/OUT` qua vạch, `ZoneEngine` hiện diện theo thời gian thực (tắt FaceID nặng, cần model YOLOX-Nano) |
 
 ---
 
@@ -53,22 +53,22 @@ Hệ thống tách khỏi mô hình đơn luồng ban đầu thành **3 Mặt ph
 2. **Perception Process (`app/worker_perception.py`, `app/ipc.py`, `app/decision.py`, `app/tracker.py`)**
    - Có thể chạy trong tiến trình riêng cô lập lỗi (`FACEGATE_ISOLATED_WORKER=1`), giao tiếp NDJSON qua Unix Domain Socket / TCP theo schema `TrackedObject` (dùng chung cho cả Phase 2 SKU).
    - Áp dụng **Lịch thức theo ca** (`power.active_windows`) giữ nóng giải mã `/stream1` (`0 ms` chờ keyframe GOP) trong giờ cao điểm và chuyển chế độ chờ canh chuyển động vùng cửa ngoài giờ.
-   - **Two-Stage ROI 1:1**: Thu nhỏ khung `/stream1` (`2304×1296`) về `640px` dùng **`YOLOX-Nano`** (Apache-2.0) tìm vùng người, sau đó cắt vùng Đầu–Vai tỷ lệ **1:1 ngay trên khung 3MP gốc** đưa vào **`YuNet`** (Apache-2.0) → **`3DDFA_V2`** (MIT, ước lượng góc 3D ±90°) → **`EdgeFace-XS`** (MIT, batch tới 10 mặt trên `CPUExecutionProvider` hoặc tùy chọn `OpenVINOExecutionProvider`) → **`MiniFASNet V2 + V1SE`** (Apache-2.0).
+   - **Two-Stage ROI 1:1**: Thu nhỏ khung `/stream1` (`2304×1296`) về `640px` dùng **`YOLOX-Nano`** (Apache-2.0) tìm vùng người, sau đó cắt vùng Đầu–Vai tỷ lệ **1:1 ngay trên khung 3MP gốc** đưa vào **`YuNet`** (MIT) → ước lượng tư thế **`solvePnP` 5 điểm** (OpenCV, mô hình 3D tự định nghĩa, tin cậy tới ~±60°) → **`SFace`** (Apache-2.0) → **`MiniFASNet V2 + V1SE`** (Apache-2.0).
    - **Lõi quyết định liên tục**: Tích lũy điểm `LLR` 4 tham số có **Novelty Gate** ($\Delta t \ge 250\text{ ms}$ hoặc $|\Delta\text{yaw}| \ge 8^\circ$), giữ nguyên rào cứng kép (`tau_threshold` và `margin μ(yaw)` siết chặt theo góc nghiêng), `Crossing Quarantine` chống tráo tên khi đi giao cắt và `Viewport-Aware Context` miễn phạt cắt vai ở đáy khung hình. Cấm tuyệt đối `auto_enroll_online`.
 3. **Control & Business Plane (`app/main.py`, `app/ledger.py`, `app/records.py`, `app/security.py`, `app/hrm.py`, `app/db.py`)**
    - **Sổ cái bất biến `attendance_ledger`** (`checkin_created`, `checkin_revoked`, `checkin_manual`) có `idempotency_key`, **Audit-by-Exception 5%** (hậu kiểm ca `profile_verified` / sát biên / gần cảnh báo spoof) và đồng bộ tạo/hủy chứng từ hai chiều sang **ERPNext** (`Employee Checkin`).
    - **Fail-safe & Legal Hold**: Endpoint `/api/health` phát hiện mất camera / worker / ffmpeg / đầy đĩa trong `≤ 5 giây`, tự động bật banner nhắc dùng kênh **Chấm công Dự phòng / Nhập bù**; bộ dọn đĩa bảo vệ tuyệt đối clip có `legal_hold = 1`.
    - **Bảo mật & Mở rộng**: Lưu trữ **SQLite WAL** (mặc định 1 cổng) hoặc **PostgreSQL** (`storage.database_url` cho nhiều cổng), mã hóa embedding và ảnh mẫu ở trạng thái nghỉ bằng **`AES-256-GCM`**, phân quyền **RBAC 3 vai trò** (`viewer`, `hr`, `admin`) và nhật ký `audit_logs`.
 
-> Toàn bộ mô hình vận hành mặc định (`YuNet`, `EdgeFace-XS`, `3DDFA_V2`, `YOLOX-Nano`, `MiniFASNet`, `MediaPipe Face Landmarker`) đều dùng giấy phép thương mại hóa được (**Apache-2.0 / MIT**). Backend `onnx` (`SCRFD + ArcFace` của InsightFace) chỉ giữ lại để nghiên cứu/benchmark.
+> Toàn bộ mô hình (`YuNet`, `SFace`, `YOLOX-Nano`, `MiniFASNet`; `MediaPipe Face Landmarker` tùy chọn phía trình duyệt) dùng giấy phép thương mại hóa được (**Apache-2.0 / MIT**) cho cả code lẫn trọng số, được khai báo trong [`server/models/manifest.json`](server/models/manifest.json) và kiểm tra bằng `python server/scripts/license_gate.py`. EdgeFace-XS, 3DDFA_V2 (Basel Face Model) và InsightFace SCRFD/ArcFace **đã bị gỡ** do giấy phép phi thương mại (feature 002). Xem [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md) và [`NOTICE`](NOTICE).
 
 ---
 
 ## Luồng nghiệp vụ
 
 ```
-Nhân viên làm theo hướng dẫn 7 góc (5 chữ thập + 2 nghiêng ~80°, có tùy chọn bổ sung)
-   ─►  HR bấm "Duyệt"  ─►  Nhân viên đi qua cổng  ─►  Two-Stage ROI + EdgeFace-XS + MiniFASNet
+Nhân viên làm theo hướng dẫn 7 góc (5 chữ thập + 2 nghiêng ~45–60°, có tùy chọn bổ sung)
+   ─►  HR bấm "Duyệt"  ─►  Nhân viên đi qua cổng  ─►  Two-Stage ROI + SFace + MiniFASNet
    ─►  Tích lũy LLR + Crossing Quarantine  ─►  Ghi sổ cái (checkin_created)  ─►  Đẩy HRM / ERPNext
 ```
 
@@ -77,7 +77,7 @@ Nhân viên làm theo hướng dẫn 7 góc (5 chữ thập + 2 nghiêng ~80°, 
 - Khi phát hiện giả mạo (ảnh/màn hình/MiniFASNet), hệ thống không chấm công, ghi cảnh báo và tự động gắn `legal_hold = 1` cho clip bằng chứng.
 - Khi xóa nhân viên, dữ liệu sinh trắc học bị xóa và camera ngừng nhận diện ngay (kể cả ở tiến trình worker qua lệnh `reload_gallery`), trong khi lịch sử chấm công và clip vẫn giữ để đối soát.
 
-Giao diện web gồm 6 tab: **Trực tiếp** (WebRTC `<canvas>` / MJPEG + vẽ Vùng cửa), **Chấm công** (bảng công, nhập bù dự phòng, hàng chờ hậu kiểm 5%, thu hồi công), **Lịch sử** (clip MP4/WebM, lớp phủ sidecar, xuất MP4 đóng dấu, khóa `legal_hold`, tải ZIP), **Đăng ký**, **Nhân viên**, và **Sự kiện & đánh giá** (gán nhãn tính FAR/FRR/latency).
+Giao diện web gồm 8 tab: **Trực tiếp** (gạt nhanh 3 chế độ `Chấm công` / `Hàng hóa` / `Khu vực xưởng`, WebRTC `<canvas>` / MJPEG + vẽ Vùng cửa), **Chấm công** (bảng công, nhập bù dự phòng, hàng chờ hậu kiểm 5%, thu hồi công), **Hàng hóa** (đăng ký mẫu SKU, đếm `hold` / vạch `IN–OUT`, đồng bộ `Item` & đẩy Draft `Stock Entry` sang ERPNext), **Khu vực xưởng** (vẽ đa vùng Polygon Zone, theo dõi số người & thời gian hiện diện `dwell_sec` thời gian thực), **Lịch sử** (clip MP4/WebM, lớp phủ sidecar, xuất MP4 đóng dấu, khóa `legal_hold`, tải ZIP), **Đăng ký**, **Nhân viên**, và **Sự kiện & đánh giá** (gán nhãn tính FAR/FRR/latency).
 
 ---
 
@@ -145,7 +145,7 @@ deploy/
   ├── vlan-ntp-chrony.md                     ← trình tự lắp đặt Tapo C310 (RJ45, Day Mode, VLAN + chrony NTP)
   └── consent-template-k0.md                 ← mẫu đơn đồng ý sinh trắc học pha K0
 scripts/
-  ├── download_models.py                     ← tải & kiểm tra SHA-256 bộ model thương mại v4 (+ --onnx để benchmark)
+  ├── download_models.py                     ← tải & kiểm tra SHA-256 đầy đủ các model theo server/models/manifest.json
   ├── benchmark.py                           ← đo tốc độ decode 3MP, ROI, Laplacian blur & batch 10 khuôn mặt (--ten-faces-bench)
   ├── record_k0_bundle.py                    ← thu thập gói dữ liệu thực địa K0 (manifest + observations.jsonl + crops)
   ├── replay_eval.py                         ← đánh giá ngoại tuyến FAR (Wilson CI 95%), APCER/BPCER ISO/IEC 30107-3

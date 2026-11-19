@@ -15,10 +15,9 @@ camera:
   overlay_offset_ms: 0
 
 pipeline:
-  # edgeface : YuNet + 3DDFA_V2 + EdgeFace-XS (Apache-2.0 / MIT) -> mac dinh v4, ho tro +-90 do tren CPU
-  # opencv   : YuNet + SFace (OpenCV Zoo, Apache-2.0)
-  # onnx     : SCRFD-500M + ArcFace MobileFaceNet (InsightFace, CHI dung nghien cuu/benchmark)
-  backend: edgeface
+  # opencv : YuNet (OpenCV Zoo, MIT) + SFace (OpenCV Zoo, Apache-2.0) - backend duy nhat (feature 002)
+  # edgeface / onnx da bi go do giay phep phi thuong mai -> dat gia tri nay se bi tu choi khi khoi dong
+  backend: opencv
   execution_provider: cpu            # cpu | openvino (chi bat sau khi vuot cong Replay K4)
   detect_fps: 6
   det_score: 0.55
@@ -28,13 +27,24 @@ pipeline:
   two_stage_roi: true                # resize chinh frame /stream1 ve 640px tim nguoi -> cat ROI 1:1 tren 3MP
   always_fallback_unmatched: true    # quet bo sung toan khung neu YOLOX miss nguoi thu 2
   fallback_det_width: 1280
+  cv_threads: 2                      # so luong OpenCV (YuNet/SFace); 0 = mac dinh OpenCV (moi loi). Nang 3-4 neu chu ky p90 > 150 ms o 10 mat
+  ort_allow_spinning: false          # true = de luong ONNX Runtime quay vong cho viec (ton ~2 loi/camera, khong nhanh hon ro ret)
+
+license:                   # kiem tra giay phep model theo server/models/manifest.json (feature 002)
+  research_mode: false     # CHI dung noi bo khi dev: true -> loi giay phep model chi canh bao. KHONG BAO GIO bat cho khach hang
+                           # (thieu/hong manifest va backend da go van tu choi khoi dong ke ca khi true)
+
+pose:                      # uoc luong tu the dau (feature 002)
+  engine: pnp5             # pnp5 = cv2.solvePnP tren 5 diem YuNet (khong dung du lieu BFM) | mediapipe (tuy chon, xem T042)
+  max_reliable_yaw: 60     # |yaw| lon hon nguong nay -> pose_reliable=false -> khong chot danh tinh tu khung do
+  ema_tau_sec: 0.3         # hang so thoi gian lam muot yaw/pitch theo GIAY (khong theo so frame)
 
 quality:
   min_face: 60             # canh ngan nho nhat cua mat (pixel)
   min_blur: 35             # phuong sai Laplacian toi thieu tren vung da nhin thay
   min_brightness: 45
   max_brightness: 225
-  max_yaw: 90              # do, ho tro nhan dien toi goc nghieng suon +-90 do
+  max_yaw: 90              # do, tran cung cua quality gate; nhan dien tin cay toi ~+-60 do (pose.max_reliable_yaw)
   max_pitch: 35
   max_roll: 35
 
@@ -42,15 +52,9 @@ recognition:
   frontal_max_yaw: 40
   pose_hysteresis: 5
   thresholds:
-    edgeface:
-      frontal: 0.40
-      profile: 0.46
     opencv:
       frontal: 0.42
       profile: 0.48
-    onnx:
-      frontal: 0.40
-      profile: 0.46
   margin: 0.06
   profile_margin: 0.08
   min_good_frames: 2
@@ -135,12 +139,12 @@ enrollment:
   outlier_min_cosine: 0.42
   cross_pose_min_cosine: 0.20
   keep_video: false        # mac dinh xoa video goc sau khi xu ly
-  guided:                  # dang ky quay tu camera: 7 goc (5 chu thap + 2 nghieng suon ~80 do)
+  guided:                  # dang ky quay tu camera: 7 goc (5 chu thap + 2 nghieng suon 45-60 do)
     enable_profile_90: true
     yaw_enter: 15          # do lech ngang (so voi luc nhin thang) de tinh la da quay
     yaw_center: 9          # trong khoang nay la "nhin thang"
-    profile_yaw_min: 65
-    profile_yaw_max: 88
+    profile_yaw_min: 45      # feature 002: PnP 5 diem chi tin cay toi ~60 do
+    profile_yaw_max: 60
     pitch_enter: 10        # do lech doc de tinh la da ngang/cui
     pitch_center: 8
     hold_seconds: 0.7      # phai giu dung goc lien tuc chung nay
@@ -152,6 +156,25 @@ audit_and_safety:
   min_free_disk_gb: 2.0
   heartbeat_timeout_sec: 5.0
 
+audio_prompt:              # phat chuong canh bao tren loa camera Tapo C310 (kem chuong Web du phong khi demo)
+  enabled: true            # bat tu dong keu chuong khi phat hien gia mao hoac nhac nhin thang
+  backend: web             # web (mac dinh) | tapo: API TP-Link KHONG chinh thuc (pytapo) - chi bat khi khach chap nhan rui ro ToS
+  host: ""                 # IP camera Tapo (vd: 192.168.50.10, hoac de trong lay tu bien moi truong CAM_IP / TAPO_HOST)
+  user: admin
+  password: ""             # mat khau Camera Account hoac TP-Link Cloud (khuyen nghi dat qua TAPO_PASSWORD / TAPO_CLOUD_PASSWORD)
+  cloud_password: ""
+  mode: talk_8800          # talk_8800 (phat chuong Dinh-Dong / coi G.711 ra loa port 8800) | manual_alarm | play_alarm | custom_audio
+  duration_sec: 0.85       # do dai tieng chuong nhac nhin thang / bam thu chuong (giay)
+  spoof_duration_sec: 1.2  # do dai coi canh bao khi phat hien gia mao (giay)
+  alarm_type: 0
+  alarm_volume: low        # low | medium | high
+  custom_audio_id: 1
+  prompt_wav: ""           # de trong = dung webapp/audio/look_at_camera.wav ("Vui long quay mat nhin thang vao camera.")
+  profile_wait_sec: 1.2    # chi nhac khi mat nghieng >40 do qua N giay ma chua xong liveness
+  cooldown_sec: 6.0        # khoang nghi toi thieu giua 2 lan chuong nhac
+  spoof_chime: true        # keu chuong canh bao ngay khi phat hien anh in / dien thoai gia mao
+  spoof_cooldown_sec: 4.0
+
 hrm:
   adapter: mock            # mock | erpnext
   erpnext:
@@ -159,6 +182,36 @@ hrm:
     api_key: ""
     api_secret: ""
     device_id: gate-1
+    warehouse: "Stores - MSW"   # kho mac dinh khi day Draft Stock Entry tu SKU
+
+sku:                       # Phase 2A: Nhan dien Hang hoa / SKU & kiem dem kho (tat FaceID nang)
+  feature_type: orb        # orb (nhanh tren CPU) | sift
+  orb_nfeatures: 800
+  sift_nfeatures: 600
+  min_template_kps: 30
+  min_inliers: 12
+  min_inlier_ratio: 0.25
+  ratio_thresh: 0.75
+  ransac_reproj_thresh: 4.5
+  min_blur: 20.0
+  scan_max_width: 960
+  max_instances: 4         # so hop cung ma SKU toi da tim trong 1 khung (Sequential RANSAC Experimental)
+  count_mode: hold         # hold (giu on dinh min_hold_sec) | line (cat qua vach IN/OUT)
+  min_hold_sec: 0.4
+  cooldown_sec: 4.0
+  track_max_age: 1.2
+  line: [[0.0, 0.55], [1.0, 0.55]]  # vach dem chuan hoa 0..1 khi count_mode: line
+  in_when: down            # down | up | right | left (chieu di chuyen tinh la Nhap kho IN)
+  log_unknown: true
+  prefer_code_short_circuit: true
+
+zones:                     # Phase 2A: Giam sat hien dien khu vuc xuong (Time-Based YOLOX-Nano, tat FaceID)
+  person_conf: 0.45
+  enter_confirm_sec: 1.0   # dung trong vung >= N giay moi xac nhan vao vung
+  min_dwell_sec: 3.0       # phien hien dien >= N giay moi luu DB
+  exit_grace_sec: 2.0      # mat dau qua N giay moi dong phien
+  alert_empty_sec: 0.0     # > 0: canh bao khi vung thieu nguoi (< min_persons) qua N giay
+  alert_cooldown_sec: 30.0
 
 storage:
   data_dir: data
