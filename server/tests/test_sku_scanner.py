@@ -263,28 +263,19 @@ def test_download_models_enforces_sha256_integrity(tmp_path: Path, monkeypatch: 
 
     monkeypatch.setattr(urllib.request, "urlopen", _fake_urlopen)
 
+    def _entry(sha: str) -> dict:
+        return {
+            "file": "dummy.onnx",
+            "source_url": "https://example.com/dummy.onnx",
+            "sha256": sha,
+            "min_bytes": 100_000,
+        }
+
     # Checksum sai -> tu choi va KHONG ghi file xuong dia
-    ok_bad = dm.download(
-        "dummy.onnx",
-        ("https://example.com/dummy.onnx", 100_000),
-        expected_sha_prefix="0000000000000000",
-        models_dir=tmp_path,
-    )
-    assert not ok_bad
+    assert not dm.download(_entry("0" * 64), tmp_path)
     assert not (tmp_path / "dummy.onnx").exists()
 
-    # Checksum dung -> ghi file va verify lai thanh cong
-    ok_good = dm.download(
-        "dummy.onnx",
-        ("https://example.com/dummy.onnx", 100_000),
-        expected_sha_prefix=good_sha,
-        models_dir=tmp_path,
-    )
-    assert ok_good and (tmp_path / "dummy.onnx").is_file()
-    assert not dm.download(
-        "dummy.onnx",
-        ("https://example.com/dummy.onnx", 100_000),
-        expected_sha_prefix="ffffffffffffffff",
-        models_dir=tmp_path,
-    )
-
+    # Checksum dung -> ghi file; file da co nhung sai checksum -> tu choi, khong ghi de
+    assert dm.download(_entry(good_sha), tmp_path)
+    assert (tmp_path / "dummy.onnx").is_file()
+    assert not dm.download(_entry("f" * 64), tmp_path)

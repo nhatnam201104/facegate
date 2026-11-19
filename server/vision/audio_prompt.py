@@ -26,6 +26,16 @@ from pathlib import Path
 from typing import Callable
 
 log = logging.getLogger("audio_prompt")
+_TAPO_WARNED = False
+
+
+def _warn_tapo_once() -> None:
+    """Feature 002 (FR-009): pytapo goi API TP-Link KHONG chinh thuc -> canh bao 1 lan khi bat backend tapo."""
+    global _TAPO_WARNED
+    if not _TAPO_WARNED:
+        _TAPO_WARNED = True
+        log.warning("audio_prompt.backend=tapo dùng API không chính thức của TP-Link (pytapo); "
+                    "kiểm tra điều khoản sử dụng với khách hàng trước khi triển khai")
 
 DEFAULT_PROMPT_WAV = Path(__file__).resolve().parent.parent.parent / "webapp" / "audio" / "look_at_camera.wav"
 DEFAULT_PROMPT_WEB_URL = "/static/audio/look_at_camera.wav"
@@ -687,9 +697,16 @@ def build_chime_notifier(
     cfg: dict,
     on_event: Callable[[dict], None] | None = None,
     camera_source: str | int | None = None,
+    allow_hardware: bool | None = None,
 ) -> TapoChimeNotifier:
-    """Khoi tao TapoChimeNotifier tu config + bien moi truong CAM_IP / CAM_USER / CAM_PASS + nguon RTSP dang chay."""
+    """Khoi tao TapoChimeNotifier tu config + bien moi truong CAM_IP / CAM_USER / CAM_PASS + nguon RTSP dang chay.
+
+    allow_hardware=None -> chi goi loa Tapo (pytapo, API TP-Link KHONG chinh thuc) khi audio_prompt.backend == "tapo".
+    Voi backend "web" (mac dinh, FR-009) notifier khong co host/mat khau -> luon phat du phong tren Web.
+    """
     ac = cfg.get("audio_prompt") or {}
+    if allow_hardware is None:
+        allow_hardware = str(ac.get("backend", "web")).strip().lower() == "tapo"
     cam_cfg = cfg.get("camera") or {}
     src_str = str(camera_source if camera_source is not None else cam_cfg.get("source", ""))
     rtsp_host, rtsp_user, rtsp_pass = _extract_host_creds_from_rtsp(src_str)
@@ -705,6 +722,8 @@ def build_chime_notifier(
     cloud_password = str(ac.get("cloud_password") or os.environ.get("TAPO_CLOUD_PASSWORD") or "").strip()
     if password == "changeme":
         password = ""
+    if not allow_hardware:
+        host, password, cloud_password = "", "", ""
 
     prompt_wav_cfg = str(ac.get("prompt_wav", "") or "").strip()
     if prompt_wav_cfg:
@@ -738,10 +757,12 @@ def create_look_prompter(cfg: dict, on_event: Callable[[dict], None] | None = No
     ac = cfg.get("audio_prompt") or {}
     if not ac.get("enabled", False):
         return None
-    backend = str(ac.get("backend", "tapo")).strip().lower()
+    backend = str(ac.get("backend", "web")).strip().lower()
     if backend not in ("tapo", "web"):
         log.warning("audio_prompt.backend=%s khong ho tro -> tat", backend)
         return None
+    if backend == "tapo":
+        _warn_tapo_once()
     notifier = build_chime_notifier(cfg, on_event=on_event)
     if backend == "tapo" and not notifier.hardware_configured and on_event is None:
         log.warning("audio_prompt.enabled=true nhung thieu host/password cua camera Tapo -> bo qua nhac phan cung")

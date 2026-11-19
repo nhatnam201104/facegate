@@ -166,6 +166,7 @@ def test_camera_chime_api_endpoint_and_factory(tmp_path: Path, monkeypatch):
     assert create_look_prompter(cfg) is None
 
     cfg["audio_prompt"]["enabled"] = True
+    cfg["audio_prompt"]["backend"] = "tapo"  # nhanh tapo phan cung (mac dinh da doi sang web - feature 002)
     cfg["audio_prompt"]["host"] = ""
     cfg["audio_prompt"]["password"] = ""
     # Khong co host/pass va khong truyen on_event -> bo qua phan cung
@@ -203,6 +204,10 @@ def test_extract_rtsp_with_at_sign_in_password_and_hot_reload_from_config(tmp_pa
     cfg["camera"]["source"] = "rtsp://namnhat:P@ss@word@192.168.1.24:554/stream1"
     cfg["audio_prompt"]["host"] = ""
     cfg["audio_prompt"]["password"] = ""
+    # backend web (mac dinh): KHONG lay host/mat khau tu RTSP -> khong bao gio goi pytapo
+    cfg["audio_prompt"]["backend"] = "web"
+    assert build_chime_notifier(cfg).hardware_configured is False
+    cfg["audio_prompt"]["backend"] = "tapo"
     n = build_chime_notifier(cfg)
     assert n.hardware_configured is True
     assert n.host == "192.168.1.24"

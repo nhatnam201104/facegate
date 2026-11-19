@@ -108,6 +108,9 @@ def process_enrollment(frames: list[np.ndarray], code: str, name: str, ctx) -> d
             continue
         f = faces[0]
         pose = pose_est.estimate(fr, f) if pose_est is not None else None
+        if pose is not None and not pose.pose_reliable:
+            stats["rejected"]["pose_unreliable"] = stats["rejected"].get("pose_unreliable", 0) + 1
+            continue
         q = assess(fr, f, qcfg, pose=pose)
         if not q.ok:
             stats["rejected"][q.reason] = stats["rejected"].get(q.reason, 0) + 1
@@ -274,6 +277,8 @@ def backfill_legacy_embeddings(ctx, stop_event=None) -> int:
                 continue
             f = max(faces, key=lambda x: x.w * x.h)
             pose = pose_est.estimate(img, f) if pose_est is not None else None
+            if pose is not None and not pose.pose_reliable:
+                continue
             aligned = (
                 engine.align(img, f, pose=pose, pose_group=pose.pose_group if pose is not None else None)
                 if "pose" in engine.align.__code__.co_varnames

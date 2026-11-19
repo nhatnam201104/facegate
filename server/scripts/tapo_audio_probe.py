@@ -70,7 +70,7 @@ def main() -> None:
     if args.mode:
         ac["mode"] = args.mode
 
-    notifier = build_chime_notifier(cfg)
+    notifier = build_chime_notifier(cfg, allow_hardware=True)  # cong cu do loa Tapo: luon bat phan cung
     if args.probe and notifier.hardware_configured:
         info = probe_tapo_speaker(notifier.host, notifier.user, notifier.password, notifier.cloud_password)
         print("=== THONG SO LOA CAMERA TAPO ===")

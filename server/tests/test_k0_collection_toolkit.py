@@ -211,3 +211,86 @@ def test_record_bundle_end_to_end_on_mp4_file(tmp_path: Path):
         assert "context" in f0
     summary_md = render_k0_5_markdown_summary(evaluate_observations(out_bundle / "observations.jsonl"), out_bundle)
     assert "frontal_corridor" in summary_md
+
+
+# --- Feature 002, T039: nguong theo pose, dai yaw moi, do tre check-in, sweep -----------------------------------
+
+def _unit(*xs, dim=16):
+    v = np.zeros(dim, np.float32)
+    for i, x in enumerate(xs):
+        v[i] = x
+    return (v / np.linalg.norm(v)).tolist()
+
+
+def _write_pose_bundle(tmp_path: Path) -> Path:
+    bundle = tmp_path / "b002"
+    bundle.mkdir()
+    refs = {"entries": [
+        {"employee_id": 1, "code": "NV1", "pose_group": "frontal", "vec": _unit(1.0)},
+        {"employee_id": 1, "code": "NV1", "pose_group": "right_profile", "vec": _unit(0.0, 1.0)},
+    ]}
+    (bundle / "gallery_refs.json").write_text(json.dumps(refs), encoding="utf-8")
+    rows = []
+    # 0..1200 ms: co mat nhung chua co embedding (vd chat luong kem) -> moc bat dau do tre
+    for i in range(5):
+        rows.append({"session_id": "s1", "gt_label": "bonafide", "subject_code": "NV1", "frame_idx": i,
+                     "video_ts_ms": i * 300, "faces": [{"bbox": [100, 100, 200, 220], "yaw": 0.0}]})
+    # tu 1500 ms: mat chinh dien giong het mau (cos 1.0) + FAS that -> se check-in
+    for j in range(8):
+        rows.append({"session_id": "s1", "gt_label": "bonafide", "subject_code": "NV1", "frame_idx": 5 + j,
+                     "video_ts_ms": 1500 + j * 300,
+                     "faces": [{"bbox": [100, 100, 200, 220], "yaw": float(j % 2) * 9.0, "embedding": _unit(1.0),
+                                "fas_prob": 0.95, "quality": {"ok": True, "score": 0.9}}]})
+    # mau nghieng 50 do, cos 0.5 voi mau nghieng cua NV1 (session rieng, chi dung cho FRR cap khung)
+    rows.append({"session_id": "s2", "gt_label": "bonafide", "subject_code": "NV1", "frame_idx": 0,
+                 "video_ts_ms": 0, "faces": [{"bbox": [100, 100, 200, 220], "yaw": 50.0,
+                                              "embedding": _unit(0.0, 0.5, float(np.sqrt(0.75)))}]})
+    (bundle / "observations.jsonl").write_text("\n".join(json.dumps(r) for r in rows), encoding="utf-8")
+    return bundle
+
+
+def test_per_pose_thresholds_apply_to_matching_group(tmp_path: Path):
+    obs = _write_pose_bundle(tmp_path) / "observations.jsonl"
+    lo = evaluate_observations(obs, threshold_frontal=0.42, threshold_profile=0.45)
+    hi = evaluate_observations(obs, threshold_frontal=0.42, threshold_profile=0.55)
+    assert lo["thresholds"] == {"frontal": 0.42, "profile": 0.45}
+    assert lo["frr_by_yaw_band"]["yaw_40_60"]["false_rejects"] == 0
+    assert hi["frr_by_yaw_band"]["yaw_40_60"]["false_rejects"] == 1
+    # Nguong profile khong anh huong mau chinh dien
+    assert lo["frr_by_yaw_band"]["frontal_le40"] == hi["frr_by_yaw_band"]["frontal_le40"]
+    assert hi["frr_by_yaw_band"]["yaw_gt60"]["trials"] == 0
+
+
+def test_checkin_latency_measured_from_first_face(tmp_path: Path):
+    obs = _write_pose_bundle(tmp_path) / "observations.jsonl"
+    lat = evaluate_observations(obs)["track_level"]["checkin_latency_s"]
+    assert lat["n"] == 1
+    assert 1.5 <= lat["p90"] <= 1.5 + 8 * 0.3
+
+
+def test_sweep_grid_and_markdown(tmp_path: Path):
+    from server.scripts.replay_eval import _parse_grid, render_sweep_markdown, sweep_thresholds
+    obs = _write_pose_bundle(tmp_path) / "observations.jsonl"
+    grid = _parse_grid("0.40:0.60:0.10")
+    assert grid == [0.4, 0.5, 0.6]
+    rows = sweep_thresholds(obs, grid)
+    assert len(rows) == 9
+    by = {(r["frontal"], r["profile"]): r for r in rows}
+    assert by[(0.4, 0.4)]["frr_yaw_40_60"] == 0.0 and by[(0.4, 0.6)]["frr_yaw_40_60"] == 1.0
+    md = render_sweep_markdown(rows)
+    assert "latency_p90" in md and md.count("\n|") >= 10
+
+
+def test_pairwise_far_by_group_is_independent_of_subject_order():
+    import numpy as np
+    from server.scripts.replay_eval import pairwise_impostor_far
+
+    a = np.array([1.0, 0.0], np.float32)
+    b = np.array([0.9, np.sqrt(1 - 0.81)], np.float32)  # cos(a, b) = 0.9
+    thr = {"frontal": 0.95, "right_profile": 0.85}
+    counts = set()
+    for first in ("A", "Z"):  # "A" xep truoc "B", "Z" xep sau "B"
+        res = pairwise_impostor_far({first: [a], "B": [b]}, 0.5,
+                                    {first: ["frontal"], "B": ["right_profile"]}, thr)
+        counts.add(res["false_accepts"])
+    assert counts == {1}

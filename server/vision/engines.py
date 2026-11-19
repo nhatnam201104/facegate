@@ -1,7 +1,9 @@
-"""Face engines: detect + embed. Hai backend co cung interface de benchmark.
+"""Face engine: detect + embed.
 
-- OpenCVEngine : YuNet + SFace (OpenCV Zoo, Apache-2.0)
-- OnnxEngine   : SCRFD-500M + ArcFace MobileFaceNet (onnxruntime)
+- OpenCVEngine : YuNet (OpenCV Zoo, MIT) + SFace (OpenCV Zoo, Apache-2.0)
+
+Backend EdgeFace-XS (CC BY-NC-SA) va InsightFace SCRFD/ArcFace (phi thuong mai) da bi go (feature 002).
+ARCFACE_TEMPLATE ben duoi chi la toa do hinh hoc 5 diem can chinh 112x112, khong phai trong so model.
 
 Landmark 5 diem luon theo thu tu anh: mat trai-anh, mat phai-anh, mui, mieng trai-anh, mieng phai-anh.
 """
@@ -12,6 +14,8 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+
+from .license_guard import LicenseError, require
 
 ARCFACE_TEMPLATE = np.array(
     [[38.2946, 51.6963], [73.5318, 51.5014], [56.0252, 71.7366],
@@ -62,7 +66,7 @@ def align_face(img: np.ndarray, kps: np.ndarray, size: int = 112,
 
 def align_by_pose(img: np.ndarray, face: Face, pose=None,
                   pose_group: str | None = None, size: int = 112) -> np.ndarray:
-    """Luon can chinh ve TEMPLATE_FRONTAL chuan cua model; dung kps5 cua 3DDFA_V2 khi co."""
+    """Luon can chinh ve TEMPLATE_FRONTAL chuan cua model; dung kps5 cua bo uoc luong tu the khi co."""
     if pose is not None and getattr(pose, "kps5", None) is not None and len(pose.kps5) == 5:
         return align_face(img, pose.kps5, size=size, template=TEMPLATE_FRONTAL)
     return align_face(img, face.kps, size=size, template=TEMPLATE_FRONTAL)
@@ -77,12 +81,14 @@ class OpenCVEngine:
     name = "opencv"
     model_version = "yunet2023mar+sface2021dec"
 
-    def __init__(self, models_dir: Path, det_score: float = 0.6):
+    def __init__(self, models_dir: Path, det_score: float = 0.6, cfg: dict | None = None):
+        models_dir = Path(models_dir)
         det = models_dir / "face_detection_yunet_2023mar.onnx"
         rec = models_dir / "face_recognition_sface_2021dec.onnx"
         for p in (det, rec):
             if not p.exists():
                 raise FileNotFoundError(f"Thieu model {p.name}. Chay: python server/scripts/download_models.py")
+            require(cfg, p.name, models_dir)
         self.detector = cv2.FaceDetectorYN.create(str(det), "", (320, 320), det_score, 0.3, 5000)
         self.recognizer = cv2.FaceRecognizerSF.create(str(rec), "")
         self._size = (0, 0)
@@ -118,166 +124,18 @@ class OpenCVEngine:
         return [self.embed_aligned(a) for a in aligned_list]
 
 
-class OnnxEngine:
-    name = "onnx"
-    model_version = "scrfd500m+w600k_mbf"
-
-    def __init__(self, models_dir: Path, det_score: float = 0.6, input_size: int = 640):
-        import onnxruntime as ort
-
-        det = models_dir / "scrfd_500m_kps.onnx"
-        rec = models_dir / "w600k_mbf.onnx"
-        for p in (det, rec):
-            if not p.exists():
-                raise FileNotFoundError(f"Thieu model {p.name}. Chay: python server/scripts/download_models.py --onnx")
-        so = ort.SessionOptions()
-        so.log_severity_level = 3
-        prov = ["CPUExecutionProvider"]
-        self.det = ort.InferenceSession(str(det), so, providers=prov)
-        self.rec = ort.InferenceSession(str(rec), so, providers=prov)
-        self.det_in = self.det.get_inputs()[0].name
-        self.rec_in = self.rec.get_inputs()[0].name
-        self.det_score = det_score
-        self.size = input_size
-        self.strides = [8, 16, 32]
-        self.num_anchors = 2
-        self._anchor_cache: dict = {}
-
-    # --- SCRFD ---
-    def _anchors(self, h: int, w: int, stride: int) -> np.ndarray:
-        key = (h, w, stride)
-        if key not in self._anchor_cache:
-            ys, xs = np.mgrid[:h, :w]
-            centers = (np.stack([xs, ys], -1).astype(np.float32) * stride).reshape(-1, 2)
-            centers = np.repeat(centers, self.num_anchors, axis=0)
-            self._anchor_cache[key] = centers
-        return self._anchor_cache[key]
-
-    def detect(self, img: np.ndarray) -> list[Face]:
-        h0, w0 = img.shape[:2]
-        scale = self.size / max(h0, w0)
-        nh, nw = int(round(h0 * scale)), int(round(w0 * scale))
-        canvas = np.zeros((self.size, self.size, 3), np.uint8)
-        canvas[:nh, :nw] = cv2.resize(img, (nw, nh))
-        blob = cv2.dnn.blobFromImage(canvas, 1 / 128.0, (self.size, self.size),
-                                     (127.5, 127.5, 127.5), swapRB=True)
-        outs = self.det.run(None, {self.det_in: blob})
-        outs = [o[0] if o.ndim == 3 else o for o in outs]
-        fmc = len(self.strides)
-        boxes, scores, kpss = [], [], []
-        for i, s in enumerate(self.strides):
-            sc = outs[i].reshape(-1)
-            bb = outs[i + fmc].reshape(-1, 4) * s
-            kp = outs[i + 2 * fmc].reshape(-1, 10) * s
-            fh, fw = self.size // s, self.size // s
-            anc = self._anchors(fh, fw, s)
-            keep = np.where(sc >= self.det_score)[0]
-            if keep.size == 0:
-                continue
-            a = anc[keep]
-            b = bb[keep]
-            boxes.append(np.stack([a[:, 0] - b[:, 0], a[:, 1] - b[:, 1],
-                                   a[:, 0] + b[:, 2], a[:, 1] + b[:, 3]], -1))
-            k = kp[keep].reshape(-1, 5, 2) + a[:, None, :]
-            kpss.append(k)
-            scores.append(sc[keep])
-        if not boxes:
-            return []
-        boxes = np.concatenate(boxes) / scale
-        scores = np.concatenate(scores)
-        kpss = np.concatenate(kpss) / scale
-        xywh = [[float(b[0]), float(b[1]), float(b[2] - b[0]), float(b[3] - b[1])] for b in boxes]
-        idx = cv2.dnn.NMSBoxes(xywh, scores.tolist(), self.det_score, 0.4)
-        idx = np.array(idx).reshape(-1)
-        return [Face(boxes[i].astype(np.float32), float(scores[i]), _order_kps(kpss[i])) for i in idx]
-
-    # --- ArcFace ---
-    def align(self, img: np.ndarray, face: Face, pose=None, pose_group: str | None = None) -> np.ndarray:
-        return align_by_pose(img, face, pose=pose, pose_group=pose_group, size=112)
-
-    def embed_aligned(self, aligned: np.ndarray) -> np.ndarray:
-        blob = cv2.dnn.blobFromImage(aligned, 1 / 127.5, (112, 112), (127.5, 127.5, 127.5), swapRB=True)
-        return _l2n(self.rec.run(None, {self.rec_in: blob})[0])
-
-    def embed_batch(self, aligned_list: list[np.ndarray]) -> list[np.ndarray]:
-        return [self.embed_aligned(a) for a in aligned_list]
-
-
-def _resolve_ort_providers(ep: str) -> list[str]:
-    import onnxruntime as ort
-    avail = set(ort.get_available_providers())
-    if ep == "openvino" and "OpenVINOExecutionProvider" in avail:
-        return ["OpenVINOExecutionProvider", "CPUExecutionProvider"]
-    return ["CPUExecutionProvider"]
-
-
-class EdgeFaceEngine:
-    """YuNet (Apache-2.0) + EdgeFace-XS (MIT) tren FP32 CPU/OpenVINO, ho tro batch 10 khuon mat (T016, T029)."""
-    name = "edgeface"
-    model_version = "yunet2023mar+edgeface_xs_gamma_06_v41"
-
-    def __init__(self, models_dir: Path, det_score: float = 0.55, execution_provider: str = "cpu"):
-        import onnxruntime as ort
-
-        det = models_dir / "face_detection_yunet_2023mar.onnx"
-        rec = models_dir / "edgeface_xs_gamma_06.onnx"
-        for p in (det, rec):
-            if not p.exists():
-                raise FileNotFoundError(f"Thieu model {p.name}. Chay: python server/scripts/download_models.py")
-        self.detector = cv2.FaceDetectorYN.create(str(det), "", (320, 320), det_score, 0.3, 5000)
-        self._size = (0, 0)
-        so = ort.SessionOptions()
-        so.log_severity_level = 3
-        self.rec = ort.InferenceSession(str(rec), so, providers=_resolve_ort_providers(execution_provider))
-        self.rec_in = self.rec.get_inputs()[0].name
-
-    def detect(self, img: np.ndarray) -> list[Face]:
-        h, w = img.shape[:2]
-        if (w, h) != self._size:
-            self.detector.setInputSize((w, h))
-            self._size = (w, h)
-        _, rows = self.detector.detect(img)
-        if rows is None:
-            return []
-        out = []
-        for r in rows:
-            x, y, bw, bh = r[:4]
-            kps = _order_kps(r[4:14].reshape(5, 2))
-            out.append(Face(np.array([x, y, x + bw, y + bh], np.float32), float(r[14]), kps))
-        return out
-
-    def align(self, img: np.ndarray, face: Face, pose=None, pose_group: str | None = None) -> np.ndarray:
-        return align_by_pose(img, face, pose=pose, pose_group=pose_group, size=112)
-
-    def embed_aligned(self, aligned: np.ndarray) -> np.ndarray:
-        blob = cv2.dnn.blobFromImage(aligned, 1.0 / 127.5, (112, 112), (127.5, 127.5, 127.5), swapRB=True)
-        return _l2n(self.rec.run(None, {self.rec_in: blob})[0])
-
-    def embed_batch(self, aligned_list: list[np.ndarray]) -> list[np.ndarray]:
-        if not aligned_list:
-            return []
-        blobs = np.concatenate(
-            [cv2.dnn.blobFromImage(a, 1.0 / 127.5, (112, 112), (127.5, 127.5, 127.5), swapRB=True) for a in aligned_list],
-            axis=0,
-        )
-        try:
-            outs = self.rec.run(None, {self.rec_in: blobs})[0]
-            if outs.shape[0] == len(aligned_list):
-                return [_l2n(outs[i]) for i in range(len(aligned_list))]
-        except Exception:  # noqa: BLE001
-            pass
-        return [self.embed_aligned(a) for a in aligned_list]
+REMOVED_BACKENDS = ("edgeface", "onnx")
 
 
 def create_engine(cfg: dict):
+    """Chi con backend 'opencv' (YuNet MIT + SFace Apache-2.0). Moi model duoc kiem giay phep truoc khi nap."""
     backend = cfg["pipeline"]["backend"]
     models = cfg["_paths"]["models"]
     score = float(cfg["pipeline"]["det_score"])
-    ep = str(cfg["pipeline"].get("execution_provider", "cpu"))
-    if backend == "edgeface":
-        return EdgeFaceEngine(models, score, execution_provider=ep)
+    if backend in REMOVED_BACKENDS:
+        raise LicenseError(
+            f"LICENSE: backend '{backend}' đã bị gỡ do giấy phép phi thương mại; dùng 'opencv' "
+            "(xem specs/002-license-compliant-models)")
     if backend == "opencv":
-        return OpenCVEngine(models, score)
-    if backend == "onnx":
-        return OnnxEngine(models, score)
+        return OpenCVEngine(models, score, cfg=cfg)
     raise ValueError(f"backend khong hop le: {backend}")

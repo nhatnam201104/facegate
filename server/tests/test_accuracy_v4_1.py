@@ -10,8 +10,8 @@ import pytest
 from server.config import load_config
 from server.vision.context_detector import ContextScene
 from server.vision.decision import LLRConfig, TrackDecisionAccumulator
-from server.vision.engines import EdgeFaceEngine, Face, TEMPLATE_FRONTAL, align_face
-from server.vision.pose3d import PoseEstimator3D, PoseResult
+from server.vision.engines import Face, OpenCVEngine, TEMPLATE_FRONTAL, align_face
+from server.vision.pose3d import PoseResult, create_pose_estimator
 from server.vision.quality import assess
 from server.vision.tracker import IoUTracker
 from server.vision.worker_perception import PerceptionWorker, detect_faces_two_stage_3mp
@@ -31,30 +31,66 @@ def _face(x1: float, y1: float, x2: float, y2: float) -> Face:
     return Face(np.array([x1, y1, x2, y2], dtype=np.float32), 0.92, kps)
 
 
-def test_t033_align_by_pose_profile_matches_frontal_on_real_models():
+NV002_DIR = Path("data/enroll/NV002")
+NV002_FILES = ("00_thang-giua.jpg", "01_trai-giua.jpg", "02_phai-giua.jpg", "03_thang-ngang.jpg",
+               "04_thang-cui.jpg", "05_nghieng-sau-trai.jpg", "06_nghieng-sau-phai.jpg")
+
+
+def _nv002_embedder():
     cfg = load_config()
     models_dir = cfg["_paths"]["models"]
-    enroll_dir = Path("data/enroll/NV002")
-    required = ("00_thang-giua.jpg", "05_nghieng-sau-trai.jpg", "06_nghieng-sau-phai.jpg")
-    if not (models_dir / "edgeface_xs_gamma_06.onnx").exists() or not all((enroll_dir / f).exists() for f in required):
+    if not (models_dir / "face_recognition_sface_2021dec.onnx").exists() or not all(
+            (NV002_DIR / f).exists() for f in NV002_FILES):
         pytest.skip("Thieu model hoac du lieu mau NV002")
+    eng = OpenCVEngine(models_dir, det_score=0.55, cfg=cfg)
+    pose_est = create_pose_estimator(cfg)
 
-    eng = EdgeFaceEngine(models_dir, det_score=0.55)
-    assert eng.model_version.endswith("_v41")
-    pose_est = PoseEstimator3D(models_dir)
+    def emb(fname):
+        img = cv2.imread(str(NV002_DIR / fname))
+        f = max(eng.detect(img), key=lambda x: x.w * x.h)
+        p = pose_est.estimate(img, f)
+        return eng.embed_aligned(eng.align(img, f, pose=p, pose_group=p.pose_group)), p
 
-    img_f = cv2.imread(str(enroll_dir / "00_thang-giua.jpg"))
-    ff = max(eng.detect(img_f), key=lambda x: x.w * x.h)
-    pf = pose_est.estimate(img_f, ff)
-    ef = eng.embed_aligned(eng.align(img_f, ff, pose=pf, pose_group=pf.pose_group))
+    return emb
 
-    for fname in ("05_nghieng-sau-trai.jpg", "06_nghieng-sau-phai.jpg"):
-        img_p = cv2.imread(str(enroll_dir / fname))
-        fp = max(eng.detect(img_p), key=lambda x: x.w * x.h)
-        pp = pose_est.estimate(img_p, fp)
-        ep = eng.embed_aligned(eng.align(img_p, fp, pose=pp, pose_group=pp.pose_group))
-        cos = float(ep @ ef)
+
+def test_t033_align_by_pose_on_real_models_sface_pnp():
+    """Feature 002: SFace + PnP 5 diem tren mau dang ky that NV002.
+
+    - Cac buoc quay nhe / ngang (toi ~45 do): cos voi mau thang-giua phai >= 0.50 (cung nguong cu).
+    - Mau cui dau (04_thang-cui, cui ~30-40 do): KHONG khang dinh nguong cos. So do 2026-11-19: cos 0.442, giong het
+      khi bo pose (frontal dung recognizer.alignCrop tren kps YuNet) -> gioi han cua SFace voi pitch lon, khong phai
+      loi can chinh. Tieu chi that cho goc kho: SC-006 (frr_by_yaw_band) tren replay K0.
+    - Mau nghieng sau: so do 2026-11-18 cos 0.478 / 0.405 (EdgeFace cu dat >= 0.50). Runtime so mau nghieng voi
+      gallery CUNG pose_group, khong voi mau chinh dien.
+    """
+    emb = _nv002_embedder()
+    ef, pf = emb("00_thang-giua.jpg")
+    assert pf.pose_group == "frontal" and pf.pose_reliable
+    for fname in ("01_trai-giua.jpg", "02_phai-giua.jpg", "03_thang-ngang.jpg"):
+        # Cac buoc quay/ngang duoc phep toi max_turn (~45 do) nen khong khang dinh |yaw| <= 40 o day
+        e, _ = emb(fname)
+        cos = float(e @ ef)
         assert cos >= 0.50, f"{fname} cos={cos:.3f} < 0.50"
+    e, _ = emb("04_thang-cui.jpg")
+    assert np.isfinite(float(e @ ef))
+    e, p = emb("05_nghieng-sau-trai.jpg")
+    assert p.pose_group == "left_profile", f"yaw={p.yaw:.1f}"
+    assert np.isfinite(float(e @ ef))
+
+
+@pytest.mark.xfail(strict=True, reason="PnP 5 diem uoc thieu yaw khi nghieng kem ngang dau: 06_nghieng-sau-phai "
+                                       "(~45-55 do bang mat) chi ra 28.6 do -> nhom frontal (do 2026-11-19)")
+def test_pnp_classifies_right_profile_sample_nv002():
+    _, p = _nv002_embedder()("06_nghieng-sau-phai.jpg")
+    assert p.pose_group == "right_profile", f"yaw={p.yaw:.1f}"
+
+
+@pytest.mark.xfail(strict=True, reason="PnP 5 diem uoc thieu pitch: 04_thang-cui (cui ~30-40 do bang mat) "
+                                       "chi ra ~4 do (do 2026-11-19)")
+def test_pnp_detects_pitch_down_sample_nv002():
+    _, p = _nv002_embedder()("04_thang-cui.jpg")
+    assert abs(p.pitch) >= 15.0, f"pitch={p.pitch:.1f}"
 
 
 def test_t033_single_gallery_baseline_and_unlock_before_commit():
@@ -133,7 +169,7 @@ def test_t033_worker_splits_track_on_jump_to_different_person(tmp_path):
             return [state_holder["emb"] for _ in aligned_list]
 
     class _DummyPose:
-        def estimate(self, img, face, prev_group=None):
+        def estimate(self, img, face, prev_group=None, **kw):
             return PoseResult(0.0, 0.0, 0.0, "frontal", np.zeros((68, 3), np.float32), face.kps, 1.0)
 
     class _DummyGallery:
@@ -249,7 +285,7 @@ def test_t034_unattached_streak_liveness_min_frames_profile_frames_and_quality_r
             return ContextScene(persons=[], mediums=[])
 
     class _DummyPose:
-        def estimate(self, img, face, prev_group=None):
+        def estimate(self, img, face, prev_group=None, **kw):
             y = scene_state["yaw"]
             grp = "frontal" if abs(y) <= 40 else "right_profile"
             return PoseResult(y, 0.0, 0.0, grp, np.zeros((68, 3), np.float32), face.kps, 1.0)
@@ -375,8 +411,8 @@ def test_review_fixes_backfill_reloads_gallery_and_pipeline_keeps_evidence(tmp_p
     cv2.imwrite(str(enroll_dir / "00_thang-giua.jpg"), np.full((120, 120, 3), 120, np.uint8))
 
     class _BFEngine:
-        name = "edgeface"
-        model_version = "edgeface_v41_bf"
+        name = "opencv"
+        model_version = "opencv_v41_bf"
 
         def detect(self, img):
             return [_face(20, 20, 100, 100)]
@@ -389,7 +425,7 @@ def test_review_fixes_backfill_reloads_gallery_and_pipeline_keeps_evidence(tmp_p
 
     cfg = load_config()
     cfg["_paths"] = {**cfg["_paths"], "enroll": tmp_path / "enroll", "snapshots": tmp_path / "snap"}
-    gal = Gallery(db, "edgeface_v41_bf")
+    gal = Gallery(db, "opencv_v41_bf")
     assert gal.size == 0
 
     import threading
@@ -409,7 +445,7 @@ def test_review_fixes_backfill_reloads_gallery_and_pipeline_keeps_evidence(tmp_p
             pass
 
     class _DummyPose:
-        def estimate(self, img, face, prev_group=None):
+        def estimate(self, img, face, prev_group=None, **kw):
             return PoseResult(0.0, 0.0, 0.0, "frontal", np.zeros((68, 3), np.float32), face.kps, 1.0)
 
     class _DummyLive:
@@ -480,7 +516,7 @@ def test_codereview_fixes_pipeline_context_spoof_legal_hold_and_worker_source(tm
             pass
 
     class _Eng:
-        name = "edgeface"
+        name = "opencv"
         model_version = "dummy_sp"
 
         def detect(self, img):
@@ -493,7 +529,7 @@ def test_codereview_fixes_pipeline_context_spoof_legal_hold_and_worker_source(tm
             return np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)
 
     class _Pose:
-        def estimate(self, img, face, prev_group=None):
+        def estimate(self, img, face, prev_group=None, **kw):
             return PoseResult(0.0, 0.0, 0.0, "frontal", np.zeros((68, 3), np.float32), face.kps, 1.0)
 
     class _ScreenCtx:
