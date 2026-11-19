@@ -37,7 +37,7 @@ Hệ thống chạy hoàn toàn trên **CPU phổ thông** (không cần GPU ri�
 | Sổ cái chấm công bất biến (`attendance_ledger`), hậu kiểm ngoại lệ 5%, nhập bù dự phòng & đồng bộ ERPNext hai chiều | ✅ Đã triển khai (ERPNext cần thử nghiệm với server thật) |
 | Bảo mật vận hành: mã hóa sinh trắc học `AES-256-GCM`, phân quyền RBAC 3 vai trò (`viewer`/`hr`/`admin`), `audit_logs` & PostgreSQL đa cổng | ✅ Đã triển khai |
 | Số liệu thực địa pha `K0` trên **TP-Link Tapo C310** (FAR/FRR, APCER/BPCER, độ trễ `<canvas>`, tải 10 mặt thực tế) | 🟡 Đã có sẵn công cụ đo (`record_k0_bundle.py`, `replay_eval.py`, `benchmark.py`), cần quay footage hiện trường |
-| Nhận diện hàng hóa / SKU & zone sản xuất (Phase 2) | ⬜ Chưa làm (đã chuẩn hóa schema `TrackedObject` chờ sẵn) |
+| Nhận diện hàng hóa / SKU & zone sản xuất (Phase 2) | 🟡 Đã triển khai và chạy qua test với ERP **giả lập (mock)**; chưa thử ERPNext staging, camera và bao bì thật. Gồm: QR/Barcode (`zxing-cpp` là tùy chọn, mặc định dùng OpenCV) đẩy Draft `Stock Entry`, `Multi-Instance ORB/SIFT RANSAC` *Experimental*, đếm `IN/OUT` qua vạch, `ZoneEngine` hiện diện theo thời gian thực (tắt FaceID nặng, cần model YOLOX-Nano) |
 
 ---
 
@@ -77,7 +77,7 @@ Nhân viên làm theo hướng dẫn 7 góc (5 chữ thập + 2 nghiêng ~45–6
 - Khi phát hiện giả mạo (ảnh/màn hình/MiniFASNet), hệ thống không chấm công, ghi cảnh báo và tự động gắn `legal_hold = 1` cho clip bằng chứng.
 - Khi xóa nhân viên, dữ liệu sinh trắc học bị xóa và camera ngừng nhận diện ngay (kể cả ở tiến trình worker qua lệnh `reload_gallery`), trong khi lịch sử chấm công và clip vẫn giữ để đối soát.
 
-Giao diện web gồm 6 tab: **Trực tiếp** (WebRTC `<canvas>` / MJPEG + vẽ Vùng cửa), **Chấm công** (bảng công, nhập bù dự phòng, hàng chờ hậu kiểm 5%, thu hồi công), **Lịch sử** (clip MP4/WebM, lớp phủ sidecar, xuất MP4 đóng dấu, khóa `legal_hold`, tải ZIP), **Đăng ký**, **Nhân viên**, và **Sự kiện & đánh giá** (gán nhãn tính FAR/FRR/latency).
+Giao diện web gồm 8 tab: **Trực tiếp** (gạt nhanh 3 chế độ `Chấm công` / `Hàng hóa` / `Khu vực xưởng`, WebRTC `<canvas>` / MJPEG + vẽ Vùng cửa), **Chấm công** (bảng công, nhập bù dự phòng, hàng chờ hậu kiểm 5%, thu hồi công), **Hàng hóa** (đăng ký mẫu SKU, đếm `hold` / vạch `IN–OUT`, đồng bộ `Item` & đẩy Draft `Stock Entry` sang ERPNext), **Khu vực xưởng** (vẽ đa vùng Polygon Zone, theo dõi số người & thời gian hiện diện `dwell_sec` thời gian thực), **Lịch sử** (clip MP4/WebM, lớp phủ sidecar, xuất MP4 đóng dấu, khóa `legal_hold`, tải ZIP), **Đăng ký**, **Nhân viên**, và **Sự kiện & đánh giá** (gán nhãn tính FAR/FRR/latency).
 
 ---
 

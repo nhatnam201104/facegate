@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>FaceGate · Demo nhận diện cổng</title>
-<link rel="stylesheet" href="/static/style.css?v=4.3">
+<link rel="stylesheet" href="/static/style.css?v=4.4">
 </head>
 <body>
 <header>
@@ -13,6 +13,7 @@
     <button data-tab="live" class="active">Trực tiếp</button>
     <button data-tab="attendance">Chấm công</button>
     <button data-tab="sku">Hàng hóa</button>
+    <button data-tab="zones">Khu vực xưởng</button>
     <button data-tab="history">Lịch sử</button>
     <button data-tab="enroll">Đăng ký</button>
     <button data-tab="employees">Nhân viên</button>
@@ -34,6 +35,7 @@
         <div class="modesw" role="group" aria-label="Chế độ camera">
           <button type="button" class="mbtn active" data-mode="attendance">Chấm công</button>
           <button type="button" class="mbtn" data-mode="sku">Hàng hóa</button>
+          <button type="button" class="mbtn" data-mode="zone">Khu vực xưởng</button>
         </div>
         <span class="muted">Nguồn:</span> <b id="srcLabel">…</b>
         <button type="button" class="btn" id="zoneBtn" title="Chỉ chuyển động trong vùng này mới đánh thức chế độ chờ">Vùng cửa</button>
@@ -242,6 +244,39 @@
       </div>
     </div>
     <div class="card" style="margin-top:16px">
+      <div class="sku-toolbar">
+        <div>
+          <h3 style="margin:0">Chế độ kiểm đếm &amp; Đồng bộ Kho ERPNext</h3>
+          <small class="muted">Ưu tiên mã QR/Barcode chuẩn để tạo <b>Draft Stock Entry</b>; ORB/SIFT Multi-Instance gắn nhãn <i>Experimental</i>.</small>
+        </div>
+        <div class="sku-cfg-inline">
+          <label>Kiểu đếm
+            <select id="skuCountMode">
+              <option value="hold">Giữ ổn định (0.4s)</option>
+              <option value="line">Qua vạch Nhập/Xuất (IN/OUT)</option>
+            </select>
+          </label>
+          <label id="skuInWhenWrap" hidden>Chiều Nhập (IN)
+            <select id="skuInWhen">
+              <option value="down">Từ trên xuống</option>
+              <option value="up">Từ dưới lên</option>
+              <option value="right">Trái sang phải</option>
+              <option value="left">Phải sang trái</option>
+            </select>
+          </label>
+          <button type="button" class="btn" id="skuSyncItemsBtn">🔄 Kéo danh mục Item ERP</button>
+          <button type="button" class="primary" id="skuPushInBtn">📤 Đẩy Draft Nhập kho (IN)</button>
+          <button type="button" class="btn" id="skuPushOutBtn">📤 Đẩy Draft Xuất kho (OUT)</button>
+        </div>
+      </div>
+      <div class="sku-erp-opts">
+        <label>Kho ERPNext <input id="skuWarehouse" value="Stores - MSW" style="width:160px"></label>
+        <label class="sku-chk" style="margin:0"><input type="checkbox" id="skuIncExp"> Cho phép gộp cả sự kiện RANSAC <i>(Experimental)</i></label>
+        <span id="skuErpMsg" class="msg"></span>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:16px">
       <form class="filters" id="skuFilterForm" style="margin-bottom:12px">
         <label>Từ ngày <input type="date" name="date_from"></label>
         <label>Đến ngày <input type="date" name="date_to"></label>
@@ -254,11 +289,78 @@
         <a class="btn" id="skuCsv" href="#">Xuất CSV</a>
       </form>
       <h3>Tổng hợp sản lượng theo SKU</h3>
-      <table style="margin-bottom:16px"><thead><tr><th>Mã SKU</th><th>Tên sản phẩm</th><th>Lượt quét</th><th>Tổng SL</th><th>ĐVT</th><th>Phương thức</th><th>Lần cuối</th></tr></thead>
+      <table style="margin-bottom:16px"><thead><tr><th>Mã SKU</th><th>Tên sản phẩm</th><th>Lượt quét</th><th>Nhập (IN)</th><th>Xuất (OUT)</th><th>Tổng SL</th><th>ĐVT</th><th>Phương thức</th><th>Lần cuối</th></tr></thead>
         <tbody id="skuSumBody"></tbody></table>
+      <h3>Lịch sử lô Draft Stock Entry (ERP Outbox)</h3>
+      <table style="margin-bottom:16px"><thead><tr><th>Lô</th><th>Thời gian</th><th>Loại phiếu</th><th>Kho</th><th>Chi tiết SKU</th><th>Tổng SL</th><th>Trạng thái ERP</th></tr></thead>
+        <tbody id="skuBatchBody"></tbody></table>
       <h3>Lịch sử nhận diện gần nhất</h3>
-      <table><thead><tr><th>Ảnh</th><th>Thời gian</th><th>SKU</th><th>Mã vạch/QR</th><th>Phương thức</th><th>Điểm / Inliers</th><th>SL</th></tr></thead>
+      <table><thead><tr><th>Ảnh</th><th>Thời gian</th><th>Chiều</th><th>SKU</th><th>Mã vạch/QR</th><th>Phương thức</th><th>Điểm / Inliers</th><th>SL</th></tr></thead>
         <tbody id="skuEvBody"></tbody></table>
+    </div>
+  </section>
+
+  <!-- ZONES / KHU VUC XUONG -->
+  <section id="tab-zones" class="tab">
+    <div class="metrics" id="zoneMetrics"></div>
+    <div class="cols">
+      <form id="zoneForm" class="card">
+        <h3>Khai báo Khu vực xưởng (Polygon Zone)</h3>
+        <div class="sku-row2">
+          <label>Mã khu vực <input name="code" required placeholder="VD: ZONE-PACK-01" pattern="[A-Za-z0-9_.\-]{1,64}"></label>
+          <label>Màu vùng <input type="color" name="color" value="#3cc85a" style="height:36px;padding:2px"></label>
+        </div>
+        <label>Tên khu vực / chuyền <input name="name" required placeholder="Bàn đóng gói 1"></label>
+        <div class="zone-grid3">
+          <label>Xác nhận vào (giây) <input type="number" step="0.1" min="0" name="enter_confirm_sec" value="1.0"></label>
+          <label>Lưu tối thiểu (giây) <input type="number" step="0.5" min="0.5" name="min_dwell_sec" value="3.0"></label>
+          <label>Trễ rời vùng (giây) <input type="number" step="0.2" min="0.2" name="exit_grace_sec" value="2.0"></label>
+        </div>
+        <div class="sku-row2">
+          <label>Định biên tối thiểu (người) <input type="number" min="1" max="50" name="min_persons" value="1"></label>
+          <label>Cảnh báo trống quá (giây, 0=tắt) <input type="number" step="1" min="0" name="alert_empty_sec" value="0"></label>
+        </div>
+        <div class="sku-cam-wrap">
+          <div class="video preview" id="zoneDrawWrap" style="position:relative;cursor:crosshair">
+            <img id="zonePreview" alt="Xem trước camera xưởng">
+            <svg id="zoneEditSvg" class="zone-edit-svg"></svg>
+            <span class="rec on">CHẤM ĐIỂM ĐA GIÁC (≥ 3 ĐỈNH)</span>
+          </div>
+          <div class="acts" style="margin-top:6px">
+            <button type="button" class="btn" id="zonePolyUndo">Xóa điểm cuối</button>
+            <button type="button" class="btn" id="zonePolyClear">Xóa đa giác</button>
+            <small class="muted" id="zonePolyCount">Đã chấm: 0 điểm</small>
+          </div>
+        </div>
+        <button type="submit" class="primary" id="zoneSaveBtn">Lưu khu vực</button>
+        <div id="zoneFormMsg" class="msg"></div>
+      </form>
+
+      <div class="card">
+        <h3>Trạng thái khu vực thời gian thực <small class="muted">— tắt FaceID nặng, chỉ chạy YOLOX-Nano</small></h3>
+        <table><thead><tr><th>Mã</th><th>Khu vực</th><th>Hiện diện</th><th>Ngưỡng (giây)</th><th>Trạng thái</th><th></th></tr></thead>
+          <tbody id="zoneItemsBody"></tbody></table>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:16px">
+      <form class="filters" id="zoneFilterForm" style="margin-bottom:12px">
+        <label>Từ ngày <input type="date" name="date_from"></label>
+        <label>Đến ngày <input type="date" name="date_to"></label>
+        <label>Khu vực <select name="zone_code" id="zoneCodeFilter"><option value="">Tất cả</option></select></label>
+        <div class="quick">
+          <button type="button" data-zone-range="today">Hôm nay</button>
+          <button type="button" data-zone-range="week">Tuần này</button>
+        </div>
+        <button type="submit" class="primary">Xem</button>
+        <a class="btn" id="zoneCsv" href="#">Xuất CSV</a>
+      </form>
+      <h3>Tổng hợp thời gian hiện diện theo khu vực</h3>
+      <table style="margin-bottom:16px"><thead><tr><th>Mã khu vực</th><th>Tên khu vực</th><th>Số phiên</th><th>Tổng thời gian (giây)</th><th>Trung bình / phiên</th><th>Lần cuối</th></tr></thead>
+        <tbody id="zoneSumBody"></tbody></table>
+      <h3>Lịch sử phiên hiện diện gần nhất</h3>
+      <table><thead><tr><th>Khu vực</th><th>Track</th><th>Giờ vào</th><th>Giờ ra</th><th>Thời gian đứng</th><th>Trạng thái</th></tr></thead>
+        <tbody id="zoneSessBody"></tbody></table>
     </div>
   </section>
 </main>
@@ -276,12 +378,13 @@
     </div>
   </div>
 </div>
-<script src="/static/whep_canvas.js?v=4.3"></script>
+<script src="/static/whep_canvas.js?v=4.4"></script>
 <script src="/static/guided_wasm.js?v=4.2"></script>
-<script src="/static/app.js?v=4.3"></script>
+<script src="/static/app.js?v=4.4"></script>
 <script src="/static/attendance.js?v=4.2"></script>
 <script src="/static/history.js?v=4.2"></script>
 <script src="/static/zone.js?v=4.2"></script>
-<script src="/static/sku.js?v=4.3"></script>
+<script src="/static/sku.js?v=4.5"></script>
+<script src="/static/zones.js?v=4.5"></script>
 </body>
 </html>

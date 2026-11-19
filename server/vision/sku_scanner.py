@@ -25,7 +25,7 @@ class SkuDetection:
     name: str | None
     barcode: str | None
     uom: str
-    method: str                          # qr | barcode | orb_ransac | sift_ransac | unknown_code
+    method: str                          # qr | barcode | zxing | orb_ransac | sift_ransac | unknown_code
     score: float                         # 1.0 cho QR/Barcode, inlier_ratio co trong so cho RANSAC
     inliers: int
     bbox: tuple[float, float, float, float]
@@ -35,6 +35,10 @@ class SkuDetection:
     @property
     def accepted(self) -> bool:
         return self.sku_id is not None and bool(self.code)
+
+    @property
+    def experimental(self) -> bool:
+        return self.method.endswith("_ransac")
 
     def to_tracked_object(
         self,
@@ -67,6 +71,7 @@ class SkuDetection:
                 "barcode": self.barcode,
                 "uom": self.uom,
                 "method": self.method,
+                "experimental": self.experimental,
                 "score": round(float(self.score), 4),
                 "inliers": int(self.inliers),
                 "code_type": self.code_type,
@@ -266,6 +271,13 @@ class SkuScanner:
         self.reproj_thresh = float(scfg.get("ransac_reproj_thresh", 4.5))
         self.min_blur = float(scfg.get("min_blur", 20.0))
         self.scan_max_width = int(scfg.get("scan_max_width", 960))
+        self.max_instances = max(1, int(scfg.get("max_instances", 4)))
+
+        try:
+            import zxingcpp as _zxing  # type: ignore[import-not-found]
+            self._zxing = _zxing
+        except ImportError:
+            self._zxing = None
 
         self._detector = _create_feature_extractor(
             self.feature_type,
@@ -395,7 +407,29 @@ class SkuScanner:
                     code_type=code_type,
                 ))
 
-        # 1. QR Code (thu Aruco detector truoc, fallback sang QRCodeDetector chuan)
+        # 0. Uu tien zxing-cpp (Apache-2.0) neu co cai dat tren may trien khai: nhay voi QR/DataMatrix/1D nghieng/mo
+        if self._zxing is not None:
+            try:
+                zx_hits = self._zxing.read_barcodes(img)
+                for r in zx_hits or []:
+                    txt = getattr(r, "text", "") or ""
+                    pos = getattr(r, "position", None)
+                    fmt_name = str(getattr(getattr(r, "format", None), "name", None) or getattr(r, "format", "BARCODE"))
+                    if txt and pos is not None:
+                        pts_zx = np.array([
+                            [pos.top_left.x, pos.top_left.y],
+                            [pos.top_right.x, pos.top_right.y],
+                            [pos.bottom_right.x, pos.bottom_right.y],
+                            [pos.bottom_left.x, pos.bottom_left.y],
+                        ], dtype=np.float32)
+                        m_kind = "qr" if "QR" in fmt_name.upper() else "barcode"
+                        _add_decoded(txt, pts_zx, method=m_kind, code_type=fmt_name)
+                if found:
+                    return found
+            except Exception:  # noqa: BLE001
+                pass
+
+        # 1. QR Code OpenCV (thu Aruco detector truoc, fallback sang QRCodeDetector chuan)
         for det in (self._qr, self._qr_fallback):
             try:
                 ok, texts, points, _ = det.detectAndDecodeMulti(img)
@@ -431,7 +465,7 @@ class SkuScanner:
         offset_xy: tuple[int, int],
         orig_scale: float,
         full_shape: tuple[int, int],
-        max_candidates: int = 3,
+        max_candidates: int = 12,
     ) -> list[SkuDetection]:
         templates = self.gallery.snapshot_templates()
         if not templates:
@@ -450,42 +484,71 @@ class SkuScanner:
             if desc_t.shape[0] < 4 or desc_t.shape[1] != desc_f.shape[1] or desc_t.dtype != desc_f.dtype:
                 continue
             matches = self._matcher.knnMatch(desc_t, desc_f, k=2)
-            good = [m[0] for m in matches if len(m) == 2 and m[0].distance < self.ratio_thresh * m[1].distance]
-            if len(good) < self.min_inliers:
-                continue
-
-            src_pts = tpl["kps_xy"][[m.queryIdx for m in good]].reshape(-1, 1, 2)
-            dst_pts = pts_f[[m.trainIdx for m in good]].reshape(-1, 1, 2)
-            H, mask = cv2.findHomography(src_pts, dst_pts, self._ransac_flag, self.reproj_thresh)
-            if H is None or mask is None:
-                continue
-            inliers = int(mask.ravel().sum())
-            inlier_ratio = inliers / max(1, len(good))
-            if inliers < self.min_inliers or inlier_ratio < self.min_inlier_ratio:
+            remaining = [m[0] for m in matches if len(m) == 2 and m[0].distance < self.ratio_thresh * m[1].distance]
+            if len(remaining) < self.min_inliers:
                 continue
 
             tw, th = float(tpl["width"]), float(tpl["height"])
             corners = np.array([[[0.0, 0.0]], [[tw, 0.0]], [[tw, th]], [[0.0, th]]], dtype=np.float32)
-            proj = cv2.perspectiveTransform(corners, H).reshape(4, 2)
-            if not is_valid_projected_quad(proj, gray.shape[:2]):
-                continue
 
-            quad_full = proj / orig_scale + np.array([ox, oy], dtype=np.float32)
-            bbox = _quad_to_bbox(quad_full, w_full, h_full)
-            conf = min(1.0, (inliers / max(float(self.min_inliers) * 2.0, 1.0)) * 0.6 + inlier_ratio * 0.4)
-            raw_hits.append(SkuDetection(
-                sku_id=int(tpl["sku_id"]),
-                code=str(tpl["code"]),
-                name=str(tpl["name"]),
-                barcode=tpl.get("barcode"),
-                uom=str(tpl.get("uom") or "pcs"),
-                method=f"{self.feature_type}_ransac",
-                score=round(float(conf), 4),
-                inliers=inliers,
-                bbox=bbox,
-                polygon=[(round(float(p[0]), 2), round(float(p[1]), 2)) for p in quad_full],
-                code_type=None,
-            ))
+            # Sequential Multi-Instance RANSAC (Experimental): sau moi lan tim thay 1 hop hop le,
+            # loai cac diem anh nam trong tu giac hop do de tim tiep cac hop cung ma SKU nam canh nhau.
+            found_for_tpl = 0
+            for _ in range(self.max_instances):
+                if len(remaining) < self.min_inliers:
+                    break
+                src_pts = tpl["kps_xy"][[m.queryIdx for m in remaining]].reshape(-1, 1, 2)
+                dst_pts = pts_f[[m.trainIdx for m in remaining]].reshape(-1, 1, 2)
+                H, mask = cv2.findHomography(src_pts, dst_pts, self._ransac_flag, self.reproj_thresh)
+                if H is None or mask is None:
+                    break
+                mask_bool = mask.ravel().astype(bool)
+                inliers = int(mask_bool.sum())
+                inlier_ratio = inliers / max(1, len(remaining))
+                if inliers < self.min_inliers:
+                    break
+                # Hop dau tien cua 1 mau: giu nguyen nguong chuan (min_inlier_ratio) de khong tang nhan nham;
+                # chi cho phep thay bang bang chung rat manh (>= 2 * min_inliers). Tu hop thu 2 tro di (cac diem
+                # cua hop truoc da bi loai) moi noi sang 1.5 * min_inliers vi mau so len(remaining) da thay doi.
+                strong = 2.0 if found_for_tpl == 0 else 1.5
+                if inlier_ratio < self.min_inlier_ratio and inliers < int(round(self.min_inliers * strong)):
+                    break
+
+                proj = cv2.perspectiveTransform(corners, H).reshape(4, 2)
+                if not is_valid_projected_quad(proj, gray.shape[:2]):
+                    # Bo tap inliers gia vua gay suy bien de tranh lap vo han
+                    remaining = [m for m, keep_m in zip(remaining, ~mask_bool) if keep_m]
+                    continue
+
+                quad_full = proj / orig_scale + np.array([ox, oy], dtype=np.float32)
+                bbox = _quad_to_bbox(quad_full, w_full, h_full)
+                eff_ratio = max(inlier_ratio, min(1.0, inliers / max(float(self.min_inliers) * 2.0, 1.0)))
+                conf = min(1.0, (inliers / max(float(self.min_inliers) * 2.0, 1.0)) * 0.6 + eff_ratio * 0.4)
+                raw_hits.append(SkuDetection(
+                    sku_id=int(tpl["sku_id"]),
+                    code=str(tpl["code"]),
+                    name=str(tpl["name"]),
+                    barcode=tpl.get("barcode"),
+                    uom=str(tpl.get("uom") or "pcs"),
+                    method=f"{self.feature_type}_ransac",
+                    score=round(float(conf), 4),
+                    inliers=inliers,
+                    bbox=bbox,
+                    polygon=[(round(float(p[0]), 2), round(float(p[1]), 2)) for p in quad_full],
+                    code_type=None,
+                ))
+                found_for_tpl += 1
+
+                poly_cnt = proj.astype(np.float32).reshape(-1, 1, 2)
+                next_rem = []
+                for idx_m, m in enumerate(remaining):
+                    if mask_bool[idx_m]:
+                        continue
+                    pt = (float(pts_f[m.trainIdx, 0]), float(pts_f[m.trainIdx, 1]))
+                    if cv2.pointPolygonTest(poly_cnt, pt, True) >= -4.0:
+                        continue
+                    next_rem.append(m)
+                remaining = next_rem
 
         # Sap xep theo so inliers & score giam dan, loai bo khung chong lap (NMS theo IoU > 0.5)
         raw_hits.sort(key=lambda d: (d.inliers, d.score), reverse=True)
@@ -582,43 +645,142 @@ class _SkuTrack:
     last_seen: float
     hits: int = 1
     committed: bool = False
+    side: int | None = None
+    direction: str = "IN"        # IN (Nhap kho) | OUT (Xuat kho)
+
+    @property
+    def center(self) -> tuple[float, float]:
+        return (float(self.bbox[0] + self.bbox[2]) * 0.5, float(self.bbox[1] + self.bbox[3]) * 0.5)
+
+
+def _line_side(pt: tuple[float, float], line_norm: list[list[float]], frame_shape: tuple[int, int]) -> int:
+    h, w = max(1, int(frame_shape[0])), max(1, int(frame_shape[1]))
+    (ax, ay), (bx, by) = (line_norm[0][0] * w, line_norm[0][1] * h), (line_norm[1][0] * w, line_norm[1][1] * h)
+    cx, cy = pt
+    cross = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax)
+    return 1 if cross >= 0.0 else -1
+
+
+def _crossing_direction(prev_side: int | None, cur_side: int, line_norm: list[list[float]], in_when: str) -> str | None:
+    if prev_side is None or prev_side == cur_side:
+        return None
+    dx = float(line_norm[1][0] - line_norm[0][0])
+    dy = float(line_norm[1][1] - line_norm[0][1])
+    iw = (in_when or "down").lower()
+    # Voi line nam ngang tu trai -> phai (dx >= 0): cross tang (-1 -> 1) la di xuong (down)
+    # Voi line thang dung tu tren -> duoi (dy > 0): cross tang (-1 -> 1) la sang trai (left)
+    if iw in ("down", "up"):
+        positive_is_down = dx >= 0.0
+        going_down = (cur_side > prev_side) if positive_is_down else (cur_side < prev_side)
+        is_in = going_down if iw == "down" else (not going_down)
+    else:
+        positive_is_left = dy >= 0.0
+        going_right = (cur_side < prev_side) if positive_is_left else (cur_side > prev_side)
+        is_in = going_right if iw == "right" else (not going_right)
+    return "IN" if is_in else "OUT"
 
 
 class SkuTrackCounter:
-    """Bam vet kien hang qua cac frame va chong dem trung:
-    - Kien hang phai on dinh >= min_hold_sec moi tinh +1 su kien.
-    - Sau khi dem 1 ma SKU, ma do bi khoa trong cooldown_sec (hoac chi dem lai sau khi kien cu roi khung).
+    """Bam vet kien hang qua cac frame, ho tro 2 che do dem:
+    - count_mode == 'hold': kien hang giu on dinh >= min_hold_sec -> +1 (khoa ma hoac vung trong cooldown_sec).
+    - count_mode == 'line': kien hang cat qua vach line_norm -> +1 kem phan chieu IN (Nhap) / OUT (Xuat).
     """
 
-    def __init__(self, min_hold_sec: float = 0.4, cooldown_sec: float = 4.0,
-                 max_age: float = 1.2, iou_thr: float = 0.25):
+    def __init__(
+        self,
+        min_hold_sec: float = 0.4,
+        cooldown_sec: float = 4.0,
+        max_age: float = 1.2,
+        iou_thr: float = 0.25,
+        count_mode: str = "hold",
+        line_norm: list[list[float]] | None = None,
+        in_when: str = "down",
+    ):
         self.min_hold_sec = max(0.0, float(min_hold_sec))
         self.cooldown_sec = max(0.0, float(cooldown_sec))
         self.max_age = max(0.1, float(max_age))
         self.iou_thr = float(iou_thr)
+        self.count_mode = count_mode if count_mode in ("hold", "line") else "hold"
+        self.line_norm = line_norm if (line_norm and len(line_norm) == 2) else [[0.0, 0.55], [1.0, 0.55]]
+        self.in_when = in_when if in_when in ("down", "up", "right", "left") else "down"
         self.tracks: dict[int, _SkuTrack] = {}
         self._next_id = 1
         self._last_commit_at: dict[str, float] = {}
+        self._recent_box_commits: list[tuple[str, tuple[float, float, float, float], float]] = []
+        self._lock = threading.RLock()
 
     def reset(self) -> None:
-        self.tracks.clear()
-        self._last_commit_at.clear()
+        with self._lock:
+            self.tracks.clear()
+            self._last_commit_at.clear()
+            self._recent_box_commits.clear()
 
-    def update(self, detections: list[SkuDetection], now: float | None = None) -> tuple[list[_SkuTrack], list[_SkuTrack]]:
+    def configure(
+        self,
+        count_mode: str | None = None,
+        line_norm: list[list[float]] | None = None,
+        in_when: str | None = None,
+        min_hold_sec: float | None = None,
+        cooldown_sec: float | None = None,
+    ) -> None:
+        with self._lock:
+            if count_mode in ("hold", "line") and count_mode != self.count_mode:
+                self.count_mode = count_mode
+                self.reset()
+            if line_norm is not None and len(line_norm) == 2:
+                self.line_norm = [[float(line_norm[0][0]), float(line_norm[0][1])],
+                                  [float(line_norm[1][0]), float(line_norm[1][1])]]
+                for tr in self.tracks.values():
+                    tr.side = None
+            if in_when in ("down", "up", "right", "left"):
+                self.in_when = in_when
+            if min_hold_sec is not None:
+                self.min_hold_sec = max(0.0, float(min_hold_sec))
+            if cooldown_sec is not None:
+                self.cooldown_sec = max(0.0, float(cooldown_sec))
+
+    def update(
+        self,
+        detections: list[SkuDetection],
+        now: float | None = None,
+        frame_shape: tuple[int, int] = (720, 1280),
+    ) -> tuple[list[_SkuTrack], list[_SkuTrack]]:
+        with self._lock:
+            return self._update_locked(detections, now=now, frame_shape=frame_shape)
+
+    def _update_locked(
+        self,
+        detections: list[SkuDetection],
+        now: float | None = None,
+        frame_shape: tuple[int, int] = (720, 1280),
+    ) -> tuple[list[_SkuTrack], list[_SkuTrack]]:
         now = float(now if now is not None else time.time())
+        self._recent_box_commits = [
+            it for it in self._recent_box_commits if (now - it[2]) < self.cooldown_sec
+        ]
         used_t, used_d = set(), set()
+        fh, fw = max(1, int(frame_shape[0])), max(1, int(frame_shape[1]))
+        diag = float(np.hypot(fw, fh))
 
-        # 1. Noi detection vao track dang ton tai (uu tien cung key + IoU >= thr, du phong gan tam)
+        # 1. Noi detection vao track dang ton tai (uu tien cung key + IoU >= thr, du phong dich chuyen bang tai)
         pairs = []
         for tid, tr in self.tracks.items():
             tb = (float(tr.bbox[0]), float(tr.bbox[1]), float(tr.bbox[2]), float(tr.bbox[3]))
+            tcx, tcy = tr.center
             for di, d in enumerate(detections):
                 key = f"sku:{d.code}" if d.accepted else f"unk:{d.barcode or '?'}"
                 if key != tr.key:
                     continue
                 ov = _box_iou(tb, d.bbox)
                 if ov >= self.iou_thr:
-                    pairs.append((ov, tid, di))
+                    pairs.append((1.0 + ov, tid, di))
+                elif self.count_mode == "line":
+                    dcx = (d.bbox[0] + d.bbox[2]) * 0.5
+                    dcy = (d.bbox[1] + d.bbox[3]) * 0.5
+                    dist_norm = float(np.hypot(dcx - tcx, dcy - tcy)) / max(1.0, diag)
+                    if dist_norm <= 0.28:
+                        pairs.append((0.5 - dist_norm, tid, di))
+
         for _, tid, di in sorted(pairs, reverse=True):
             if tid in used_t or di in used_d:
                 continue
@@ -651,6 +813,7 @@ class SkuTrackCounter:
                 first_seen=now,
                 last_seen=now,
             )
+            tr.side = _line_side(tr.center, self.line_norm, frame_shape)
             self._next_id += 1
             self.tracks[tr.track_id] = tr
 
@@ -659,19 +822,52 @@ class SkuTrackCounter:
             del self.tracks[tr.track_id]
 
         newly_committed: list[_SkuTrack] = []
+        active_same_key_count: dict[str, int] = {}
         for tr in self.tracks.values():
+            if now - tr.last_seen <= 0.25:
+                active_same_key_count[tr.key] = active_same_key_count.get(tr.key, 0) + 1
+
+        for tr in self.tracks.values():
+            cur_side = _line_side(tr.center, self.line_norm, frame_shape)
+            crossed = _crossing_direction(tr.side, cur_side, self.line_norm, self.in_when)
+            tr.side = cur_side
+            if crossed is not None:
+                tr.direction = crossed
+
             if tr.committed:
                 continue
+
+            if self.count_mode == "line":
+                if crossed is None:
+                    continue
+                tr.committed = True
+                self._last_commit_at[tr.key] = now
+                newly_committed.append(tr)
+                continue
+
+            # count_mode == "hold":
             held = (now - tr.first_seen) >= self.min_hold_sec
             if not held:
                 continue
-            last_t = self._last_commit_at.get(tr.key, -1e18)
-            if (now - last_t) < self.cooldown_sec:
-                # Van trong thoi gian cho sau lan dem truoc: danh dau da xu ly tren track nay de khong nhay dem giua chung
-                tr.committed = True
-                continue
+            tb = (float(tr.bbox[0]), float(tr.bbox[1]), float(tr.bbox[2]), float(tr.bbox[3]))
+            # Neu co >= 2 hop cung ma dang hien dien dong thoi o cac vi tri khac nhau (Multi-Instance):
+            # chong trung theo o vi tri (IoU > 0.35), con neu chi 1 hop don le thi giu cooldown theo key nhu cu.
+            if active_same_key_count.get(tr.key, 1) > 1:
+                dup_box = any(
+                    k == tr.key and _box_iou(tb, prev_b) > 0.35
+                    for k, prev_b, _ in self._recent_box_commits
+                )
+                if dup_box:
+                    tr.committed = True
+                    continue
+            else:
+                last_t = self._last_commit_at.get(tr.key, -1e18)
+                if (now - last_t) < self.cooldown_sec:
+                    tr.committed = True
+                    continue
             tr.committed = True
             self._last_commit_at[tr.key] = now
+            self._recent_box_commits.append((tr.key, tb, now))
             newly_committed.append(tr)
 
         return list(self.tracks.values()), newly_committed

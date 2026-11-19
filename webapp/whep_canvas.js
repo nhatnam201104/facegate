@@ -30,7 +30,12 @@
       }
       if (nextMode) this.lastMode = nextMode;
       this.lastRecvMs = now;
-      this.overlayBuf.push({ recvMs: now, objects: packet.objects || [], mode: nextMode });
+      this.overlayBuf.push({
+        recvMs: now,
+        objects: packet.objects || [],
+        zones: packet.zones || [],
+        mode: nextMode
+      });
       if (this.overlayBuf.length > 12) this.overlayBuf.shift();
     }
 
@@ -125,6 +130,27 @@
       const dtSec = dtMs / 1000.0;
       ctx2d.lineWidth = Math.max(2, Math.round(2 * dpr));
       ctx2d.font = `600 ${Math.round(14 * dpr)}px system-ui, -apple-system, "Segoe UI", sans-serif`;
+
+      for (const z of (snap.zones || [])) {
+        const poly = z.polygon || [];
+        if (poly.length < 3) continue;
+        const zCol = z.alert ? ROLE_COLORS.alert : (z.present_count > 0 ? ROLE_COLORS.ok : "#50c8ff");
+        ctx2d.save();
+        ctx2d.beginPath();
+        poly.forEach(([px, py], idx) => {
+          if (idx === 0) ctx2d.moveTo(px * cw, py * ch);
+          else ctx2d.lineTo(px * cw, py * ch);
+        });
+        ctx2d.closePath();
+        ctx2d.fillStyle = zCol + "28";
+        ctx2d.fill();
+        ctx2d.strokeStyle = zCol;
+        ctx2d.stroke();
+        const tag = `${z.code}: ${z.present_count}/${z.min_persons}${z.alert ? ` (TRỐNG ${z.empty_sec}s!)` : ""}`;
+        ctx2d.fillStyle = zCol;
+        ctx2d.fillText(tag, poly[0][0] * cw + 6 * dpr, Math.max(18 * dpr, poly[0][1] * ch - 6 * dpr));
+        ctx2d.restore();
+      }
 
       for (const o of snap.objects) {
         const bn = o.bbox_norm || [0, 0, 0, 0];

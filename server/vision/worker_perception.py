@@ -167,9 +167,9 @@ class PerceptionWorker:
         # Loa Tapo nhac nhin vao camera / canh bao gia mao (dong thoi day goi IPC camera_chime len Web)
         self.look_prompter = create_look_prompter(cfg, on_event=self._chime_events.append)
         self._stop = False
-        # Control plane day xuong qua IPC khi nguoi dung gat sang tab Hang hoa
+        # Control plane day xuong qua IPC khi nguoi dung gat sang tab Hang hoa / Khu vuc xuong
         self.mode = str(cfg.get("pipeline", {}).get("mode", "attendance")).strip().lower()
-        if self.mode not in ("attendance", "sku"):
+        if self.mode not in ("attendance", "sku", "zone"):
             self.mode = "attendance"
 
     def process_frame(self, frame: np.ndarray, ts_ns: int | None = None, decode_ms: float = 0.0) -> tuple[dict, list[dict]]:
@@ -180,8 +180,9 @@ class PerceptionWorker:
         pcfg = self.cfg["pipeline"]
         max_faces = int(pcfg["max_faces"])
 
-        if getattr(self, "mode", "attendance") == "sku":
-            # Che do Hang hoa: khong cham cong, khong ve overlay khuon mat (Pipeline xu ly SKU)
+        cur_mode = getattr(self, "mode", "attendance")
+        if cur_mode in ("sku", "zone"):
+            # Che do Hang hoa / Khu vuc xuong: tat hoan toan FaceID nang o worker (Pipeline xu ly SKU / Zone)
             self.tracker.tracks.clear()
             self._chime_events.clear()
             self.seq += 1
@@ -192,7 +193,7 @@ class PerceptionWorker:
                 "ts_server_ns": ts_ns,
                 "infer_ms": round((time.perf_counter() - t0) * 1000.0, 2),
                 "decode_ms": round(decode_ms, 2),
-                "mode": "sku",
+                "mode": cur_mode,
                 "objects": [],
             }, []
 
@@ -468,7 +469,7 @@ async def run_worker_loop(cfg: dict, sock_path: Path, port: int = 18091) -> None
                 worker.gallery.reload()
             elif cmd.get("cmd") == "set_mode":
                 m = str(cmd.get("mode", "")).strip().lower()
-                if m in ("attendance", "sku"):
+                if m in ("attendance", "sku", "zone"):
                     worker.mode = m
                     worker.tracker.tracks.clear()
 
@@ -514,8 +515,11 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--sock", default="")
     ap.add_argument("--port", type=int, default=18091)
+    ap.add_argument("--mode", default="")
     args = ap.parse_args()
     cfg = load_config()
+    if args.mode in ("attendance", "sku", "zone"):
+        cfg["pipeline"]["mode"] = args.mode
     sock = Path(args.sock) if args.sock else (cfg["_paths"]["run"] / "perception.sock")
     asyncio.run(run_worker_loop(cfg, sock_path=sock, port=args.port))
 

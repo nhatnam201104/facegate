@@ -180,6 +180,36 @@ hrm:
     api_key: ""
     api_secret: ""
     device_id: gate-1
+    warehouse: "Stores - MSW"   # kho mac dinh khi day Draft Stock Entry tu SKU
+
+sku:                       # Phase 2A: Nhan dien Hang hoa / SKU & kiem dem kho (tat FaceID nang)
+  feature_type: orb        # orb (nhanh tren CPU) | sift
+  orb_nfeatures: 800
+  sift_nfeatures: 600
+  min_template_kps: 30
+  min_inliers: 12
+  min_inlier_ratio: 0.25
+  ratio_thresh: 0.75
+  ransac_reproj_thresh: 4.5
+  min_blur: 20.0
+  scan_max_width: 960
+  max_instances: 4         # so hop cung ma SKU toi da tim trong 1 khung (Sequential RANSAC Experimental)
+  count_mode: hold         # hold (giu on dinh min_hold_sec) | line (cat qua vach IN/OUT)
+  min_hold_sec: 0.4
+  cooldown_sec: 4.0
+  track_max_age: 1.2
+  line: [[0.0, 0.55], [1.0, 0.55]]  # vach dem chuan hoa 0..1 khi count_mode: line
+  in_when: down            # down | up | right | left (chieu di chuyen tinh la Nhap kho IN)
+  log_unknown: true
+  prefer_code_short_circuit: true
+
+zones:                     # Phase 2A: Giam sat hien dien khu vuc xuong (Time-Based YOLOX-Nano, tat FaceID)
+  person_conf: 0.45
+  enter_confirm_sec: 1.0   # dung trong vung >= N giay moi xac nhan vao vung
+  min_dwell_sec: 3.0       # phien hien dien >= N giay moi luu DB
+  exit_grace_sec: 2.0      # mat dau qua N giay moi dong phien
+  alert_empty_sec: 0.0     # > 0: canh bao khi vung thieu nguoi (< min_persons) qua N giay
+  alert_cooldown_sec: 30.0
 
 storage:
   data_dir: data

@@ -13,10 +13,11 @@ import numpy as np
 # Phai trung voi server.api.security.MAGIC_PREFIX (khong import de tranh keo fastapi vao tang DB)
 ENCRYPTED_PREFIX = b"FG1$"
 SKU_CODE_RE = re.compile(r"^[A-Za-z0-9_.\-]{1,64}$")
+HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 SKU_EVENT_COLS = (
     "ts", "camera", "sku_id", "code", "name", "barcode", "method",
     "score", "inliers", "direction", "qty", "uom", "track_id",
-    "snapshot", "clip", "meta_json",
+    "snapshot", "clip", "meta_json", "stock_batch_id",
 )
 
 
@@ -25,6 +26,15 @@ def validate_sku_code(code: str) -> str:
     if not SKU_CODE_RE.match(c) or c in {".", ".."}:
         raise ValueError("Mã SKU chỉ gồm chữ, số, - _ . (tối đa 64 ký tự)")
     return c
+
+
+def validate_hex_color(color: str | None, default: str = "#3cc85a") -> str:
+    c = (color or "").strip()
+    if not c:
+        return default
+    if not HEX_COLOR_RE.match(c):
+        raise ValueError("Màu vùng phải có định dạng hex #RRGGBB (vd #3cc85a)")
+    return c.lower()
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS employees (
@@ -178,7 +188,69 @@ CREATE TABLE IF NOT EXISTS sku_events (
 );
 CREATE INDEX IF NOT EXISTS ix_sku_ev_ts ON sku_events(ts);
 CREATE INDEX IF NOT EXISTS ix_sku_ev_code ON sku_events(code);
+
+CREATE TABLE IF NOT EXISTS sku_stock_batches (
+    id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+    idempotency_key TEXT UNIQUE NOT NULL,
+    created_at REAL NOT NULL,
+    actor TEXT NOT NULL,
+    stock_entry_type TEXT NOT NULL DEFAULT 'Material Receipt',
+    direction TEXT NOT NULL DEFAULT 'IN',
+    warehouse TEXT,
+    date_from TEXT,
+    date_to TEXT,
+    items_json TEXT NOT NULL,
+    total_qty REAL NOT NULL DEFAULT 0.0,
+    sync_status TEXT NOT NULL DEFAULT 'pending',
+    remote_doc_id TEXT,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_sku_batch_status ON sku_stock_batches(sync_status);
+
+CREATE TABLE IF NOT EXISTS zones (
+    id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+    code TEXT UNIQUE NOT NULL,
+    name TEXT NOT NULL,
+    camera_id TEXT NOT NULL DEFAULT 'gate-1',
+    polygon_json TEXT NOT NULL,
+    enter_confirm_sec REAL NOT NULL DEFAULT 1.0,
+    min_dwell_sec REAL NOT NULL DEFAULT 3.0,
+    exit_grace_sec REAL NOT NULL DEFAULT 2.0,
+    alert_empty_sec REAL NOT NULL DEFAULT 0.0,
+    min_persons INTEGER NOT NULL DEFAULT 1,
+    color TEXT NOT NULL DEFAULT '#3cc85a',
+    status TEXT NOT NULL DEFAULT 'active',
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_zones_status ON zones(status);
+
+CREATE TABLE IF NOT EXISTS zone_presence_sessions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+    zone_id INTEGER NOT NULL REFERENCES zones(id) ON DELETE CASCADE,
+    zone_code TEXT NOT NULL,
+    zone_name TEXT NOT NULL,
+    camera TEXT NOT NULL DEFAULT 'gate-1',
+    person_track_id INTEGER NOT NULL,
+    enter_ts REAL NOT NULL,
+    exit_ts REAL,
+    dwell_sec REAL,
+    status TEXT NOT NULL DEFAULT 'open',
+    snapshot TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_zone_sess_enter ON zone_presence_sessions(enter_ts);
+CREATE INDEX IF NOT EXISTS ix_zone_sess_zone ON zone_presence_sessions(zone_code);
 """
+
+SKU_ITEM_COLUMNS = {
+    "erp_item_code": "TEXT",
+    "erp_warehouse": "TEXT",
+}
+
+SKU_EVENT_MIG_COLUMNS = {
+    "stock_batch_id": "INTEGER",
+}
 
 EMBEDDING_COLUMNS = {
     "pose_group": "TEXT NOT NULL DEFAULT 'frontal'",
@@ -209,10 +281,17 @@ APPEARANCE_COLUMNS = {
     "sidecar_path": "TEXT",
 }
 
+SKU_BATCH_COLUMNS = {
+    "next_retry_at": "REAL",
+}
+
 MIGRATED_COLUMNS = {
+    "sku_stock_batches": SKU_BATCH_COLUMNS,
     "embeddings": EMBEDDING_COLUMNS,
     "events": EVENT_COLUMNS,
     "appearances": APPEARANCE_COLUMNS,
+    "sku_items": SKU_ITEM_COLUMNS,
+    "sku_events": SKU_EVENT_MIG_COLUMNS,
 }
 
 
@@ -532,13 +611,17 @@ class DB:
         return r[0] if r else None
 
     def upsert_sku_item(self, code: str, name: str, barcode: str | None = None,
-                        uom: str = "pcs", status: str = "active") -> int:
+                        uom: str = "pcs", status: str = "active",
+                        erp_item_code: str | None = None,
+                        erp_warehouse: str | None = None) -> int:
         code_c = validate_sku_code(code)
         name_c = (name or "").strip()
         if not name_c:
             raise ValueError("Tên SKU không được rỗng")
         b_c = (barcode or "").strip() or None
         uom_c = (uom or "pcs").strip() or "pcs"
+        erp_code_c = (erp_item_code or "").strip() or None
+        erp_wh_c = (erp_warehouse or "").strip() or None
         now = time.time()
         existing = self.get_sku_by_code(code_c)
         if b_c:
@@ -546,14 +629,19 @@ class DB:
             if dup_bc is not None and (not existing or int(dup_bc["id"]) != int(existing["id"])):
                 raise ValueError(f"Mã vạch '{b_c}' đã thuộc về SKU '{dup_bc['code']}'")
         if existing:
+            final_erp_code = erp_code_c if erp_code_c is not None else existing.get("erp_item_code")
+            final_erp_wh = erp_wh_c if erp_wh_c is not None else existing.get("erp_warehouse")
             self.x(
-                "UPDATE sku_items SET name=?, barcode=?, uom=?, status=?, updated_at=? WHERE id=?",
-                (name_c, b_c, uom_c, status, now, existing["id"]),
+                """UPDATE sku_items
+                   SET name=?, barcode=?, uom=?, status=?, erp_item_code=?, erp_warehouse=?, updated_at=?
+                   WHERE id=?""",
+                (name_c, b_c, uom_c, status, final_erp_code, final_erp_wh, now, existing["id"]),
             )
             return int(existing["id"])
         return self.x(
-            "INSERT INTO sku_items(code,name,barcode,uom,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
-            (code_c, name_c, b_c, uom_c, status, now, now),
+            """INSERT INTO sku_items(code,name,barcode,uom,status,erp_item_code,erp_warehouse,created_at,updated_at)
+               VALUES(?,?,?,?,?,?,?,?,?)""",
+            (code_c, name_c, b_c, uom_c, status, erp_code_c, erp_wh_c, now, now),
         )
 
     def list_sku_items(self) -> list[dict]:
@@ -730,25 +818,29 @@ class DB:
             f"""SELECT
                     code,
                     COALESCE(method, 'unknown') AS method,
+                    COALESCE(direction, 'IN') AS dir,
                     COUNT(*) AS cnt,
                     COALESCE(SUM(COALESCE(qty, 1.0)), 0.0) AS sum_qty,
                     MAX(ts) AS max_ts,
                     MAX(name) AS any_name,
                     MAX(uom) AS any_uom
                 FROM sku_events{known_where}
-                GROUP BY code, COALESCE(method, 'unknown')""",
+                GROUP BY code, COALESCE(method, 'unknown'), COALESCE(direction, 'IN')""",
             tuple(args),
         )
 
         by_code: dict[str, dict] = {}
         meta_ts: dict[str, float] = {}
         total_qty = 0.0
+        total_in = 0.0
+        total_out = 0.0
         for r in grouped:
             c = str(r["code"])
             cnt = int(r["cnt"] or 0)
             sq = float(r["sum_qty"] or 0.0)
             mts = float(r["max_ts"] or 0.0)
             m = str(r["method"] or "unknown")
+            d = str(r["dir"] or "IN").upper()
             item = by_code.get(c)
             if item is None:
                 item = {
@@ -757,6 +849,8 @@ class DB:
                     "uom": r.get("any_uom") or "pcs",
                     "count": 0,
                     "qty": 0.0,
+                    "in_qty": 0.0,
+                    "out_qty": 0.0,
                     "last_ts": mts,
                     "methods": {},
                 }
@@ -770,17 +864,293 @@ class DB:
                 meta_ts[c] = mts
             item["count"] += cnt
             item["qty"] += sq
+            if d == "OUT":
+                item["out_qty"] += sq
+                total_out += sq
+            else:
+                item["in_qty"] += sq
+                total_in += sq
             item["last_ts"] = max(item["last_ts"], mts)
             item["methods"][m] = item["methods"].get(m, 0) + cnt
             total_qty += sq
 
         for item in by_code.values():
             item["qty"] = round(item["qty"], 3)
+            item["in_qty"] = round(item["in_qty"], 3)
+            item["out_qty"] = round(item["out_qty"], 3)
         summary = sorted(by_code.values(), key=lambda x: (-x["qty"], x["code"]))
         return {
             "total_events": int(totals["total_events"] or 0),
             "total_qty": round(total_qty, 3),
+            "in_qty": round(total_in, 3),
+            "out_qty": round(total_out, 3),
             "unknown_count": int(totals["unknown_count"] or 0),
             "sku_types": len(summary),
+            "summary": summary,
+        }
+
+    # --- SKU ERP outbox (sku_stock_batches) ---
+    def create_sku_stock_batch(
+        self,
+        *,
+        idempotency_key: str,
+        actor: str,
+        direction: str,
+        stock_entry_type: str,
+        warehouse: str,
+        date_from: str,
+        date_to: str,
+        items: list[dict],
+        event_ids: list[int],
+    ) -> dict:
+        with self.lock:
+            existing = self.q("SELECT * FROM sku_stock_batches WHERE idempotency_key=?", (idempotency_key,))
+            if existing:
+                row = existing[0]
+                row["items"] = json.loads(row["items_json"]) if row.get("items_json") else []
+                return row
+            total_qty = round(sum(float(it.get("qty") or 0.0) for it in items), 3)
+            batch_id = self.x(
+                """INSERT INTO sku_stock_batches(
+                       idempotency_key,created_at,actor,stock_entry_type,direction,
+                       warehouse,date_from,date_to,items_json,total_qty,sync_status
+                   ) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    idempotency_key, time.time(), actor, stock_entry_type, direction,
+                    warehouse, date_from, date_to, json.dumps(items, ensure_ascii=False),
+                    total_qty, "pending",
+                ),
+            )
+            if event_ids:
+                ph = ",".join("?" * len(event_ids))
+                self.x(
+                    f"UPDATE sku_events SET stock_batch_id=? WHERE id IN ({ph}) AND stock_batch_id IS NULL",
+                    (batch_id, *event_ids),
+                )
+            row = self.q("SELECT * FROM sku_stock_batches WHERE id=?", (batch_id,))[0]
+            row["items"] = items
+            return row
+
+    SKU_BATCH_BACKOFF_BASE_SEC = 10.0
+    SKU_BATCH_BACKOFF_MAX_SEC = 1800.0
+
+    def pending_sku_stock_batches(self, now: float | None = None) -> list[dict]:
+        """Lo can day: pending hoac failed da den han thu lai (backoff luy thua, khong khoa vinh vien)."""
+        ts = float(now if now is not None else time.time())
+        rows = self.q(
+            """SELECT * FROM sku_stock_batches
+               WHERE sync_status IN ('pending', 'failed') AND (next_retry_at IS NULL OR next_retry_at <= ?)
+               ORDER BY id ASC LIMIT 50""",
+            (ts,),
+        )
+        for r in rows:
+            r["items"] = json.loads(r["items_json"]) if r.get("items_json") else []
+        return rows
+
+    def set_sku_stock_batch_status(
+        self,
+        batch_id: int,
+        status: str,
+        remote_doc_id: str | None = None,
+        error: str | None = None,
+    ) -> None:
+        with self.lock:
+            cur = self.q("SELECT attempts FROM sku_stock_batches WHERE id=?", (int(batch_id),))
+            attempts = int(cur[0]["attempts"] or 0) + 1 if cur else 1
+            next_retry = None
+            if status != "sent":
+                delay = min(self.SKU_BATCH_BACKOFF_MAX_SEC, self.SKU_BATCH_BACKOFF_BASE_SEC * (2 ** min(attempts, 10)))
+                next_retry = time.time() + delay
+            self.x(
+                """UPDATE sku_stock_batches
+                   SET sync_status=?, remote_doc_id=COALESCE(?, remote_doc_id),
+                       attempts=?, last_error=?, next_retry_at=?
+                   WHERE id=?""",
+                (status, remote_doc_id, attempts, error, next_retry, int(batch_id)),
+            )
+
+    def retry_sku_stock_batch(self, batch_id: int) -> bool:
+        """Dat lai han thu lai de lo failed duoc day ngay; khong dong vao lo da sent."""
+        with self.lock:
+            rows = self.q("SELECT sync_status FROM sku_stock_batches WHERE id=?", (int(batch_id),))
+            if not rows or rows[0]["sync_status"] == "sent":
+                return False
+            self.x("UPDATE sku_stock_batches SET next_retry_at=NULL WHERE id=?", (int(batch_id),))
+            return True
+
+    def list_sku_stock_batches(self, limit: int = 50) -> list[dict]:
+        rows = self.q("SELECT * FROM sku_stock_batches ORDER BY id DESC LIMIT ?", (int(limit),))
+        for r in rows:
+            r["items"] = json.loads(r["items_json"]) if r.get("items_json") else []
+        return rows
+
+    # --- Polygon Zones & Presence Sessions (GAP-04) ---
+    def upsert_zone(
+        self,
+        code: str,
+        name: str,
+        polygon: list[list[float]],
+        *,
+        camera_id: str = "gate-1",
+        enter_confirm_sec: float = 1.0,
+        min_dwell_sec: float = 3.0,
+        exit_grace_sec: float = 2.0,
+        alert_empty_sec: float = 0.0,
+        min_persons: int = 1,
+        color: str = "#3cc85a",
+        status: str = "active",
+    ) -> int:
+        code_c = validate_sku_code(code)
+        name_c = (name or "").strip()
+        if not name_c:
+            raise ValueError("Tên khu vực không được rỗng")
+        if status not in ("active", "disabled"):
+            raise ValueError("status không hợp lệ")
+        color_c = validate_hex_color(color)
+        poly_json = json.dumps([[round(float(p[0]), 4), round(float(p[1]), 4)] for p in polygon])
+        now = time.time()
+        existing = self.q("SELECT id FROM zones WHERE code=?", (code_c,))
+        if existing:
+            zid = int(existing[0]["id"])
+            self.x(
+                """UPDATE zones
+                   SET name=?, camera_id=?, polygon_json=?, enter_confirm_sec=?, min_dwell_sec=?,
+                       exit_grace_sec=?, alert_empty_sec=?, min_persons=?, color=?, status=?, updated_at=?
+                   WHERE id=?""",
+                (
+                    name_c, camera_id, poly_json, float(enter_confirm_sec), float(min_dwell_sec),
+                    float(exit_grace_sec), float(alert_empty_sec), max(1, int(min_persons)),
+                    color_c, status, now, zid,
+                ),
+            )
+            return zid
+        return self.x(
+            """INSERT INTO zones(
+                   code,name,camera_id,polygon_json,enter_confirm_sec,min_dwell_sec,
+                   exit_grace_sec,alert_empty_sec,min_persons,color,status,created_at,updated_at
+               ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                code_c, name_c, camera_id, poly_json, float(enter_confirm_sec), float(min_dwell_sec),
+                float(exit_grace_sec), float(alert_empty_sec), max(1, int(min_persons)),
+                color_c, status, now, now,
+            ),
+        )
+
+    def list_zones(self, active_only: bool = False) -> list[dict]:
+        sql = "SELECT * FROM zones" + (" WHERE status='active'" if active_only else "") + " ORDER BY id ASC"
+        rows = self.q(sql)
+        for r in rows:
+            r["polygon"] = json.loads(r["polygon_json"]) if r.get("polygon_json") else []
+        return rows
+
+    def set_zone_status(self, zone_id: int, status: str) -> None:
+        self.x("UPDATE zones SET status=?, updated_at=? WHERE id=?", (status, time.time(), int(zone_id)))
+
+    def delete_zone(self, zone_id: int) -> None:
+        self.x("DELETE FROM zones WHERE id=?", (int(zone_id),))
+
+    def open_zone_session(
+        self,
+        *,
+        zone_id: int,
+        zone_code: str,
+        zone_name: str,
+        camera: str,
+        person_track_id: int,
+        enter_ts: float,
+        snapshot: str | None = None,
+    ) -> int:
+        return self.x(
+            """INSERT INTO zone_presence_sessions(
+                   zone_id,zone_code,zone_name,camera,person_track_id,enter_ts,status,snapshot
+               ) VALUES(?,?,?,?,?,?,?,?)""",
+            (int(zone_id), zone_code, zone_name, camera, int(person_track_id), float(enter_ts), "open", snapshot),
+        )
+
+    def close_zone_session(self, session_id: int, exit_ts: float, dwell_sec: float) -> None:
+        self.x(
+            "UPDATE zone_presence_sessions SET exit_ts=?, dwell_sec=?, status='closed' WHERE id=?",
+            (float(exit_ts), round(float(dwell_sec), 2), int(session_id)),
+        )
+
+    def close_orphan_zone_sessions(self, now: float | None = None) -> int:
+        ts_end = float(now if now is not None else time.time())
+        open_rows = self.q("SELECT id, enter_ts FROM zone_presence_sessions WHERE status='open'")
+        for r in open_rows:
+            dw = max(0.0, ts_end - float(r["enter_ts"]))
+            self.close_zone_session(int(r["id"]), ts_end, dw)
+        return len(open_rows)
+
+    def list_zone_sessions(
+        self,
+        t0: float | None = None,
+        t1: float | None = None,
+        zone_code: str | None = None,
+        limit: int | None = 200,
+    ) -> list[dict]:
+        conds, args = [], []
+        if t0 is not None:
+            conds.append("enter_ts>=?")
+            args.append(float(t0))
+        if t1 is not None:
+            conds.append("enter_ts<?")
+            args.append(float(t1))
+        if zone_code:
+            conds.append("zone_code=?")
+            args.append(zone_code)
+        where = (" WHERE " + " AND ".join(conds)) if conds else ""
+        if limit is None:
+            return self.q(f"SELECT * FROM zone_presence_sessions{where} ORDER BY enter_ts DESC", tuple(args))
+        return self.q(
+            f"SELECT * FROM zone_presence_sessions{where} ORDER BY enter_ts DESC LIMIT ?",
+            (*args, int(limit)),
+        )
+
+    def summarize_zone_sessions(
+        self,
+        t0: float | None = None,
+        t1: float | None = None,
+        zone_code: str | None = None,
+    ) -> dict:
+        conds = ["status='closed'"]
+        args: list = []
+        if t0 is not None:
+            conds.append("enter_ts>=?")
+            args.append(float(t0))
+        if t1 is not None:
+            conds.append("enter_ts<?")
+            args.append(float(t1))
+        if zone_code:
+            conds.append("zone_code=?")
+            args.append(zone_code)
+        where = " WHERE " + " AND ".join(conds)
+        rows = self.q(
+            f"""SELECT
+                    zone_code,
+                    MAX(zone_name) AS zone_name,
+                    COUNT(*) AS sessions,
+                    COALESCE(SUM(COALESCE(dwell_sec, 0.0)), 0.0) AS total_dwell_sec,
+                    COALESCE(AVG(COALESCE(dwell_sec, 0.0)), 0.0) AS avg_dwell_sec,
+                    MAX(COALESCE(exit_ts, enter_ts)) AS last_ts
+                FROM zone_presence_sessions{where}
+                GROUP BY zone_code
+                ORDER BY total_dwell_sec DESC, zone_code ASC""",
+            tuple(args),
+        )
+        summary = [
+            {
+                "zone_code": r["zone_code"],
+                "zone_name": r["zone_name"] or r["zone_code"],
+                "sessions": int(r["sessions"] or 0),
+                "total_dwell_sec": round(float(r["total_dwell_sec"] or 0.0), 1),
+                "avg_dwell_sec": round(float(r["avg_dwell_sec"] or 0.0), 1),
+                "last_ts": float(r["last_ts"] or 0.0),
+            }
+            for r in rows
+        ]
+        return {
+            "total_sessions": sum(s["sessions"] for s in summary),
+            "total_dwell_sec": round(sum(s["total_dwell_sec"] for s in summary), 1),
+            "zones_with_activity": len(summary),
             "summary": summary,
         }

@@ -68,16 +68,21 @@ def crop_with_margin(img: np.ndarray, bbox: np.ndarray, m: float = 0.25) -> np.n
 class Pipeline:
     def __init__(self, cfg, db, engine, gallery, camera, hrm, broadcast, liveness=None, clips=None,
                  recognize: bool = True, pose=None, context_detector=None,
-                 sku_scanner=None, sku_gallery=None):
+                 sku_scanner=None, sku_gallery=None, zone_engine=None, zone_detector=None):
         self.cfg, self.db, self.engine, self.gallery = cfg, db, engine, gallery
         self.camera, self.hrm, self.broadcast = camera, hrm, broadcast
         self.liveness, self.clips = liveness, clips
         self.pose = pose
         self.ctx_det = context_detector
+        self.zone_det = zone_detector or context_detector
         self.sku_scanner = sku_scanner
         self.sku_gallery = sku_gallery
+        self.zone_engine = zone_engine
         self.mode = str(cfg.get("pipeline", {}).get("mode", "attendance")).lower()
-        if self.mode not in ("attendance", "sku"):
+        if self.mode not in ("attendance", "sku", "zone"):
+            self.mode = "attendance"
+        if self.mode == "zone" and self.zone_det is None:
+            log.warning("pipeline.mode=zone nhung khong co bo phat hien nguoi -> quay ve che do attendance")
             self.mode = "attendance"
         scfg = cfg.get("sku") or {}
         from .sku_scanner import SkuTrackCounter
@@ -85,8 +90,12 @@ class Pipeline:
             min_hold_sec=float(scfg.get("min_hold_sec", 0.4)),
             cooldown_sec=float(scfg.get("cooldown_sec", 4.0)),
             max_age=float(scfg.get("track_max_age", 1.2)),
+            count_mode=str(scfg.get("count_mode", "hold")),
+            line_norm=scfg.get("line") or [[0.0, 0.55], [1.0, 0.55]],
+            in_when=str(scfg.get("in_when", "down")),
         )
         self._last_sku_tracks: list = []
+        self._last_zone_eval: dict = {}
         self._sku_sharpness: float = 0.0
         # Tracker/counter chi duoc dung boi pipeline thread: set_mode chi dat co, don dep trong _run
         self._mode_lock = threading.Lock()
@@ -169,8 +178,11 @@ class Pipeline:
 
     def set_mode(self, mode: str) -> str:
         m = str(mode or "").strip().lower()
-        if m not in ("attendance", "sku"):
-            raise ValueError("mode phải là 'attendance' hoặc 'sku'")
+        if m not in ("attendance", "sku", "zone"):
+            raise ValueError("mode phải là 'attendance', 'sku' hoặc 'zone'")
+        if m == "zone" and self.zone_det is None:
+            raise ValueError("Chưa có bộ phát hiện người (cần model yolox_nano_coco.onnx và liveness.context.enabled=true) "
+                             "nên không thể bật chế độ Khu vực xưởng")
         with self._mode_lock:
             if m != self.mode:
                 self.mode = m
@@ -191,6 +203,9 @@ class Pipeline:
         self._end_all_tracks()
         self.sku_counter.reset()
         self._last_sku_tracks = []
+        if self.zone_engine is not None:
+            self.zone_engine.reset_runtime()
+        self._last_zone_eval = {}
         cam_name = self.cfg.get("camera", {}).get("name", "gate-1")
         cam_id = str(self.cfg.get("camera", {}).get("id", cam_name))
         self.broadcast({
@@ -200,6 +215,7 @@ class Pipeline:
             "frame_id": 0,
             "mode": self.mode,
             "objects": [],
+            "zones": [],
         })
         if self.sleeping:
             self._wake(time.time(), reason or "doi che do")
@@ -250,6 +266,22 @@ class Pipeline:
                 if now - last_st >= st_iv:
                     last_st = now
                     self._render_sku(frame, now)
+                continue
+            if self.mode == "zone":
+                if self.sleeping:
+                    self._wake(now, "che do khu vuc xuong")
+                if now - last_det >= det_iv:
+                    last_det = now
+                    try:
+                        self._process_zone(frame, now)
+                    except Exception:  # noqa: BLE001
+                        log.exception("Loi xu ly frame Zone")
+                    n_det += 1
+                if now - t_cnt >= 2.0:
+                    self.det_fps, n_det, t_cnt = n_det / (now - t_cnt), 0, now
+                if now - last_st >= st_iv:
+                    last_st = now
+                    self._render_zone(frame, now)
                 continue
             if self.sleeping:
                 if now - last_det < self.sleep_iv:
@@ -804,7 +836,7 @@ class Pipeline:
         )
         self._sku_sharpness = float(res.get("sharpness", 0.0))
         dets = res.get("detections") or []
-        tracks, committed = self.sku_counter.update(dets, now=now)
+        tracks, committed = self.sku_counter.update(dets, now=now, frame_shape=frame.shape[:2])
         self._last_sku_tracks = tracks
         cam_name = self.cfg["camera"]["name"]
         log_unk = bool(scfg.get("log_unknown", True))
@@ -822,11 +854,12 @@ class Pipeline:
                 "method": tr.method,
                 "score": round(float(tr.score), 4),
                 "inliers": int(tr.inliers),
-                "direction": "IN",
+                "direction": tr.direction or "IN",
                 "qty": 1.0,
                 "uom": tr.uom,
                 "track_id": int(tr.track_id),
                 "snapshot": snap,
+                "meta": {"experimental": bool(tr.method.endswith("_ransac"))},
             }
             ev["id"] = self.db.add_sku_event(**ev)
             self.broadcast({"type": "sku_event", "event": ev})
@@ -846,14 +879,16 @@ class Pipeline:
                 max(0.0, min(1.0, float(x2) / max(1, fw))),
                 max(0.0, min(1.0, float(y2) / max(1, fh))),
             )
+            exp_tag = " [Exp]" if tr.method.endswith("_ransac") else ""
             if tr.sku_id is not None and tr.committed:
                 role = "ok"
                 state = "COMMITTED"
-                lbl = f"{tr.code} · {tr.name}"
+                lbl = f"[{tr.direction}] {tr.code} · {tr.name}{exp_tag}"
             elif tr.sku_id is not None:
                 role = "checking"
                 state = "IDENTIFIED"
-                lbl = f"{tr.code} · giữ ổn định..."
+                wait_txt = "qua vạch..." if self.sku_counter.count_mode == "line" else "giữ ổn định..."
+                lbl = f"{tr.code} · {wait_txt}"
             else:
                 role = "alert"
                 state = "UNKNOWN"
@@ -875,6 +910,8 @@ class Pipeline:
                     "barcode": tr.barcode,
                     "uom": tr.uom,
                     "method": tr.method,
+                    "direction": tr.direction,
+                    "experimental": bool(tr.method.endswith("_ransac")),
                     "score": round(float(tr.score), 4),
                     "inliers": int(tr.inliers),
                 },
@@ -898,29 +935,137 @@ class Pipeline:
         if self.motion_zone != FULL_ZONE:
             pts = np.array([[x * (vw - 1), y * (vh - 1)] for x, y in self.motion_zone], np.int32)
             cv2.polylines(view, [pts], True, ZONE_COLOR, 2, cv2.LINE_AA)
+        line_px = None
+        if self.sku_counter.count_mode == "line":
+            ln = self.sku_counter.line_norm
+            line_px = [(int(ln[0][0] * vw), int(ln[0][1] * vh)), (int(ln[1][0] * vw), int(ln[1][1] * vh))]
         boxes = []
         for tr in list(self._last_sku_tracks):
             if now - tr.last_seen > DRAW_FRESH:
                 continue
+            exp_tag = " [Exp]" if tr.method.endswith("_ransac") else ""
             if tr.sku_id is not None and tr.committed:
                 color = GREEN
-                label = f"{tr.code} · {tr.name} ({tr.method})"
+                label = f"[{tr.direction}] {tr.code} · {tr.name}{exp_tag}"
             elif tr.sku_id is not None:
                 color = ORANGE
-                label = f"{tr.code} · giữ ổn định..."
+                wait_txt = "qua vạch..." if self.sku_counter.count_mode == "line" else "giữ ổn định..."
+                label = f"{tr.code} · {wait_txt}"
             else:
                 color = RED
                 label = f"Mã lạ ({tr.barcode})" if tr.barcode else "Unknown SKU"
             boxes.append({"bbox": tr.bbox * s, "color": color, "label": label})
         n_sku = self.sku_gallery.size if self.sku_gallery is not None else 0
         ft = str((self.cfg.get("sku") or {}).get("feature_type", "orb")).upper()
-        hud = (f"SKU ({ft}) | detect {self.det_fps:.1f} FPS {self.det_ms:.0f} ms | "
+        cm = self.sku_counter.count_mode.upper()
+        hud = (f"SKU ({ft}/{cm}) | detect {self.det_fps:.1f} FPS {self.det_ms:.0f} ms | "
                f"cam {self.camera.fps_in:.0f} FPS | SP: {n_sku}")
+        view = draw_overlay(view, boxes, hud, line_px)
+        self._publish(view)
+
+    # -------------------------------------------------------------- Zone mode
+    def _process_zone(self, frame: np.ndarray, now: float) -> None:
+        if self.zone_engine is None or self.zone_det is None:
+            return  # khong co bo phat hien nguoi: tuyet doi khong cap nhat zone (tranh canh bao 'thieu nguoi' gia)
+        t0 = time.time()
+        persons: list[np.ndarray] = self.zone_det.detect(frame).persons
+        cam_name = self.cfg["camera"]["name"]
+        res = self.zone_engine.update(persons, frame.shape[:2], now=now, camera_name=cam_name)
+        self._last_zone_eval = res
+
+        for sess in res["closed_sessions"]:
+            self.broadcast({"type": "zone_session", "session": sess})
+        for al in res["alerts"]:
+            self.broadcast({"type": "zone_alert", "alert": al})
+
+        fh, fw = frame.shape[:2]
+        ts_ns = int(now * 1e9)
+        cam_id = str(self.cfg.get("camera", {}).get("id", cam_name))
+        p_labels = res.get("person_zone_labels") or {}
+        overlay_objs = []
+        for tr in res["person_tracks"]:
+            x1, y1, x2, y2 = tr.bbox
+            b_norm = [
+                round(max(0.0, min(1.0, float(x1) / max(1, fw))), 4),
+                round(max(0.0, min(1.0, float(y1) / max(1, fh))), 4),
+                round(max(0.0, min(1.0, float(x2) / max(1, fw))), 4),
+                round(max(0.0, min(1.0, float(y2) / max(1, fh))), 4),
+            ]
+            zinfo = p_labels.get(tr.track_id)
+            role = "ok" if zinfo else "checking"
+            lbl = f"#{tr.track_id} · {zinfo[0]} ({zinfo[1]:.1f}s)" if zinfo else f"Người #{tr.track_id}"
+            overlay_objs.append({
+                "camera_id": cam_id,
+                "ts_server_ns": ts_ns,
+                "track_id": int(tr.track_id),
+                "kind": "person",
+                "bbox_norm": b_norm,
+                "vel_norm": [0.0, 0.0],
+                "state": "COMMITTED" if zinfo else "SEEN",
+                "color_role": role,
+                "label": lbl,
+                "verification_tier": None,
+                "meta": {"zone_code": zinfo[0] if zinfo else None, "dwell_sec": round(zinfo[1], 1) if zinfo else 0.0},
+            })
+        self.broadcast({
+            "type": "frame_overlay",
+            "camera_id": cam_id,
+            "ts_server_ns": ts_ns,
+            "frame_id": int(now * 100) % 1000000,
+            "mode": "zone",
+            "objects": overlay_objs,
+            "zones": res["zone_states"],
+        })
+        self.det_ms = (time.time() - t0) * 1000.0
+
+    def _render_zone(self, frame: np.ndarray, now: float) -> None:
+        h, w = frame.shape[:2]
+        s = min(1.0, float(self.pcfg["stream_width"]) / w)
+        view = cv2.resize(frame, (int(w * s), int(h * s))) if s < 1 else frame.copy()
+        vh, vw = view.shape[:2]
+        ev = self._last_zone_eval or {}
+        z_states = ev.get("zone_states") or (self.zone_engine.live_status() if self.zone_engine else [])
+
+        overlay = view.copy()
+        for zs in z_states:
+            pts = np.array([[p[0] * (vw - 1), p[1] * (vh - 1)] for p in zs["polygon"]], np.int32)
+            col = RED if zs.get("alert") else (GREEN if zs.get("present_count", 0) > 0 else ZONE_COLOR)
+            cv2.fillPoly(overlay, [pts], col)
+        cv2.addWeighted(overlay, 0.18, view, 0.82, 0, view)
+
+        for zs in z_states:
+            pts = np.array([[p[0] * (vw - 1), p[1] * (vh - 1)] for p in zs["polygon"]], np.int32)
+            col = RED if zs.get("alert") else (GREEN if zs.get("present_count", 0) > 0 else ZONE_COLOR)
+            cv2.polylines(view, [pts], True, col, 2, cv2.LINE_AA)
+            px, py = int(pts[0][0]), max(22, int(pts[0][1]) - 6)
+            tag = f"{zs['code']}: {zs['present_count']}/{zs['min_persons']} nguoi"
+            if zs.get("alert"):
+                tag += f" [TRONG {zs['empty_sec']:.0f}s!]"
+            cv2.putText(view, tag, (px, py), cv2.FONT_HERSHEY_SIMPLEX, 0.55, col, 2, cv2.LINE_AA)
+
+        boxes = []
+        p_labels = ev.get("person_zone_labels") or {}
+        for tr in ev.get("person_tracks") or []:
+            if now - tr.last_seen > DRAW_FRESH:
+                continue
+            zinfo = p_labels.get(tr.track_id)
+            color = GREEN if zinfo else ORANGE
+            lbl = f"#{tr.track_id} · {zinfo[0]} ({zinfo[1]:.1f}s)" if zinfo else f"Người #{tr.track_id}"
+            boxes.append({"bbox": tr.bbox * s, "color": color, "label": lbl})
+        n_zones = self.zone_engine.zone_count if self.zone_engine is not None else 0
+        hud = (f"ZONE (YOLOX-Nano, FaceID OFF) | detect {self.det_fps:.1f} FPS {self.det_ms:.0f} ms | "
+               f"cam {self.camera.fps_in:.0f} FPS | Khu vực: {n_zones}")
         view = draw_overlay(view, boxes, hud)
         self._publish(view)
 
     def status(self) -> dict:
         cam = self._next_camera or self.camera
+        if self.mode == "sku":
+            n_tracks = len(self._last_sku_tracks)
+        elif self.mode == "zone":
+            n_tracks = len((self._last_zone_eval or {}).get("person_tracks") or [])
+        else:
+            n_tracks = len(self.tracker.tracks)
         return {"backend": self.engine.name, "model_version": self.engine.model_version,
                 "mode": self.mode,
                 "source": cam.describe(),
@@ -929,7 +1074,12 @@ class Pipeline:
                 "gallery": self.gallery.size,
                 "sku_gallery": self.sku_gallery.size if self.sku_gallery is not None else 0,
                 "sku_templates": self.sku_gallery.template_count if self.sku_gallery is not None else 0,
-                "tracks": len(self._last_sku_tracks) if self.mode == "sku" else len(self.tracker.tracks),
+                "sku_count_mode": self.sku_counter.count_mode,
+                "sku_line": self.sku_counter.line_norm,
+                "sku_in_when": self.sku_counter.in_when,
+                "zones": self.zone_engine.zone_count if self.zone_engine is not None else 0,
+                "zone_ready": self.zone_det is not None and self.zone_engine is not None,
+                "tracks": n_tracks,
                 "threshold": self.threshold, "margin": self.margin,
                 "liveness": self.liveness is not None, "live_threshold": self.live_thr,
                 "sleeping": self.sleeping, "sleep_since": self.sleep_since,

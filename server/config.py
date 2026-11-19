@@ -172,10 +172,34 @@ def _apply_v4_defaults(cfg: dict) -> dict:
     sku["min_hold_sec"] = _clamp(sku.get("min_hold_sec", 0.4), 0.0, 10.0)
     sku["cooldown_sec"] = _clamp(sku.get("cooldown_sec", 4.0), 0.5, 120.0)
     sku["track_max_age"] = _clamp(sku.get("track_max_age", 1.2), 0.2, 10.0)
+    sku["max_instances"] = int(_clamp(sku.get("max_instances", 4), 1, 20))
+    cm = str(sku.get("count_mode", "hold")).strip().lower()
+    sku["count_mode"] = cm if cm in ("hold", "line") else "hold"
+    sku.setdefault("line", [[0.0, 0.55], [1.0, 0.55]])
+    iw = str(sku.get("in_when", "down")).strip().lower()
+    sku["in_when"] = iw if iw in ("down", "up", "right", "left") else "down"
     sku["log_unknown"] = bool(sku.get("log_unknown", True))
     sku["prefer_code_short_circuit"] = bool(sku.get("prefer_code_short_circuit", True))
+
+    zn = cfg.setdefault("zones", {})
+    zn["person_conf"] = _clamp(zn.get("person_conf", 0.45), 0.15, 0.95)
+    zn["enter_confirm_sec"] = _clamp(zn.get("enter_confirm_sec", 1.0), 0.0, 30.0)
+    zn["min_dwell_sec"] = _clamp(zn.get("min_dwell_sec", 3.0), 0.5, 600.0)
+    zn["exit_grace_sec"] = _clamp(zn.get("exit_grace_sec", 2.0), 0.2, 60.0)
+    zn["alert_empty_sec"] = _clamp(zn.get("alert_empty_sec", 0.0), 0.0, 3600.0)
+    zn["alert_cooldown_sec"] = _clamp(zn.get("alert_cooldown_sec", 30.0), 2.0, 3600.0)
+
+    hrm = cfg.setdefault("hrm", {})
+    hrm.setdefault("adapter", "mock")
+    erp_cfg = hrm.setdefault("erpnext", {})
+    erp_cfg.setdefault("url", "http://localhost:8000")
+    erp_cfg.setdefault("api_key", "")
+    erp_cfg.setdefault("api_secret", "")
+    erp_cfg.setdefault("device_id", cam.get("id", "gate-1"))
+    erp_cfg.setdefault("warehouse", "Stores - MSW")
+
     pl["mode"] = str(pl.get("mode", "attendance")).strip().lower()
-    if pl["mode"] not in ("attendance", "sku"):
+    if pl["mode"] not in ("attendance", "sku", "zone"):
         pl["mode"] = "attendance"
     return cfg
 

@@ -35,6 +35,7 @@ from .vision.engines import create_engine
 from .enrollment.video import EnrollError, backfill_legacy_embeddings, process_enrollment, read_video_frames
 from .enrollment.gallery import Gallery
 from .enrollment.guided import NO_FRONTAL_MSG, GuidedSession, known_frontal_embeddings
+from .attendance.erp_sku import SkuERPWorker
 from .attendance.hrm import HRMWorker
 from .api.ipc import IPCServer
 from .attendance.ledger import hold_clip_if_pending_audit, record_auto_checkin
@@ -47,8 +48,10 @@ from .vision.license_guard import LicenseError
 from .api.records import router as records_router
 from .api.security import BiometricCipher, issue_rbac_token, require_role
 from .api.sku import router as sku_router
+from .api.zones import router as zones_router
 from .api.state import bc, ctx
 from .vision.sku_scanner import SkuGallery, SkuScanner
+from .vision.zone_engine import ZoneEngine
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("app")
@@ -87,9 +90,9 @@ def _handle_worker_ipc(msg: dict) -> None:
         ctx.last_worker_hb = now
         ctx.worker_hb = msg
         return
-    # Che do Hang hoa: worker van chay nhung khong duoc cham cong hay ve de len overlay SKU.
+    # Che do Hang hoa / Khu vuc xuong: worker van chay nhung khong duoc cham cong hay ve de len overlay SKU/Zone.
     # Van cho qua appearance_closed de khong mat lich su cua track dang mo luc chuyen mode.
-    if getattr(ctx, "pipeline", None) is not None and ctx.pipeline.mode == "sku":
+    if getattr(ctx, "pipeline", None) is not None and ctx.pipeline.mode in ("sku", "zone"):
         if mtype == "camera_chime" or mtype == "frame_overlay":
             return
         if mtype == "track_event" and msg.get("event_kind") in ("checkin", "spoof"):
@@ -221,23 +224,31 @@ async def lifespan(app: FastAPI):
     sku_ft = str((cfg.get("sku") or {}).get("feature_type", "orb")).lower()
     ctx.sku_gallery = SkuGallery(ctx.db, feature_type=sku_ft)
     ctx.sku_scanner = SkuScanner(cfg, ctx.sku_gallery)
+    ctx.sku_erp = SkuERPWorker(
+        cfg, ctx.db, sku_gallery=ctx.sku_gallery,
+        on_update=lambda bid, st, doc: bc({"type": "sku_erp", "batch_id": bid, "status": st, "remote_doc_id": doc}),
+    )
+    ctx.zone_engine = ZoneEngine(cfg, ctx.db)
     ctx.camera = Camera(cfg["camera"]["source"], cfg["camera"].get("loop_file", True)).start()
     ctx.hrm = HRMWorker(cfg, ctx.db, on_update=lambda i, s: bc({"type": "hrm", "id": i, "status": s}))
     ctx.shift = Shift.from_cfg(cfg)
     ctx.clips = ClipRecorder(cfg)
     ctx.chime = build_chime_notifier(cfg, on_event=bc)
     from .vision.context_detector import create_context_detector
+    shared_ctx_det = create_context_detector(cfg)
     isolated = bool(cfg["pipeline"].get("isolated_worker") or os.environ.get("FACEGATE_ISOLATED_WORKER") == "1")
-    # Che do isolated: worker_perception la bo nhan dien duy nhat; Pipeline o day chi cap khung xem truoc (CR2).
-    # Ngoai le webcam USB (isolated=False): Pipeline dung chung loi v4 (PoseEstimator3D + ContextDetector + LLR).
+    # Che do isolated: worker_perception la bo nhan dien duy nhat; Pipeline o day chi cap khung xem truoc (CR2),
+    # nhung khi sang mode 'zone' thi Pipeline dung zone_detector (YOLOX-Nano nhe) va tat FaceID nang.
     ctx.pipeline = Pipeline(cfg, ctx.db, ctx.engine, ctx.gallery, ctx.camera, ctx.hrm, bc,
                             liveness=None if isolated else create_liveness(cfg),
                             clips=None if isolated else ctx.clips,
                             recognize=not isolated,
                             pose=None if isolated else ctx.pose,
-                            context_detector=None if isolated else create_context_detector(cfg),
+                            context_detector=None if isolated else shared_ctx_det,
                             sku_scanner=ctx.sku_scanner,
-                            sku_gallery=ctx.sku_gallery).start()
+                            sku_gallery=ctx.sku_gallery,
+                            zone_engine=ctx.zone_engine,
+                            zone_detector=shared_ctx_det).start()
     zone = _load_settings().get("motion_zone")
     if zone:
         try:
@@ -252,8 +263,12 @@ async def lifespan(app: FastAPI):
     ctx.worker_hb = {}
     ctx.disk_status = {"disk_warning": False, "free_disk_gb": 99.0}
 
+    async def _on_worker_connect() -> None:
+        if getattr(ctx, "pipeline", None) is not None and getattr(ctx, "ipc", None) is not None:
+            await ctx.ipc.send_command({"cmd": "set_mode", "mode": ctx.pipeline.mode})
+
     sock_path = cfg["_paths"]["run"] / "perception.sock"
-    ctx.ipc = IPCServer(sock_path=sock_path, port=0, on_message=_handle_worker_ipc)
+    ctx.ipc = IPCServer(sock_path=sock_path, port=0, on_message=_handle_worker_ipc, on_connect=_on_worker_connect)
     await ctx.ipc.start()
 
     stop_sup = asyncio.Event()
@@ -267,9 +282,11 @@ async def lifespan(app: FastAPI):
                     if proc is not None:
                         log.warning("worker_perception thoat voi ma %s -> tu khoi dong lai sau 1s", proc.returncode)
                         await asyncio.sleep(1.0)
+                    cur_mode = getattr(getattr(ctx, "pipeline", None), "mode", "attendance")
                     proc = subprocess.Popen([
                         sys.executable, "-m", "server.vision.worker_perception",
                         "--sock", str(sock_path), "--port", str(ctx.ipc.bound_port),
+                        "--mode", str(cur_mode),
                     ])
                     ctx.worker_proc = proc
                 if time.time() - last_disk_chk >= 60.0:
@@ -311,12 +328,17 @@ async def lifespan(app: FastAPI):
     ctx.clips.close()
     ctx.camera.stop()
     ctx.hrm.stop()
+    if getattr(ctx, "sku_erp", None) is not None:
+        ctx.sku_erp.stop()
+    if getattr(ctx, "zone_engine", None) is not None:
+        ctx.zone_engine.reset_runtime()
 
 
 app = FastAPI(title="FaceGate demo", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=ROOT / "webapp"), name="static")
 app.include_router(records_router)
 app.include_router(sku_router)
+app.include_router(zones_router)
 
 
 @app.get("/")

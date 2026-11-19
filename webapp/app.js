@@ -17,6 +17,7 @@ document.querySelectorAll("nav button").forEach(b => b.onclick = () => {
   syncLiveStreamVisibility();
   updateEnrollPreview();
   window.updateSkuPreview?.();
+  window.updateZonePreview?.();
 });
 
 function syncLiveStreamVisibility() {
@@ -75,6 +76,17 @@ function connectWS() {
       if (isActive("sku")) tabHooks.skuLive?.();
     }
     if (msg.type === "sku_items" && isActive("sku")) tabHooks.skuItems?.();
+    if (msg.type === "sku_erp" && isActive("sku")) tabHooks.skuBatches?.();
+    if (msg.type === "zone_session") {
+      addZoneFeed(msg.session, false);
+      if (isActive("zones")) tabHooks.zonesLive?.();
+    }
+    if (msg.type === "zone_alert") {
+      addZoneFeed(msg.alert, true);
+      beep(false);
+      if (isActive("zones")) tabHooks.zonesLive?.();
+    }
+    if (msg.type === "zones" && isActive("zones")) tabHooks.zonesItems?.();
     if (msg.type === "greet") showGreet({kind: "dup", name: msg.name, code: msg.code, ts: msg.last_ts});
     if (msg.type === "appearance" && isActive("history")) tabHooks.historyLive?.();
     if (msg.type === "employees") { loadPeople(); if (isActive("employees")) loadEmployees(); }
@@ -89,8 +101,10 @@ function showStatus(s) {
   const mode = s.mode || "attendance";
   document.querySelectorAll(".modesw .mbtn").forEach(b => b.classList.toggle("active", b.dataset.mode === mode));
   $("#statusLine").textContent = mode === "sku"
-    ? `SKU · cam ${s.camera_connected ? s.camera_fps + " FPS" : "MẤT KẾT NỐI"} · detect ${s.detect_fps} FPS / ${s.detect_ms} ms · ${s.sku_gallery ?? 0} SKU (${s.sku_templates ?? 0} mẫu)`
-    : `${s.backend} · ngưỡng ${s.threshold} · cam ${s.camera_connected ? s.camera_fps + " FPS" : "MẤT KẾT NỐI"} · detect ${s.detect_fps} FPS / ${s.detect_ms} ms · ${s.gallery} NV active · HRM ${s.hrm}`;
+    ? `SKU (${s.sku_count_mode || "hold"}) · cam ${s.camera_connected ? s.camera_fps + " FPS" : "MẤT KẾT NỐI"} · detect ${s.detect_fps} FPS / ${s.detect_ms} ms · ${s.sku_gallery ?? 0} SKU (${s.sku_templates ?? 0} mẫu)`
+    : mode === "zone"
+      ? `ZONE (YOLOX-Nano · FaceID OFF) · cam ${s.camera_connected ? s.camera_fps + " FPS" : "MẤT KẾT NỐI"} · detect ${s.detect_fps} FPS / ${s.detect_ms} ms · ${s.zones ?? 0} khu vực`
+      : `${s.backend} · ngưỡng ${s.threshold} · cam ${s.camera_connected ? s.camera_fps + " FPS" : "MẤT KẾT NỐI"} · detect ${s.detect_fps} FPS / ${s.detect_ms} ms · ${s.gallery} NV active · HRM ${s.hrm}`;
   // nguon + trang thai nhan dien
   const kindName = {webcam: "Webcam", file: "File video", rtsp: "RTSP"}[s.source.kind] || s.source.kind;
   $("#srcLabel").textContent = `${s.source.label} (${kindName})`;
@@ -170,7 +184,8 @@ function addSkuFeed(e, isNew) {
   const li = document.createElement("li");
   const known = Boolean(e.sku_id && e.code);
   li.className = `${isNew ? "new " : ""}${known ? "k-checkin" : "k-unknown"}`;
-  const tag = `<span class="tag">${esc(e.method || "sku")}</span>`;
+  const dirTxt = e.direction === "OUT" ? "Xuất" : "Nhập";
+  const tag = `<span class="tag">${esc(dirTxt)} · ${esc(e.method || "sku")}</span>`;
   const sub = known ? `${esc(e.code)} · +${e.qty ?? 1} ${esc(e.uom || "pcs")}` : "Mã chưa đăng ký";
   li.innerHTML = `${e.snapshot ? `<img src="${file(e.snapshot)}" alt="">` : ""}
     <div><b>${esc(e.name || "Unknown SKU")}</b> ${tag}
@@ -178,11 +193,27 @@ function addSkuFeed(e, isNew) {
   ul.prepend(li);
   while (ul.children.length > 30) ul.lastChild.remove();
 }
+function addZoneFeed(ev, isAlert) {
+  const ul = $("#feed");
+  if (ul.querySelector(".muted")) ul.innerHTML = "";
+  const li = document.createElement("li");
+  li.className = `new ${isAlert ? "k-spoof" : "k-checkin"}`;
+  if (isAlert) {
+    li.innerHTML = `<div><b>⚠ Trống vị trí: ${esc(ev.zone_name)} (${esc(ev.zone_code)})</b>
+      <span class="t">${fmtTime(ev.ts)} · hiện có ${ev.present_count}/${ev.min_persons} người · trống ${ev.empty_sec}s</span></div>`;
+  } else {
+    li.innerHTML = `<div><b>${esc(ev.zone_name)} (${esc(ev.zone_code)})</b> <span class="tag">Phiên</span>
+      <span class="t">${fmtTime(ev.exit_ts)} · Track #${ev.person_track_id} · đứng ${ev.dwell_sec}s</span></div>`;
+  }
+  ul.prepend(li);
+  while (ul.children.length > 30) ul.lastChild.remove();
+}
 function showSkuGreet(e) {
   const box = $("#greet");
   const known = Boolean(e.sku_id && e.code);
+  const dirLbl = e.direction === "OUT" ? "XUẤT KHO (OUT)" : "NHẬP KHO (IN)";
   box.className = `greet g-${known ? "ok" : "warn"}`;
-  $("#greetKind").textContent = known ? `Hàng hóa · ${e.method} · ${fmtHM(e.ts)}` : `Mã lạ · ${e.method}`;
+  $("#greetKind").textContent = known ? `${dirLbl} · ${e.method} · ${fmtHM(e.ts)}` : `Mã lạ · ${e.method}`;
   $("#greetName").textContent = known ? `${e.code} · ${e.name}` : (e.barcode ? `Mã ${e.barcode}` : "Unknown SKU");
   $("#greetSub").textContent = known ? `+${e.qty ?? 1} ${e.uom || "pcs"} · score ${Number(e.score || 0).toFixed(2)}` : "Chưa có trong danh mục SKU";
   $("#greetImg").hidden = !e.snapshot;
