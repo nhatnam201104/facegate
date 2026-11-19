@@ -206,12 +206,13 @@ class PerceptionWorker:
                 t.decision_acc = TrackDecisionAccumulator(cfg=self.llr_cfg)
             pose = self.pose.estimate(frame, f, prev_group=t.pose_group if t.hits > 1 else None, track_id=t.id, ts=now_sec)
             q = assess(frame, f, self.cfg["quality"], pose=pose)
-            t.pose_group, t.last_yaw, t.last_reason = pose.pose_group, pose.yaw, q.reason
+            # last_yaw la yaw THO: dung cho min_abs_yaw/ledger; pose.yaw (EMA) chi de hien thi goi y
+            t.pose_group, t.last_yaw, t.last_reason = pose.pose_group, pose.gate_yaw(), q.reason
             pose_ok = bool(getattr(pose, "pose_reliable", True))
             if q.ok and not pose_ok:
                 # Feature 002: khung qua nghieng -> khong lam bang chung danh tinh (Hien phap II)
                 t.last_reason = "pose_unreliable"
-            t.min_abs_yaw = min(t.min_abs_yaw, abs(pose.yaw))
+            t.min_abs_yaw = min(t.min_abs_yaw, abs(pose.gate_yaw()))
             track_poses.append(pose)
             track_quals.append(q)
             if q.ok and pose_ok and not t.crossing_active and not t.spoof:
@@ -265,8 +266,8 @@ class PerceptionWorker:
                     })
                     t = self.tracker.split(t, f, now_sec)
                     t.decision_acc = TrackDecisionAccumulator(cfg=self.llr_cfg)
-                    t.pose_group, t.last_yaw, t.last_reason = pose.pose_group, pose.yaw, q.reason
-                    t.min_abs_yaw = abs(pose.yaw)
+                    t.pose_group, t.last_yaw, t.last_reason = pose.pose_group, pose.gate_yaw(), q.reason
+                    t.min_abs_yaw = abs(pose.gate_yaw())
                     if ctx_eval["spoof_reason"] == "unattached_face":
                         t.unattached_streak = 1
                     acc = t.decision_acc
@@ -274,7 +275,7 @@ class PerceptionWorker:
                 t.embs = t.embs[-int(self.cfg["recognition"].get("max_track_embeddings", 10)):]
 
                 sims = self.gallery.all_employee_similarities(emb, pose_group=pose.pose_group)
-                acc.observe(now_sec * 1000.0, pose.yaw, q.score, sims)
+                acc.observe(now_sec * 1000.0, pose.gate_yaw(), q.score, sims)
                 if acc.locked_employee_id is not None:
                     person = self.gallery.get_person(acc.locked_employee_id)
                     if person:
@@ -295,7 +296,7 @@ class PerceptionWorker:
             liv_win = int(liv_cfg.get("window", 8))
             frontal_max = float(self.cfg.get("recognition", {}).get("frontal_max_yaw", 40.0))
 
-            if self.liveness is not None and q.ok and abs(pose.yaw) <= frontal_max and not t.spoof:
+            if self.liveness is not None and q.ok and abs(pose.gate_yaw()) <= frontal_max and not t.spoof:
                 t.live.append(self.liveness.real_prob(frame, f.bbox))
                 t.live = t.live[-liv_win:]
                 if len(t.live) >= liv_min and float(np.mean(t.live)) < liv_spoof:
@@ -308,11 +309,12 @@ class PerceptionWorker:
                 live_status = "live"
             elif len(t.live) >= liv_min and float(np.mean(t.live)) >= liv_thr:
                 live_status = "live"
-            elif (not getattr(self, "require_frontal_for_checkin", True)) and abs(pose.yaw) > frontal_max and ctx_eval["body_coupled"]:
+            elif (not getattr(self, "require_frontal_for_checkin", True)) and abs(pose.gate_yaw()) > frontal_max and ctx_eval["body_coupled"]:
                 live_status = "live"
             else:
                 live_status = "checking"
             if getattr(self, "look_prompter", None) is not None:
+                # Prompter/overlay dung yaw EMA de loi nhac khong rung
                 self.look_prompter.update(t.id, now_sec, pose.yaw, live_status, spoof=t.spoof, event_done=t.event_done)
             state_str = acc.apply_liveness(live_status)
 
@@ -332,7 +334,7 @@ class PerceptionWorker:
                     "score": t.score,
                     "margin": t.margin,
                     "verification_tier": t.verification_tier or "verified",
-                    "yaw": round(pose.yaw, 1),
+                    "yaw": round(pose.gate_yaw(), 1),
                 })
             elif state_str == "REJECTED_SPOOF" and not t.event_done:
                 t.event_done = True
@@ -367,7 +369,7 @@ class PerceptionWorker:
                 color_role=role,
                 label=lbl,
                 verification_tier=t.verification_tier,
-                meta={"yaw": round(pose.yaw, 1), "llr_top1": acc.top1_llr, "llr_margin": acc.llr_margin, "quarantine": t.quarantine},
+                meta={"yaw": round(pose.gate_yaw(), 1), "llr_top1": acc.top1_llr, "llr_margin": acc.llr_margin, "quarantine": t.quarantine},
             )
             objects_out.append(obj.to_dict())
 

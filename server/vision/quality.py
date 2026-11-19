@@ -52,13 +52,16 @@ def assess(img: np.ndarray, face: Face, qcfg: dict, pose=None) -> Quality:
     x1, y1, x2, y2 = face.bbox.astype(int)
     x1, y1 = max(0, x1), max(0, y1)
     x2, y2 = min(w, x2), min(h, y2)
-    size = float(max(face.w, face.h * 0.72)) if (pose is not None and abs(pose.yaw) > 40.0) else float(min(face.w, face.h))
+    size = float(max(face.w, face.h * 0.72)) if (pose is not None and abs(pose.gate_yaw()) > 40.0) else float(min(face.w, face.h))
     crop = img[y1:y2, x1:x2]
     if crop.size == 0:
         return Quality(size, 0, 0, 0, 0, False, "out_of_frame", 0.0)
 
     if pose is not None:
-        yaw, pitch, roll, grp = float(pose.yaw), float(pose.pitch), float(pose.roll), str(pose.pose_group)
+        # Cong chat luong phai doc gia tri THO (raw_*) - EMA tre pha khi quay dau nhanh se de lot khung qua nghieng.
+        yaw = float(pose.gate_yaw() if hasattr(pose, "gate_yaw") else pose.yaw)
+        pitch = float(pose.gate_pitch() if hasattr(pose, "gate_pitch") else pose.pitch)
+        roll, grp = float(pose.roll), str(pose.pose_group)
     else:
         yaw, pitch = estimate_pose(face.kps)
         roll = 0.0

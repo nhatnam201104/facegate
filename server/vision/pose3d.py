@@ -40,6 +40,13 @@ MAX_REPROJ_RATIO = 0.25  # loi chieu lai trung binh / khoang cach hai mat
 
 @dataclass
 class PoseResult:
+    """Ket qua uoc luong tu the mot khung.
+
+    yaw/pitch da lam muot EMA theo track -> CHI dung de hien thi (goi y "nhin vao camera", overlay).
+    raw_yaw/raw_pitch la gia tri THO cua khung nay -> moi cong quyet dinh (quality, liveness, LLR, pose_reliable,
+    pose_group, min_abs_yaw) phai doc raw_* vi EMA tre pha khi quay dau nhanh.
+    """
+
     yaw: float
     pitch: float
     roll: float
@@ -48,7 +55,16 @@ class PoseResult:
     kps5: np.ndarray
     visibility: float = 1.0
     pose_reliable: bool = True
-    raw_yaw: float | None = None   # yaw tho cua khung nay (yaw/pitch o tren da lam muot EMA - chi de hien thi)
+    raw_yaw: float | None = None
+    raw_pitch: float | None = None
+
+    def gate_yaw(self) -> float:
+        """Yaw tho de quyet dinh (fallback ve yaw khi khong co raw)."""
+        return float(self.yaw if self.raw_yaw is None else self.raw_yaw)
+
+    def gate_pitch(self) -> float:
+        """Pitch tho de quyet dinh (fallback ve pitch khi khong co raw)."""
+        return float(self.pitch if self.raw_pitch is None else self.raw_pitch)
 
 
 def classify_pose_group(yaw: float, prev_group: str | None = None,
@@ -184,7 +200,8 @@ class PoseEstimator3D:
             reliable = False
         grp = classify_pose_group(raw_yaw, prev_group, self.frontal_max, self.hysteresis)
         vis = float(max(0.2, math.cos(math.radians(min(85.0, abs(raw_yaw))))))
-        return PoseResult(float(yaw), float(pitch), float(roll), grp, pts68, kps, vis, reliable, float(raw_yaw))
+        return PoseResult(float(yaw), float(pitch), float(roll), grp, pts68, kps, vis, reliable,
+                          float(raw_yaw), float(raw_pitch))
 
 
 def create_pose_estimator(cfg: dict) -> PoseEstimator3D:

@@ -290,12 +290,13 @@ def backfill_legacy_embeddings(ctx, stop_event=None) -> int:
                 with lock:
                     emb = engine.embed_aligned(aligned)
             bname = "_".join(img_p.stem.split("_")[1:]) or "thang-giua"
-            grp = _pose_group_from_bin_or_yaw(bname, pose.yaw if pose is not None else 0.0)
+            # Ghi yaw/pitch THO vao gallery: day la bang chung danh tinh, khong dung ban EMA
+            grp = _pose_group_from_bin_or_yaw(bname, pose.gate_yaw() if pose is not None else 0.0)
             db.add_embedding(
                 emp["id"], emb, engine.model_version, 0.85, bname,
                 f"enroll/{emp['code']}/{img_p.name}", source="backfill", pose_group=grp,
-                yaw=float(pose.yaw) if pose is not None else None,
-                pitch=float(pose.pitch) if pose is not None else None,
+                yaw=float(pose.gate_yaw()) if pose is not None else None,
+                pitch=float(pose.gate_pitch()) if pose is not None else None,
             )
             added += 1
         if added > 0:

@@ -193,7 +193,7 @@ def run_full_pipeline(cfg: dict, video: str, backend: str | None = None, min_fac
                 t = time.perf_counter()
                 aligned.append(engine.align(frame, f, pose=pose, pose_group=pose.pose_group))
                 st["align"] += (time.perf_counter() - t) * 1000.0
-                if abs(pose.yaw) <= frontal_max:
+                if abs(pose.gate_yaw()) <= frontal_max:
                     live_faces.append(f)
         if aligned:
             t = time.perf_counter()

@@ -364,8 +364,9 @@ class Pipeline:
         if q.ok and not pose_ok:
             t.last_reason = "pose_unreliable"
         if pose is not None:
-            t.pose_group, t.last_yaw = pose.pose_group, pose.yaw
-            t.min_abs_yaw = min(t.min_abs_yaw, abs(pose.yaw))
+            # t.last_yaw la yaw THO: dung cho min_abs_yaw/ledger va hien thi, khong dung ban EMA cua pose.yaw
+            t.pose_group, t.last_yaw = pose.pose_group, pose.gate_yaw()
+            t.min_abs_yaw = min(t.min_abs_yaw, abs(pose.gate_yaw()))
         ctx_eval = None
         if scene is not None:
             from .context_detector import evaluate_face_context
@@ -398,7 +399,7 @@ class Pipeline:
                 self._on_track_end(t)
                 t = self.tracker.split(t, f, now)
                 if pose is not None:
-                    t.pose_group, t.last_yaw, t.min_abs_yaw = pose.pose_group, pose.yaw, abs(pose.yaw)
+                    t.pose_group, t.last_yaw, t.min_abs_yaw = pose.pose_group, pose.gate_yaw(), abs(pose.gate_yaw())
                 t.last_reason = q.reason
                 if ctx_eval is not None and ctx_eval["spoof_reason"] == "unattached_face":
                     t.unattached_streak = 1
@@ -442,9 +443,11 @@ class Pipeline:
             t.best_crop = crop_with_margin(frame, f.bbox)
 
         body_coupled = ctx_eval["body_coupled"] if ctx_eval is not None else False
+        # Cong liveness/LLR dung yaw THO (q.yaw sau khi sua quality.assess); prompter/overlay dung EMA
         state = self._live_state(t, yaw=q.yaw, body_coupled=body_coupled)
         if self.look_prompter is not None:
-            self.look_prompter.update(t.id, now, q.yaw, state, spoof=t.spoof, event_done=t.event_done)
+            self.look_prompter.update(t.id, now, pose.yaw if pose is not None else q.yaw, state,
+                                      spoof=t.spoof, event_done=t.event_done)
         if t.decision_acc is not None:
             t.decision_acc.apply_liveness(state)
         if state == "spoof" and not t.event_done:

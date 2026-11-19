@@ -42,7 +42,7 @@ quality:
   min_blur: 35             # phuong sai Laplacian toi thieu tren vung da nhin thay
   min_brightness: 45
   max_brightness: 225
-  max_yaw: 90              # do, ho tro nhan dien toi goc nghieng suon +-90 do
+  max_yaw: 90              # do, tran cung cua quality gate; nhan dien tin cay toi ~+-60 do (pose.max_reliable_yaw)
   max_pitch: 35
   max_roll: 35
 
@@ -137,7 +137,7 @@ enrollment:
   outlier_min_cosine: 0.42
   cross_pose_min_cosine: 0.20
   keep_video: false        # mac dinh xoa video goc sau khi xu ly
-  guided:                  # dang ky quay tu camera: 7 goc (5 chu thap + 2 nghieng suon ~80 do)
+  guided:                  # dang ky quay tu camera: 7 goc (5 chu thap + 2 nghieng suon 45-60 do)
     enable_profile_90: true
     yaw_enter: 15          # do lech ngang (so voi luc nhin thang) de tinh la da quay
     yaw_center: 9          # trong khoang nay la "nhin thang"

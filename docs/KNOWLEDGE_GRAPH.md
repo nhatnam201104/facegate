@@ -75,7 +75,7 @@ flowchart TB
     end
 
     subgraph T5["Tầng 5 · Tư thế 3D & chất lượng"]
-        POSE["3DDFA_V2 MobileNet 120×120<br/>yaw / pitch / roll → pose_group"]
+        POSE["PnP 5 điểm (YuNet)<br/>yaw / pitch / roll → pose_group"]
         QUAL["quality.assess<br/>min_face 60px · Laplacian blur ≥ 35"]
     end
 
@@ -170,7 +170,7 @@ stateDiagram-v2
 | 2. Ngữ cảnh | Tìm **người** (để cắt ROI và kiểm tra mặt có gắn thân) và **vật chứa màn hình** (điện thoại, laptop, TV) để phát hiện giả mạo bằng ảnh trên màn hình. | YOLOX-Nano COCO (Apache-2.0), ONNX Runtime, NMS NumPy | [context_detector.py](../server/vision/context_detector.py) |
 | 3. Phát hiện mặt 2 giai đoạn | Cắt ROI đầu-vai 1:1 trên **khung gốc độ phân giải đầy đủ** để giữ mật độ pixel ở cự ly 2–3 m, chạy YuNet trên ROI. Nếu thiếu mặt thì quét bù toàn khung ở 1280px. Khử trùng bằng IoU, giữ tối đa 10 mặt lớn nhất. | YuNet 2023mar (`cv2.FaceDetectorYN`, Apache-2.0) | `detect_faces_two_stage_3mp` trong [worker_perception.py](../server/vision/worker_perception.py), [engines.py](../server/vision/engines.py) |
 | 4. Theo dõi | Ghép mặt của khung mới vào track cũ theo IoU và hộp thân người, dự đoán vị trí theo vận tốc. Khi 2 người giao cắt thì đưa track vào **Crossing Quarantine** (xóa bằng chứng, chống gán nhầm danh tính). | IoU tracker tự viết, NumPy | [tracker.py](../server/vision/tracker.py) |
-| 5. Tư thế & chất lượng | Ước lượng yaw/pitch/roll đến ±90°, phân nhóm `pose_group` (chính diện/nghiêng) có hysteresis. Chấm chất lượng: kích thước mặt tối thiểu, độ nét Laplacian trên vùng da nhìn thấy. Mặt không đạt **không được trích đặc trưng**. | 3DDFA_V2 MobileNet 120×120 (MIT, ONNX), OpenCV Laplacian | [pose3d.py](../server/vision/pose3d.py), [quality.py](../server/vision/quality.py) |
+| 5. Tư thế & chất lượng | Ước lượng yaw/pitch/roll tin cậy tới ~±60° (`pose.max_reliable_yaw`), phân nhóm `pose_group` (chính diện/nghiêng) có hysteresis. Chấm chất lượng: kích thước mặt tối thiểu, độ nét Laplacian trên vùng da nhìn thấy. Mặt không đạt **không được trích đặc trưng**. | `cv2.solvePnP` 5 điểm YuNet (mô hình 3D tự định nghĩa), OpenCV Laplacian | [pose3d.py](../server/vision/pose3d.py), [quality.py](../server/vision/quality.py) |
 | 6. Căn chỉnh & đặc trưng | Căn mặt về 112×112 theo landmark và tư thế, trích vector 512 chiều theo lô (tối đa 10 mặt/lần). Nếu vector mới quá khác vector gộp của track (cosine < 0.25) thì **tách track** vì tracker đã nối nhầm sang người khác. | EdgeFace-XS γ0.6 (MIT), ONNX Runtime CPU (tùy chọn OpenVINO) | [engines.py](../server/vision/engines.py) `EdgeFaceEngine`, `process_frame` |
 | 7. So khớp gallery | Tính cosine giữa vector mới và toàn bộ vector đã đăng ký (giải mã khi nạp), lấy điểm cao nhất của từng nhân viên, ưu tiên mẫu cùng `pose_group`. | NumPy (nhân ma trận), AES-256-GCM (`cryptography`) | [gallery.py](../server/enrollment/gallery.py), [security.py](../server/api/security.py) |
 | 8. Quyết định Open-Set | Chỉ nhận mẫu mới khi đủ khác (≥ 250 ms hoặc lệch ≥ 8°). Quy cosine, góc nghiêng và chất lượng ra điểm LLR, cộng dồn theo từng ứng viên. Chỉ **khóa danh tính** khi top-1 ≥ τ và cách biệt với top-2 đủ lớn (biên tăng theo góc nghiêng). Không đủ thì giữ `Unknown`, **không đoán tên**. | Mô hình LLR logistic 4 tham số (NumPy) | [decision.py](../server/vision/decision.py) |
@@ -184,7 +184,7 @@ stateDiagram-v2
 
 ```mermaid
 flowchart LR
-    A["HR tải video 6–10s<br/>hoặc Guided Capture 5 góc"] --> B["YuNet + 3DDFA_V2<br/>chọn khung tốt theo góc"]
+    A["HR tải video 6–10s<br/>hoặc Guided Capture 5 góc"] --> B["YuNet + PnP 5 điểm<br/>chọn khung tốt theo góc"]
     B --> C["EdgeFace-XS<br/>(engine riêng, không khóa cổng)"]
     C --> D["Mã hóa AES-256-GCM<br/>lưu bảng embeddings + model_version"]
     D --> E["employees.status = pending"]
@@ -221,14 +221,14 @@ Quét QR/Barcode và khớp mẫu bao bì ORB/SIFT + RANSAC (chưa nối runtime
 - [server/vision/sku_scanner.py](../server/vision/sku_scanner.py) — Module nhận diện hàng hóa/SKU chạy CPU theo 2 tầng: ưu tiên giải mã QR/Barcode, fallback sang matching đặc trưng ORB/SIFT + RANSAC homography không cần train; trả kết quả dạng TrackedObject.
 
 ### Nhận diện khuôn mặt (Perception)
-Worker tách tiến trình và pipeline cục bộ: YOLOX → YuNet → tracker → 3DDFA_V2 → EdgeFace → LLR → MiniFASNet, cùng camera và loa nhắc.
+Worker tách tiến trình và pipeline cục bộ: YOLOX → YuNet → tracker → PnP 5 điểm → SFace → LLR → MiniFASNet, cùng camera và loa nhắc.
 
 - [server/vision/camera.py](../server/vision/camera.py) — Đọc video từ webcam/RTSP/file trong thread riêng, chỉ giữ frame mới nhất để tránh trễ dồn; có tiện ích nhận diện loại nguồn và phát hiện frame đen.
 - [server/vision/draw.py](../server/vision/draw.py) — Vẽ khung và nhãn tiếng Việt lên frame bằng Pillow, tự fallback bỏ dấu khi không có font hỗ trợ.
 - [server/vision/context_detector.py](../server/vision/context_detector.py) — Phát hiện ngữ cảnh cơ thể và vật chứa giả mạo (điện thoại, màn hình, ảnh) bằng YOLOX-Nano ONNX, áp dụng quy tắc Viewport-Aware để đánh giá khuôn mặt có hợp lệ hay nghi spoof.
 - [server/vision/decision.py](../server/vision/decision.py) — Máy trạng thái quyết định danh tính liên tục theo track: tích luỹ bằng chứng LLR 4 tham số, novelty gate, quarantine, áp liveness và chốt commit theo Nguyên tắc I Constitution.
 - [server/vision/engines.py](../server/vision/engines.py) — Các face engine detect + embed với interface chung: OpenCV (YuNet+SFace), ONNX (SCRFD+ArcFace) và EdgeFace, kèm hàm căn chỉnh khuôn mặt theo landmark 5 điểm/pose và factory create_engine.
-- [server/vision/pose3d.py](../server/vision/pose3d.py) — Ước lượng tư thế đầu 3D (yaw/pitch/roll) và 68 landmark 3D tới ±90 độ bằng 3DDFA_V2 ONNX, có fallback từ 5 điểm và phân nhóm pose.
+- [server/vision/pose3d.py](../server/vision/pose3d.py) — Ước lượng tư thế đầu (yaw/pitch/roll) bằng `cv2.solvePnP` trên 5 điểm YuNet với mô hình 3D tự định nghĩa (không dùng BFM), tin cậy tới ~±60°, có fallback 5 điểm và phân nhóm pose.
 - [server/vision/tracker.py](../server/vision/tracker.py) — IoU tracker nhẹ cho vài khuôn mặt tại cổng: gom embedding khung tốt theo track, dự đoán bbox, phát hiện nhảy người, cách ly khi cắt nhau và hỗ trợ split/absorb track.
 - [server/vision/worker_perception.py](../server/vision/worker_perception.py) — Tiến trình Perception độc lập: đọc camera, phát hiện 2 giai đoạn trên ROI đầu-vai 1:1 khung 3MP, chạy tracker/pose/quality/liveness/ngữ cảnh/quyết định LLR và gửi TrackedObject qua IPC, chỉ hoạt động trong khung giờ ca.
 - [server/vision/audio_prompt.py](../server/vision/audio_prompt.py) — Phát chuông/âm báo trên loa camera Tapo (Talk Stream port 8800 G.711 A-law MPEG-TS, manual alarm, playAlarm, custom audio qua pytapo) chạy trên luồng nền có backoff, kèm fallback Web Audio và bộ nhắc nhân viên nhìn…
@@ -327,7 +327,7 @@ README, hướng dẫn, tài liệu triển khai ERP, mẫu PR.
 2. **Điểm vào FastAPI & giám sát worker** — main.py dựng mọi thành phần trong lifespan, khởi tiến trình con worker_perception (tự khởi động lại khi chết) và nhận kết quả qua IPC trong _handle_worker_ipc.
 3. **Media Plane: camera → MediaMTX → trình duyệt** — MediaMTX kéo RTSP một lần, phát WebRTC WHEP cho trình duyệt và ghi fMP4 để cắt clip; video hiển thị không chờ AI.
 4. **Worker nhận diện: giải mã & phát hiện 2 giai đoạn** — worker_perception đọc khung theo detect_fps, YOLOX-Nano tìm người/màn hình, cắt ROI đầu-vai để YuNet tìm mặt trên khung gốc, quét bù toàn khung khi thiếu.
-5. **Theo dõi, tư thế 3D và chất lượng** — IoUTracker giữ track và cách ly khi 2 người giao cắt; 3DDFA_V2 ước lượng yaw/pitch/roll; quality.assess loại mặt nhỏ/mờ trước khi trích đặc trưng.
+5. **Theo dõi, tư thế và chất lượng** — IoUTracker giữ track và cách ly khi 2 người giao cắt; PnP 5 điểm ước lượng yaw/pitch/roll; quality.assess loại mặt nhỏ/mờ trước khi trích đặc trưng.
 6. **Đặc trưng EdgeFace & gallery** — EdgeFace-XS trích vector 512-d theo lô; gallery so cosine với embedding đã giải mã AES-256-GCM, ưu tiên cùng pose_group; split_cosine tách track nối nhầm.
 7. **Quyết định Open-Set bằng LLR** — TrackDecisionAccumulator cộng dồn LLR qua nhiều mẫu khác nhau, chỉ khóa danh tính khi vượt τ và đủ cách biệt top-2; không đủ thì giữ Unknown.
 8. **Chống giả mạo** — Ba lớp: mặt trong màn hình, mặt không gắn thân, và MiniFASNet đo khi mặt gần chính diện. Loa Tapo nhắc nhìn camera.

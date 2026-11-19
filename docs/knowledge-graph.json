@@ -2189,7 +2189,7 @@
    "type": "file",
    "name": "engines.py",
    "filePath": "server/vision/engines.py",
-   "summary": "Các face engine detect + embed với interface chung: OpenCV (YuNet+SFace), ONNX (SCRFD+ArcFace) và EdgeFace, kèm hàm căn chỉnh khuôn mặt theo landmark 5 điểm/pose và factory create_engine.",
+   "summary": "Face engine detect + embed với interface chung: chỉ còn OpenCV (YuNet MIT + SFace Apache-2.0); backend ONNX (SCRFD+ArcFace) và EdgeFace đã bị gỡ do giấy phép phi thương mại, kèm hàm căn chỉnh khuôn mặt theo landmark 5 điểm/pose và factory create_engine.",
    "tags": [
     "engine",
     "onnx",
@@ -2334,7 +2334,7 @@
     214,
     269
    ],
-   "summary": "Engine kết hợp detector với mô hình embedding EdgeFace, hỗ trợ embed theo batch.",
+   "summary": "Engine (đã gỡ ở feature 002) từng kết hợp detector YuNet với embedding EdgeFace; xem create_engine/REMOVED_BACKENDS.",
    "tags": [
     "engine",
     "onnx",
@@ -2347,7 +2347,7 @@
    "type": "file",
    "name": "pose3d.py",
    "filePath": "server/vision/pose3d.py",
-   "summary": "Ước lượng tư thế đầu 3D (yaw/pitch/roll) và 68 landmark 3D tới ±90 độ bằng 3DDFA_V2 ONNX, có fallback từ 5 điểm và phân nhóm pose.",
+   "summary": "Ước lượng tư thế đầu (yaw/pitch/roll) bằng solvePnP trên 5 điểm YuNet, tin cậy tới ~±60°, có fallback 5 điểm và phân nhóm pose.",
    "tags": [
     "pose-estimation",
     "onnx",
@@ -2438,7 +2438,7 @@
     128,
     186
    ],
-   "summary": "Bộ ước lượng pose 3D chạy 3DDFA_V2 ONNX và tái dựng 68 landmark, có fallback 5 điểm.",
+   "summary": "Bộ ước lượng pose chạy solvePnP 5 điểm YuNet, tin cậy tới ~±60°, có fallback 5 điểm.",
    "tags": [
     "pose-estimation",
     "onnx",
@@ -4989,7 +4989,7 @@
    "type": "file",
    "name": "download_models.py",
    "filePath": "server/scripts/download_models.py",
-   "summary": "Script CLI tải và kiểm tra checksum/kích thước các mô hình ONNX có giấy phép thương mại (YuNet, SFace, EdgeFace-XS, 3DDFA_V2, YOLOX-Nano, MiniFASNet) vào thư mục server/models; tùy chọn --onnx tải thêm SCRFD/ArcFace cho benchmark.",
+   "summary": "Script CLI tải và kiểm tra SHA-256/kích thước các model khai báo trong server/models/manifest.json (YuNet, SFace, YOLOX-Nano, MiniFASNet); đã bỏ cờ --onnx cùng EdgeFace/3DDFA_V2.",
    "tags": [
     "script",
     "model-download",
@@ -11161,7 +11161,7 @@
   {
    "id": "layer:nhan-dien-khuon-mat",
    "name": "Nhận diện khuôn mặt (Perception)",
-   "description": "Worker tách tiến trình và pipeline cục bộ: YOLOX → YuNet → tracker → 3DDFA_V2 → EdgeFace → LLR → MiniFASNet, cùng camera và loa nhắc.",
+   "description": "Worker tách tiến trình và pipeline cục bộ: YOLOX → YuNet → tracker → PnP 5 điểm → SFace → LLR → MiniFASNet, cùng camera và loa nhắc.",
    "nodeIds": [
     "file:server/vision/camera.py",
     "file:server/vision/draw.py",
@@ -11330,7 +11330,7 @@
   {
    "order": 5,
    "title": "Theo dõi, tư thế 3D và chất lượng",
-   "description": "IoUTracker giữ track và cách ly khi 2 người giao cắt; 3DDFA_V2 ước lượng yaw/pitch/roll; quality.assess loại mặt nhỏ/mờ trước khi trích đặc trưng.",
+   "description": "IoUTracker giữ track và cách ly khi 2 người giao cắt; PnP 5 điểm ước lượng yaw/pitch/roll; quality.assess loại mặt nhỏ/mờ trước khi trích đặc trưng.",
    "nodeIds": [
     "file:server/vision/tracker.py",
     "file:server/vision/pose3d.py",
@@ -11340,7 +11340,7 @@
   {
    "order": 6,
    "title": "Đặc trưng EdgeFace & gallery",
-   "description": "EdgeFace-XS trích vector 512-d theo lô; gallery so cosine với embedding đã giải mã AES-256-GCM, ưu tiên cùng pose_group; split_cosine tách track nối nhầm.",
+   "description": "SFace trích vector 512-d; gallery so cosine với embedding đã giải mã AES-256-GCM, ưu tiên cùng pose_group; split_cosine tách track nối nhầm.",
    "nodeIds": [
     "file:server/vision/engines.py",
     "file:server/enrollment/gallery.py",

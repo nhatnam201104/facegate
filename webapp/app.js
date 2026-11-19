@@ -4,7 +4,8 @@ const fmtTime = ts => new Date(ts * 1000).toLocaleString("vi-VN");
 const fmtHM = ts => ts ? new Date(ts * 1000).toLocaleTimeString("vi-VN", {hour: "2-digit", minute: "2-digit"}) : "—";
 const isoDay = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 const file = p => p ? `/files/${p}` : "";
-const REASON = {small:"mặt nhỏ", blur:"mờ", light:"ánh sáng", yaw:"quay ngang", cut:"bị cắt"};
+const REASON = {small:"mặt nhỏ", blur:"mờ", light:"ánh sáng", yaw:"quay ngang", cut:"bị cắt",
+  pose_unreliable:"quay quá nghiêng, cần nhìn vào camera"};
 const isActive = tab => $("#tab-" + tab).classList.contains("active");
 
 // ---------- tabs (attendance.js / history.js dang ky them vao tabHooks)
