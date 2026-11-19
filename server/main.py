@@ -46,7 +46,9 @@ from .vision.engines import REMOVED_BACKENDS
 from .vision.license_guard import LicenseError
 from .api.records import router as records_router
 from .api.security import BiometricCipher, issue_rbac_token, require_role
+from .api.sku import router as sku_router
 from .api.state import bc, ctx
+from .vision.sku_scanner import SkuGallery, SkuScanner
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("app")
@@ -85,6 +87,13 @@ def _handle_worker_ipc(msg: dict) -> None:
         ctx.last_worker_hb = now
         ctx.worker_hb = msg
         return
+    # Che do Hang hoa: worker van chay nhung khong duoc cham cong hay ve de len overlay SKU.
+    # Van cho qua appearance_closed de khong mat lich su cua track dang mo luc chuyen mode.
+    if getattr(ctx, "pipeline", None) is not None and ctx.pipeline.mode == "sku":
+        if mtype == "camera_chime" or mtype == "frame_overlay":
+            return
+        if mtype == "track_event" and msg.get("event_kind") in ("checkin", "spoof"):
+            return
     if mtype == "camera_chime":
         bc(msg)
         return
@@ -209,6 +218,9 @@ async def lifespan(app: FastAPI):
     ctx.enroll_lock = threading.Lock()
     ctx.pose = create_pose_estimator(cfg)
     ctx.gallery = Gallery(ctx.db, ctx.engine.model_version)
+    sku_ft = str((cfg.get("sku") or {}).get("feature_type", "orb")).lower()
+    ctx.sku_gallery = SkuGallery(ctx.db, feature_type=sku_ft)
+    ctx.sku_scanner = SkuScanner(cfg, ctx.sku_gallery)
     ctx.camera = Camera(cfg["camera"]["source"], cfg["camera"].get("loop_file", True)).start()
     ctx.hrm = HRMWorker(cfg, ctx.db, on_update=lambda i, s: bc({"type": "hrm", "id": i, "status": s}))
     ctx.shift = Shift.from_cfg(cfg)
@@ -223,7 +235,9 @@ async def lifespan(app: FastAPI):
                             clips=None if isolated else ctx.clips,
                             recognize=not isolated,
                             pose=None if isolated else ctx.pose,
-                            context_detector=None if isolated else create_context_detector(cfg)).start()
+                            context_detector=None if isolated else create_context_detector(cfg),
+                            sku_scanner=ctx.sku_scanner,
+                            sku_gallery=ctx.sku_gallery).start()
     zone = _load_settings().get("motion_zone")
     if zone:
         try:
@@ -302,6 +316,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="FaceGate demo", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=ROOT / "webapp"), name="static")
 app.include_router(records_router)
+app.include_router(sku_router)
 
 
 @app.get("/")

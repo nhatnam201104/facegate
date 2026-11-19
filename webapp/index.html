@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>FaceGate · Demo nhận diện cổng</title>
-<link rel="stylesheet" href="/static/style.css?v=4.2">
+<link rel="stylesheet" href="/static/style.css?v=4.3">
 </head>
 <body>
 <header>
@@ -12,6 +12,7 @@
   <nav>
     <button data-tab="live" class="active">Trực tiếp</button>
     <button data-tab="attendance">Chấm công</button>
+    <button data-tab="sku">Hàng hóa</button>
     <button data-tab="history">Lịch sử</button>
     <button data-tab="enroll">Đăng ký</button>
     <button data-tab="employees">Nhân viên</button>
@@ -30,6 +31,10 @@
     <div class="srcbar">
       <div class="srcnow">
         <span class="rec" id="recBadge">ĐANG NHẬN DIỆN</span>
+        <div class="modesw" role="group" aria-label="Chế độ camera">
+          <button type="button" class="mbtn active" data-mode="attendance">Chấm công</button>
+          <button type="button" class="mbtn" data-mode="sku">Hàng hóa</button>
+        </div>
         <span class="muted">Nguồn:</span> <b id="srcLabel">…</b>
         <button type="button" class="btn" id="zoneBtn" title="Chỉ chuyển động trong vùng này mới đánh thức chế độ chờ">Vùng cửa</button>
         <button type="button" class="btn chime-btn" id="chimeBtn" title="Phát thử tiếng chuông cảnh báo trên loa Camera Tapo (hoặc giả lập trên Web khi chưa cắm camera)">🔔 Thử chuông Camera</button>
@@ -202,6 +207,60 @@
         <tbody id="evBody"></tbody></table>
     </div>
   </section>
+
+  <!-- SKU / HANG HOA -->
+  <section id="tab-sku" class="tab">
+    <div class="metrics" id="skuMetrics"></div>
+    <div class="cols">
+      <form id="skuForm" class="card">
+        <h3>Đăng ký mẫu Hàng hóa / SKU</h3>
+        <label>Mã SKU <input name="code" required placeholder="VD: SKU-TEA-01" pattern="[A-Za-z0-9_.\-]{1,64}"></label>
+        <label>Tên sản phẩm <input name="name" required placeholder="Trà Oolong MSW 500g"></label>
+        <div class="sku-row2">
+          <label>Mã vạch / QR (tùy chọn) <input name="barcode" placeholder="893... hoặc chuỗi QR"></label>
+          <label>ĐVT <input name="uom" value="pcs" placeholder="hộp / thùng / pcs"></label>
+        </div>
+        <p class="hint">Ưu tiên đọc <b>QR / Barcode</b> nếu có; nếu không có mã vạch, chụp hoặc tải ảnh mặt bao bì nhiều logo/chữ/hoa văn để khớp bằng ORB/SIFT + RANSAC.</p>
+        <div class="mode">
+          <label><input type="radio" name="source" value="camera" checked> Chụp từ camera hiện tại</label>
+          <label><input type="radio" name="source" value="upload"> Tải ảnh mẫu lên</label>
+          <label><input type="radio" name="source" value="none"> Chỉ dùng mã vạch/QR</label>
+        </div>
+        <div id="skuCamRow" class="sku-cam-wrap">
+          <div class="video preview"><img id="skuPreview" alt="Xem trước camera"><span class="rec on">CAMERA</span></div>
+          <small class="muted">Đặt bao bì phẳng vào giữa khung hình (đủ nét, tránh chói đèn), sau đó bấm <b>Lưu &amp; chụp mẫu</b>.</small>
+        </div>
+        <label id="skuFileRow" hidden>Ảnh bao bì (JPG/PNG) <input type="file" name="file" accept="image/*"></label>
+        <label class="sku-chk"><input type="checkbox" name="replace_templates"> Thay thế ảnh mẫu cũ của SKU này</label>
+        <button type="submit" class="primary" id="skuSaveBtn">Lưu &amp; chụp mẫu</button>
+        <div id="skuMsg" class="msg"></div>
+      </form>
+      <div class="card">
+        <h3>Danh mục SKU đang nhận diện <small class="muted">— tự cập nhật không cần restart</small></h3>
+        <table><thead><tr><th>Ảnh</th><th>Mã SKU</th><th>Tên sản phẩm</th><th>Barcode/QR</th><th>Keypoints</th><th>Trạng thái</th><th></th></tr></thead>
+          <tbody id="skuItemsBody"></tbody></table>
+      </div>
+    </div>
+    <div class="card" style="margin-top:16px">
+      <form class="filters" id="skuFilterForm" style="margin-bottom:12px">
+        <label>Từ ngày <input type="date" name="date_from"></label>
+        <label>Đến ngày <input type="date" name="date_to"></label>
+        <label>Mã SKU <select name="code" id="skuCodeFilter"><option value="">Tất cả</option></select></label>
+        <div class="quick">
+          <button type="button" data-sku-range="today">Hôm nay</button>
+          <button type="button" data-sku-range="week">Tuần này</button>
+        </div>
+        <button type="submit" class="primary">Xem</button>
+        <a class="btn" id="skuCsv" href="#">Xuất CSV</a>
+      </form>
+      <h3>Tổng hợp sản lượng theo SKU</h3>
+      <table style="margin-bottom:16px"><thead><tr><th>Mã SKU</th><th>Tên sản phẩm</th><th>Lượt quét</th><th>Tổng SL</th><th>ĐVT</th><th>Phương thức</th><th>Lần cuối</th></tr></thead>
+        <tbody id="skuSumBody"></tbody></table>
+      <h3>Lịch sử nhận diện gần nhất</h3>
+      <table><thead><tr><th>Ảnh</th><th>Thời gian</th><th>SKU</th><th>Mã vạch/QR</th><th>Phương thức</th><th>Điểm / Inliers</th><th>SL</th></tr></thead>
+        <tbody id="skuEvBody"></tbody></table>
+    </div>
+  </section>
 </main>
 
 <div id="modal" hidden><img id="modalImg" alt=""></div>
@@ -217,11 +276,12 @@
     </div>
   </div>
 </div>
-<script src="/static/whep_canvas.js?v=4.2"></script>
+<script src="/static/whep_canvas.js?v=4.3"></script>
 <script src="/static/guided_wasm.js?v=4.2"></script>
-<script src="/static/app.js?v=4.2"></script>
+<script src="/static/app.js?v=4.3"></script>
 <script src="/static/attendance.js?v=4.2"></script>
 <script src="/static/history.js?v=4.2"></script>
 <script src="/static/zone.js?v=4.2"></script>
+<script src="/static/sku.js?v=4.3"></script>
 </body>
 </html>

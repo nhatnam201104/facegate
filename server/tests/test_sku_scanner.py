@@ -1,6 +1,7 @@
 """Kiem thu loi Nhan dien Hang hoa / SKU (Phase 2): DB, QR/Barcode, ORB/SIFT + RANSAC, chong bao nham & toc do CPU."""
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 import cv2
@@ -279,3 +280,410 @@ def test_download_models_enforces_sha256_integrity(tmp_path: Path, monkeypatch: 
     assert dm.download(_entry(good_sha), tmp_path)
     assert (tmp_path / "dummy.onnx").is_file()
     assert not dm.download(_entry("f" * 64), tmp_path)
+
+
+def test_sku_track_counter_hold_and_cooldown_deduplication():
+    from server.vision.sku_scanner import SkuDetection, SkuTrackCounter
+
+    counter = SkuTrackCounter(min_hold_sec=0.4, cooldown_sec=3.0, max_age=1.0)
+    det = SkuDetection(
+        sku_id=1, code="SKU-01", name="Hộp trà", barcode="8930001", uom="box",
+        method="qr", score=1.0, inliers=0, bbox=(100.0, 100.0, 220.0, 220.0),
+    )
+
+    # Frame 0.0s: moi xuat hien -> chua dem
+    _, c0 = counter.update([det], now=10.0)
+    assert c0 == []
+
+    # Frame 0.2s: giu chua du 0.4s -> chua dem
+    _, c1 = counter.update([det], now=10.2)
+    assert c1 == []
+
+    # Frame 0.45s: dat min_hold_sec -> dem +1 duy nhat
+    _, c2 = counter.update([det], now=10.45)
+    assert len(c2) == 1 and c2[0].code == "SKU-01"
+
+    # Frame 0.8s & 1.2s: kien van nam do -> KHONG dem lai
+    _, c3 = counter.update([det], now=10.8)
+    _, c4 = counter.update([det], now=11.2)
+    assert c3 == [] and c4 == []
+
+    # Kien mat mat > max_age roi quay lai SOM trong cooldown (12.8s < 10.45 + 3.0) -> KHONG dem
+    counter.update([], now=12.4)
+    _, c5 = counter.update([det], now=12.45)
+    _, c6 = counter.update([det], now=12.9)
+    assert c5 == [] and c6 == []
+
+    # Sau het han max_age va qua cooldown (14.0s >= 10.45 + 3.0) + giu du 0.4s -> dem kien thu 2
+    counter.update([], now=14.1)
+    _, c7 = counter.update([det], now=14.2)
+    _, c8 = counter.update([det], now=14.65)
+    assert c7 == [] and len(c8) == 1
+
+
+def test_pipeline_set_mode_defers_tracker_teardown_to_loop_thread(tmp_path: Path):
+    """F1: set_mode khong duoc dung tracker/counter tu HTTP thread (race dict changed size)."""
+    from types import SimpleNamespace
+    from server.vision.pipeline import Pipeline
+
+    cfg = _make_cfg(tmp_path, "orb")
+    db = DB(cfg["_paths"]["db"])
+    gal = SkuGallery(db, feature_type="orb")
+    scanner = SkuScanner(cfg, gal)
+    fake_cam = SimpleNamespace(
+        connected=True, fps_in=15.0, idle=False,
+        describe=lambda: {"kind": "webcam", "label": "MockCam", "connected": True, "black": False},
+        read=lambda: (1, np.zeros((240, 320, 3), np.uint8)),
+    )
+    pl = Pipeline(
+        cfg, db, SimpleNamespace(name="opencv", model_version="test"),
+        SimpleNamespace(version=1, size=0, has=lambda _: False),
+        fake_cam, SimpleNamespace(kind="mock", notify=lambda: None), lambda _m: None,
+        sku_scanner=scanner, sku_gallery=gal,
+    )
+
+    # Gia lap pipeline thread dang giu track: set_mode chi duoc dat co, KHONG duoc xoa ngay
+    pl.tracker.tracks[1] = SimpleNamespace(id=1)
+    pl.sku_counter.tracks[7] = SimpleNamespace(track_id=7)
+    assert pl.set_mode("sku") == "sku"
+    assert 1 in pl.tracker.tracks and 7 in pl.sku_counter.tracks, "set_mode xoa tracker tu HTTP thread -> race"
+    assert pl._reset_pending is True
+
+    # Pipeline thread ap dung co: luc nay moi don dep
+    pl._apply_pending_reset()
+    assert pl.tracker.tracks == {} and pl.sku_counter.tracks == {}
+    assert pl._reset_pending is False and pl._pending_wake is None
+    assert pl._last_sku_tracks == []
+
+
+def test_sku_summary_respects_code_filter(tmp_path: Path):
+    """F3: bo loc Ma SKU phai ap dung cho ca bang tong hop san luong."""
+    from server.api import sku as sku_api
+    from server.api.state import ctx
+
+    cfg = _make_cfg(tmp_path, "orb")
+    db = DB(cfg["_paths"]["db"])
+    gal = SkuGallery(db, feature_type="orb")
+    id_a = db.upsert_sku_item("SKU-A", "Sản phẩm A")
+    id_b = db.upsert_sku_item("SKU-B", "Sản phẩm B")
+    for _ in range(3):
+        db.add_sku_event(ts=time.time(), camera="c", sku_id=id_a, code="SKU-A", name="Sản phẩm A", method="qr")
+    db.add_sku_event(ts=time.time(), camera="c", sku_id=id_b, code="SKU-B", name="Sản phẩm B", method="qr")
+
+    old_state = {k: getattr(ctx, k, None) for k in ("cfg", "db", "sku_scanner", "sku_gallery")}
+    try:
+        ctx.cfg, ctx.db, ctx.sku_gallery = cfg, db, gal
+        all_sum = sku_api.sku_summary()
+        assert all_sum["total_qty"] == 4.0 and len(all_sum["summary"]) == 2
+        filtered = sku_api.sku_summary(code="SKU-A")
+        assert filtered["total_qty"] == 3.0
+        assert [s["code"] for s in filtered["summary"]] == ["SKU-A"]
+    finally:
+        for k, v in old_state.items():
+            if v is None and hasattr(ctx, k):
+                delattr(ctx, k)
+            elif v is not None:
+                setattr(ctx, k, v)
+
+
+def test_sku_csv_neutralises_formula_injection(tmp_path: Path):
+    """F4 & N3: ten SKU bat dau bang ky tu cong thuc bi neutralize, con so am qty van giu nguyen la so."""
+    from server.api import sku as sku_api
+    from server.api.state import ctx
+
+    cfg = _make_cfg(tmp_path, "orb")
+    db = DB(cfg["_paths"]["db"])
+    gal = SkuGallery(db, feature_type="orb")
+    sku_id = db.upsert_sku_item("SKU-X", "=HYPERLINK(\"http://evil\",\"bam\")")
+    db.add_sku_event(ts=time.time(), camera="c", sku_id=sku_id, code="SKU-X",
+                     name="=HYPERLINK(\"http://evil\",\"bam\")", method="orb_ransac", qty=-2.5)
+
+    old_state = {k: getattr(ctx, k, None) for k in ("cfg", "db", "sku_scanner", "sku_gallery")}
+    try:
+        ctx.cfg, ctx.db, ctx.sku_gallery = cfg, db, gal
+        body = sku_api.sku_events_csv().body.decode("utf-8-sig")
+        assert "SKU-X" in body
+        assert "\"'=HYPERLINK" in body, "o CSV chua duoc neutralize"
+        assert ",=HYPERLINK" not in body, "con o CSV bat dau bang dau = (nguy hiem)"
+        assert ",-2.5," in body and "'-2.5" not in body, "so am qty bi bien thanh chuoi text"
+    finally:
+        for k, v in old_state.items():
+            if v is None and hasattr(ctx, k):
+                delattr(ctx, k)
+            elif v is not None:
+                setattr(ctx, k, v)
+
+
+def test_sku_summary_sql_aggregation_handles_over_50k_events(tmp_path: Path):
+    """Finding #1: /api/sku/summary gop truc tiep bang SQL, khong cat cut du lieu khi vuot 50.000 dong."""
+    from server.api import sku as sku_api
+    from server.api.state import ctx
+
+    cfg = _make_cfg(tmp_path, "orb")
+    db = DB(cfg["_paths"]["db"])
+    gal = SkuGallery(db, feature_type="orb")
+    sid = db.upsert_sku_item("SKU-BULK", "Thùng Hàng Lớn", uom="thùng")
+    now = time.time()
+    sql = (
+        "INSERT INTO sku_events(ts,camera,sku_id,code,name,barcode,method,score,inliers,"
+        "direction,qty,uom,track_id,snapshot,clip,meta_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
+    )
+    known_row = (now, "c", sid, "SKU-BULK", "Thùng Hàng Lớn", None, "qr", 1.0, 0, "IN", 1.0, "thùng", 1, None, None, None)
+    unk_row = (now, "c", None, None, "Unknown SKU", "000", "unknown_code", 1.0, 0, "IN", 1.0, "pcs", 2, None, None, None)
+    db.conn.executemany(sql, [known_row] * 55005 + [unk_row] * 12)
+    db.conn.commit()
+
+    old_state = {k: getattr(ctx, k, None) for k in ("cfg", "db", "sku_gallery")}
+    try:
+        ctx.cfg, ctx.db, ctx.sku_gallery = cfg, db, gal
+        res = sku_api.sku_summary()
+        assert res["total_events"] == 55017
+        assert res["total_qty"] == 55005.0
+        assert res["unknown_count"] == 12
+        assert res["sku_types"] == 1
+        assert res["summary"][0]["code"] == "SKU-BULK"
+        assert res["summary"][0]["count"] == 55005
+        assert res["summary"][0]["methods"] == {"qr": 55005}
+    finally:
+        for k, v in old_state.items():
+            if v is None and hasattr(ctx, k):
+                delattr(ctx, k)
+            elif v is not None:
+                setattr(ctx, k, v)
+
+
+def test_sku_api_rejects_non_finite_roi_and_missing_upload_file(tmp_path: Path):
+    """Finding #3: ROI NaN/Inf hoac ngoai 0..1 va source='upload' thieu file phai tra HTTP 400 thay vi 500."""
+    import asyncio
+    from types import SimpleNamespace
+    from fastapi import HTTPException
+    from server.api import sku as sku_api
+    from server.api.state import ctx
+
+    cfg = _make_cfg(tmp_path, "orb")
+    db = DB(cfg["_paths"]["db"])
+    gal = SkuGallery(db, feature_type="orb")
+    scanner = SkuScanner(cfg, gal)
+    fake_cam = SimpleNamespace(
+        connected=True, fps_in=15.0,
+        describe=lambda: {"kind": "webcam", "label": "MockCam", "connected": True, "black": False},
+        read=lambda: (1, np.full((200, 200, 3), 180, dtype=np.uint8)),
+    )
+    fake_pl = SimpleNamespace(mode="sku", status=lambda: {"mode": "sku"})
+    fake_req = SimpleNamespace(headers={}, client=SimpleNamespace(host="127.0.0.1"))
+
+    old_state = {k: getattr(ctx, k, None) for k in ("cfg", "db", "camera", "pipeline", "sku_scanner", "sku_gallery")}
+    try:
+        ctx.cfg, ctx.db, ctx.camera = cfg, db, fake_cam
+        ctx.pipeline, ctx.sku_scanner, ctx.sku_gallery = fake_pl, scanner, gal
+
+        for bad_roi in ("nan,0,1,1", "0,0,inf,1", "-0.1,0,1,1", "0.1,0.1,0.1,0.9", "0.1,0.2"):
+            with pytest.raises(HTTPException) as exc:
+                asyncio.run(sku_api.create_or_update_sku_item(
+                    fake_req, code="SKU-ROI-BAD", name="Test ROI", source="camera", roi=bad_roi, file=None,
+                ))
+            assert exc.value.status_code == 400
+
+        with pytest.raises(HTTPException) as exc_up:
+            asyncio.run(sku_api.create_or_update_sku_item(
+                fake_req, code="SKU-UP-EMPTY", name="Thiếu file", source="upload", file=None,
+            ))
+        assert exc_up.value.status_code == 400
+        assert db.get_sku_by_code("SKU-UP-EMPTY") is None
+    finally:
+        for k, v in old_state.items():
+            if v is None and hasattr(ctx, k):
+                delattr(ctx, k)
+            elif v is not None:
+                setattr(ctx, k, v)
+
+
+def test_worker_ipc_gate_blocks_attendance_in_sku_mode_and_clears_overlay(tmp_path: Path):
+    """Finding #2 & #4: _handle_worker_ipc chan checkin/spoof/overlay khuon mat khi mode=sku (nhung giu appearance_closed),
+    dong thoi Pipeline phat frame_overlay rong ngay khi doi mode hoac khi kien roi khung."""
+    from types import SimpleNamespace
+    from server import main as main_mod
+    from server.api.state import ctx
+    from server.vision.pipeline import Pipeline
+
+    cfg = _make_cfg(tmp_path, "orb")
+    cfg["clips"] = {"enabled": False}
+    db = DB(cfg["_paths"]["db"])
+    emp_id = db.create_employee("NV01", "Nguyễn Văn A")
+    db.set_status(emp_id, "active")
+    gal = SkuGallery(db, feature_type="orb")
+    scanner = SkuScanner(cfg, gal)
+    emitted: list[dict] = []
+    fake_cam = SimpleNamespace(
+        connected=True, fps_in=15.0, idle=False,
+        describe=lambda: {"kind": "webcam", "label": "MockCam", "connected": True, "black": False},
+        read=lambda: (1, np.full((240, 320, 3), 200, dtype=np.uint8)),
+    )
+    pl = Pipeline(
+        cfg, db, SimpleNamespace(name="opencv", model_version="test"),
+        SimpleNamespace(version=1, size=0, has=lambda _: False),
+        fake_cam, SimpleNamespace(kind="mock", notify=lambda: None), emitted.append,
+        sku_scanner=scanner, sku_gallery=gal,
+    )
+
+    pl.set_mode("sku")
+    pl._apply_pending_reset()
+    assert any(m.get("type") == "frame_overlay" and m.get("objects") == [] for m in emitted)
+
+    emitted.clear()
+    pl._process_sku(np.full((240, 320, 3), 220, dtype=np.uint8), now=time.time())
+    assert any(m.get("type") == "frame_overlay" and m.get("objects") == [] for m in emitted)
+
+    keys = ("cfg", "db", "pipeline", "engine", "hrm", "shift", "track_timelines", "track_event_ids")
+    old_state = {k: getattr(ctx, k, None) for k in keys}
+    try:
+        ctx.cfg = cfg
+        ctx.db = db
+        ctx.pipeline = pl
+        ctx.engine = SimpleNamespace(name="opencv", model_version="test")
+        ctx.hrm = SimpleNamespace(kind="mock", notify=lambda: None)
+        ctx.shift = pl.shift
+        ctx.track_timelines = {}
+        ctx.track_event_ids = {}
+
+        now_ns = time.time_ns()
+        main_mod._handle_worker_ipc({
+            "type": "track_event",
+            "event_kind": "checkin",
+            "camera_id": "gate-1",
+            "ts_server_ns": now_ns,
+            "track_id": 10,
+            "employee_id": emp_id,
+            "code": "NV01",
+            "name": "Nguyễn Văn A",
+            "score": 0.88,
+            "margin": 0.25,
+        })
+        main_mod._handle_worker_ipc({
+            "type": "track_event",
+            "event_kind": "spoof",
+            "camera_id": "gate-1",
+            "ts_server_ns": now_ns,
+            "track_id": 11,
+        })
+        assert db.list_events(limit=20) == [], "mode=sku van ghi checkin/spoof tu worker!"
+
+        # appearance_closed van duoc phep dong de khong mat lich su cua track truoc luc chuyen mode
+        main_mod._handle_worker_ipc({
+            "type": "track_event",
+            "event_kind": "appearance_closed",
+            "camera_id": "gate-1",
+            "track_id": 10,
+            "start_ts": time.time() - 1.5,
+            "end_ts": time.time(),
+            "employee_id": emp_id,
+            "code": "NV01",
+            "name": "Nguyễn Văn A",
+        })
+        assert len(db.q("SELECT id FROM appearances")) == 1
+    finally:
+        for k, v in old_state.items():
+            if v is None and hasattr(ctx, k):
+                delattr(ctx, k)
+            elif v is not None:
+                setattr(ctx, k, v)
+
+
+def test_pipeline_sku_mode_and_sku_api_endpoints(tmp_path: Path):
+    import asyncio
+    import time
+    from io import BytesIO
+    from types import SimpleNamespace
+    from starlette.datastructures import UploadFile
+    from server.api import sku as sku_api
+    from server.api.state import ctx
+    from server.vision.pipeline import Pipeline
+
+    cfg = _make_cfg(tmp_path, "orb")
+    db = DB(cfg["_paths"]["db"])
+    gal = SkuGallery(db, feature_type="orb")
+    scanner = SkuScanner(cfg, gal)
+    pkg = _make_textured_package(seed=55, title="MSW SKU LIVE")
+
+    # Tao fake frame co ma QR dang ky san de test ca chup camera lan pipeline
+    qr_raw = cv2.QRCodeEncoder_create().encode("QR-LIVE-55")
+    qr_bgr = cv2.cvtColor(cv2.resize(qr_raw, (200, 200), interpolation=cv2.INTER_NEAREST), cv2.COLOR_GRAY2BGR)
+    cam_frame = np.full((420, 640, 3), 230, dtype=np.uint8)
+    cam_frame[110:310, 220:420] = qr_bgr
+
+    fake_cam = SimpleNamespace(
+        connected=True, fps_in=15.0,
+        describe=lambda: {"kind": "webcam", "label": "MockCam", "connected": True, "black": False},
+        read=lambda: (1, cam_frame.copy()),
+    )
+    fake_engine = SimpleNamespace(name="opencv", model_version="test")
+    fake_gal = SimpleNamespace(version=1, size=0, has=lambda _: False)
+    fake_hrm = SimpleNamespace(kind="mock", notify=lambda: None)
+    emitted_ws: list[dict] = []
+
+    pl = Pipeline(
+        cfg, db, fake_engine, fake_gal, fake_cam, fake_hrm, emitted_ws.append,
+        sku_scanner=scanner, sku_gallery=gal,
+    )
+    pl.sku_counter.min_hold_sec = 0.0
+    pl.sku_counter.cooldown_sec = 1.0
+
+    # Gan state cho router sku_api (khong khoi dong uvicorn/TestClient de khong phu thuoc httpx)
+    old_state = {k: getattr(ctx, k, None) for k in ("cfg", "db", "camera", "pipeline", "sku_scanner", "sku_gallery")}
+    try:
+        ctx.cfg = cfg
+        ctx.db = db
+        ctx.camera = fake_cam
+        ctx.pipeline = pl
+        ctx.sku_scanner = scanner
+        ctx.sku_gallery = gal
+
+        fake_req = SimpleNamespace(headers={}, client=SimpleNamespace(host="127.0.0.1"))
+        assert sku_api.get_mode()["mode"] == "attendance"
+        assert asyncio.run(sku_api.set_mode(fake_req, mode="sku"))["mode"] == "sku"
+        assert pl.status()["mode"] == "sku"
+
+        # 1. Dang ky bang anh bao bi upload
+        ok_jpg, buf = cv2.imencode(".jpg", pkg)
+        assert ok_jpg
+        up = UploadFile(filename="pkg.jpg", file=BytesIO(buf.tobytes()))
+        rep1 = asyncio.run(sku_api.create_or_update_sku_item(
+            fake_req, code="SKU-PKG-55", name="Hộp Trà Mẫu", barcode="", uom="hộp",
+            source="upload", replace_templates=False, roi="", file=up,
+        ))
+        assert rep1["code"] == "SKU-PKG-55" and rep1["template"]["num_kps"] >= 30
+
+        # 2. Dang ky bang chup truc tiep tu camera cho ma QR
+        rep2 = asyncio.run(sku_api.create_or_update_sku_item(
+            fake_req, code="SKU-QR-55", name="Kiện QR Live", barcode="QR-LIVE-55", uom="thùng",
+            source="camera", replace_templates=False, roi="0.1,0.1,0.9,0.9", file=None,
+        ))
+        assert rep2["code"] == "SKU-QR-55" and gal.size == 2
+
+        # 3. Chay _process_sku -> phat hien Kien QR Live, luu snapshot & sku_events, phat WebSocket
+        t_now = time.time()
+        pl._process_sku(cam_frame, now=t_now)
+        pl._render_sku(cam_frame, now=t_now)
+        assert pl.jpeg is not None and len(pl.jpeg) > 500
+        assert any(m.get("type") == "sku_event" and m["event"]["code"] == "SKU-QR-55" for m in emitted_ws)
+
+        # 4. Kiem tra API summary, events & CSV
+        sum_res = sku_api.sku_summary()
+        assert sum_res["total_qty"] == 1.0 and sum_res["summary"][0]["code"] == "SKU-QR-55"
+        evs = sku_api.list_sku_events()
+        assert len(evs) == 1 and evs[0]["snapshot"].startswith("snapshots/sku/")
+        csv_resp = sku_api.sku_events_csv()
+        csv_txt = csv_resp.body.decode("utf-8")
+        assert "SKU-QR-55" in csv_txt and "Kiện QR Live" in csv_txt
+
+        # 5. Tat/xoa SKU & quay ve mode attendance
+        sku_api.sku_item_action(rep1["sku_id"], "disable", fake_req)
+        sku_api.delete_sku_item(rep1["sku_id"], fake_req)
+        assert gal.size == 1
+        assert asyncio.run(sku_api.set_mode(fake_req, mode="attendance"))["mode"] == "attendance"
+    finally:
+        for k, v in old_state.items():
+            if v is None and hasattr(ctx, k):
+                delattr(ctx, k)
+            elif v is not None:
+                setattr(ctx, k, v)

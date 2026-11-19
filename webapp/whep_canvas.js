@@ -13,6 +13,7 @@
       this.pc = null;
       this.whepActive = false;
       this.overlayBuf = [];
+      this.lastMode = "";
       this.lastRecvMs = 0;
       this.offsetMs = 0;
       this.rafId = null;
@@ -23,8 +24,13 @@
 
     pushOverlay(packet) {
       const now = performance.now();
+      const nextMode = packet.mode || "";
+      if (nextMode && this.lastMode && nextMode !== this.lastMode) {
+        this.overlayBuf = [];
+      }
+      if (nextMode) this.lastMode = nextMode;
       this.lastRecvMs = now;
-      this.overlayBuf.push({ recvMs: now, objects: packet.objects || [], mode: packet.mode || "" });
+      this.overlayBuf.push({ recvMs: now, objects: packet.objects || [], mode: nextMode });
       if (this.overlayBuf.length > 12) this.overlayBuf.shift();
     }
 

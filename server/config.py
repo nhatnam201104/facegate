@@ -152,6 +152,12 @@ def _apply_v4_defaults(cfg: dict) -> dict:
     st.setdefault("data_dir", "data")
     st.setdefault("database_url", "")
 
+    ev = cfg.setdefault("events", {})
+    ev.setdefault("direction", "none")
+    ev.setdefault("log_unknown", True)
+    ev.setdefault("line", [[0.0, 0.5], [1.0, 0.5]])
+    ev.setdefault("in_when", "down")
+
     sku = cfg.setdefault("sku", {})
     sku.setdefault("feature_type", "orb")
     sku["orb_nfeatures"] = int(_clamp(sku.get("orb_nfeatures", 800), 100, 5000))
@@ -163,6 +169,14 @@ def _apply_v4_defaults(cfg: dict) -> dict:
     sku["ransac_reproj_thresh"] = _clamp(sku.get("ransac_reproj_thresh", 4.5), 1.0, 15.0)
     sku["min_blur"] = float(sku.get("min_blur", 20.0))
     sku["scan_max_width"] = int(_clamp(sku.get("scan_max_width", 960), 320, 2560))
+    sku["min_hold_sec"] = _clamp(sku.get("min_hold_sec", 0.4), 0.0, 10.0)
+    sku["cooldown_sec"] = _clamp(sku.get("cooldown_sec", 4.0), 0.5, 120.0)
+    sku["track_max_age"] = _clamp(sku.get("track_max_age", 1.2), 0.2, 10.0)
+    sku["log_unknown"] = bool(sku.get("log_unknown", True))
+    sku["prefer_code_short_circuit"] = bool(sku.get("prefer_code_short_circuit", True))
+    pl["mode"] = str(pl.get("mode", "attendance")).strip().lower()
+    if pl["mode"] not in ("attendance", "sku"):
+        pl["mode"] = "attendance"
     return cfg
 
 

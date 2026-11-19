@@ -167,6 +167,10 @@ class PerceptionWorker:
         # Loa Tapo nhac nhin vao camera / canh bao gia mao (dong thoi day goi IPC camera_chime len Web)
         self.look_prompter = create_look_prompter(cfg, on_event=self._chime_events.append)
         self._stop = False
+        # Control plane day xuong qua IPC khi nguoi dung gat sang tab Hang hoa
+        self.mode = str(cfg.get("pipeline", {}).get("mode", "attendance")).strip().lower()
+        if self.mode not in ("attendance", "sku"):
+            self.mode = "attendance"
 
     def process_frame(self, frame: np.ndarray, ts_ns: int | None = None, decode_ms: float = 0.0) -> tuple[dict, list[dict]]:
         t0 = time.perf_counter()
@@ -175,6 +179,22 @@ class PerceptionWorker:
         h, w = frame.shape[:2]
         pcfg = self.cfg["pipeline"]
         max_faces = int(pcfg["max_faces"])
+
+        if getattr(self, "mode", "attendance") == "sku":
+            # Che do Hang hoa: khong cham cong, khong ve overlay khuon mat (Pipeline xu ly SKU)
+            self.tracker.tracks.clear()
+            self._chime_events.clear()
+            self.seq += 1
+            return {
+                "type": "frame_overlay",
+                "camera_id": self.camera_id,
+                "seq": self.seq,
+                "ts_server_ns": ts_ns,
+                "infer_ms": round((time.perf_counter() - t0) * 1000.0, 2),
+                "decode_ms": round(decode_ms, 2),
+                "mode": "sku",
+                "objects": [],
+            }, []
 
         if pcfg.get("two_stage_roi", True):
             faces, scene = detect_faces_two_stage_3mp(
@@ -446,6 +466,11 @@ async def run_worker_loop(cfg: dict, sock_path: Path, port: int = 18091) -> None
                 break
             if cmd.get("cmd") == "reload_gallery":
                 worker.gallery.reload()
+            elif cmd.get("cmd") == "set_mode":
+                m = str(cmd.get("mode", "")).strip().lower()
+                if m in ("attendance", "sku"):
+                    worker.mode = m
+                    worker.tracker.tracks.clear()
 
     cmd_task = asyncio.create_task(_listen_commands())
     src = resolve_worker_source(cfg)

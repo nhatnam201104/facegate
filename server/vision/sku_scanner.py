@@ -563,3 +563,115 @@ class SkuScanner:
             "skipped_blur": False,
             "elapsed_ms": round((time.perf_counter() - t0) * 1000.0, 2),
         }
+
+
+@dataclass
+class _SkuTrack:
+    track_id: int
+    key: str                     # sku:{code} | unk:{barcode}
+    sku_id: int | None
+    code: str | None
+    name: str | None
+    barcode: str | None
+    uom: str
+    method: str
+    score: float
+    inliers: int
+    bbox: np.ndarray
+    first_seen: float
+    last_seen: float
+    hits: int = 1
+    committed: bool = False
+
+
+class SkuTrackCounter:
+    """Bam vet kien hang qua cac frame va chong dem trung:
+    - Kien hang phai on dinh >= min_hold_sec moi tinh +1 su kien.
+    - Sau khi dem 1 ma SKU, ma do bi khoa trong cooldown_sec (hoac chi dem lai sau khi kien cu roi khung).
+    """
+
+    def __init__(self, min_hold_sec: float = 0.4, cooldown_sec: float = 4.0,
+                 max_age: float = 1.2, iou_thr: float = 0.25):
+        self.min_hold_sec = max(0.0, float(min_hold_sec))
+        self.cooldown_sec = max(0.0, float(cooldown_sec))
+        self.max_age = max(0.1, float(max_age))
+        self.iou_thr = float(iou_thr)
+        self.tracks: dict[int, _SkuTrack] = {}
+        self._next_id = 1
+        self._last_commit_at: dict[str, float] = {}
+
+    def reset(self) -> None:
+        self.tracks.clear()
+        self._last_commit_at.clear()
+
+    def update(self, detections: list[SkuDetection], now: float | None = None) -> tuple[list[_SkuTrack], list[_SkuTrack]]:
+        now = float(now if now is not None else time.time())
+        used_t, used_d = set(), set()
+
+        # 1. Noi detection vao track dang ton tai (uu tien cung key + IoU >= thr, du phong gan tam)
+        pairs = []
+        for tid, tr in self.tracks.items():
+            tb = (float(tr.bbox[0]), float(tr.bbox[1]), float(tr.bbox[2]), float(tr.bbox[3]))
+            for di, d in enumerate(detections):
+                key = f"sku:{d.code}" if d.accepted else f"unk:{d.barcode or '?'}"
+                if key != tr.key:
+                    continue
+                ov = _box_iou(tb, d.bbox)
+                if ov >= self.iou_thr:
+                    pairs.append((ov, tid, di))
+        for _, tid, di in sorted(pairs, reverse=True):
+            if tid in used_t or di in used_d:
+                continue
+            tr, d = self.tracks[tid], detections[di]
+            tr.bbox = np.array(d.bbox, dtype=np.float32)
+            tr.last_seen = now
+            tr.hits += 1
+            tr.score = max(tr.score, float(d.score))
+            tr.inliers = max(tr.inliers, int(d.inliers))
+            tr.method = d.method
+            used_t.add(tid)
+            used_d.add(di)
+
+        for di, d in enumerate(detections):
+            if di in used_d:
+                continue
+            key = f"sku:{d.code}" if d.accepted else f"unk:{d.barcode or '?'}"
+            tr = _SkuTrack(
+                track_id=self._next_id,
+                key=key,
+                sku_id=d.sku_id,
+                code=d.code,
+                name=d.name,
+                barcode=d.barcode,
+                uom=d.uom,
+                method=d.method,
+                score=float(d.score),
+                inliers=int(d.inliers),
+                bbox=np.array(d.bbox, dtype=np.float32),
+                first_seen=now,
+                last_seen=now,
+            )
+            self._next_id += 1
+            self.tracks[tr.track_id] = tr
+
+        expired = [tr for tr in self.tracks.values() if now - tr.last_seen > self.max_age]
+        for tr in expired:
+            del self.tracks[tr.track_id]
+
+        newly_committed: list[_SkuTrack] = []
+        for tr in self.tracks.values():
+            if tr.committed:
+                continue
+            held = (now - tr.first_seen) >= self.min_hold_sec
+            if not held:
+                continue
+            last_t = self._last_commit_at.get(tr.key, -1e18)
+            if (now - last_t) < self.cooldown_sec:
+                # Van trong thoi gian cho sau lan dem truoc: danh dau da xu ly tren track nay de khong nhay dem giua chung
+                tr.committed = True
+                continue
+            tr.committed = True
+            self._last_commit_at[tr.key] = now
+            newly_committed.append(tr)
+
+        return list(self.tracks.values()), newly_committed

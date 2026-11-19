@@ -67,12 +67,31 @@ def crop_with_margin(img: np.ndarray, bbox: np.ndarray, m: float = 0.25) -> np.n
 
 class Pipeline:
     def __init__(self, cfg, db, engine, gallery, camera, hrm, broadcast, liveness=None, clips=None,
-                 recognize: bool = True, pose=None, context_detector=None):
+                 recognize: bool = True, pose=None, context_detector=None,
+                 sku_scanner=None, sku_gallery=None):
         self.cfg, self.db, self.engine, self.gallery = cfg, db, engine, gallery
         self.camera, self.hrm, self.broadcast = camera, hrm, broadcast
         self.liveness, self.clips = liveness, clips
         self.pose = pose
         self.ctx_det = context_detector
+        self.sku_scanner = sku_scanner
+        self.sku_gallery = sku_gallery
+        self.mode = str(cfg.get("pipeline", {}).get("mode", "attendance")).lower()
+        if self.mode not in ("attendance", "sku"):
+            self.mode = "attendance"
+        scfg = cfg.get("sku") or {}
+        from .sku_scanner import SkuTrackCounter
+        self.sku_counter = SkuTrackCounter(
+            min_hold_sec=float(scfg.get("min_hold_sec", 0.4)),
+            cooldown_sec=float(scfg.get("cooldown_sec", 4.0)),
+            max_age=float(scfg.get("track_max_age", 1.2)),
+        )
+        self._last_sku_tracks: list = []
+        self._sku_sharpness: float = 0.0
+        # Tracker/counter chi duoc dung boi pipeline thread: set_mode chi dat co, don dep trong _run
+        self._mode_lock = threading.Lock()
+        self._reset_pending = False
+        self._pending_wake: str | None = None
         # recognize=False (che do isolated_worker): worker_perception nhan dien; o day chi render khung xem truoc,
         # khong tao event/ledger/clip de tranh 2 bo nhan dien chay song song (CR2).
         self.recognize = bool(recognize)
@@ -102,9 +121,9 @@ class Pipeline:
         self.shift = Shift.from_cfg(cfg)
         # isolated_worker: worker_perception tu nhac, o day khong nhac trung lan nua
         self.look_prompter = create_look_prompter(cfg, on_event=broadcast) if self.recognize else None
-        self.qcfg = cfg["quality"]
-        self.ecfg = cfg["events"]
-        self.pcfg = cfg["pipeline"]
+        self.qcfg = cfg.get("quality", {})
+        self.ecfg = cfg.get("events", {})
+        self.pcfg = cfg.get("pipeline", {})
         self.det_width = 960
         self.jpeg: bytes | None = None
         self.jpeg_id = 0
@@ -148,6 +167,43 @@ class Pipeline:
     def set_camera(self, camera) -> None:
         self._next_camera = camera
 
+    def set_mode(self, mode: str) -> str:
+        m = str(mode or "").strip().lower()
+        if m not in ("attendance", "sku"):
+            raise ValueError("mode phải là 'attendance' hoặc 'sku'")
+        with self._mode_lock:
+            if m != self.mode:
+                self.mode = m
+                # tracker.tracks / sku_counter.tracks khong thread-safe voi vong lap: dat co de _run don dep
+                self._reset_pending = True
+                self._pending_wake = f"doi che do sang {m}"
+                self.last_activity = time.time()
+        self.broadcast({"type": "status", "status": self.status()})
+        return self.mode
+
+    def _apply_pending_reset(self) -> None:
+        """Chay tren pipeline thread: dong track cu va xoa bo dem khi vua doi che do."""
+        if not self._reset_pending:
+            return
+        with self._mode_lock:
+            self._reset_pending = False
+            reason, self._pending_wake = self._pending_wake, None
+        self._end_all_tracks()
+        self.sku_counter.reset()
+        self._last_sku_tracks = []
+        cam_name = self.cfg.get("camera", {}).get("name", "gate-1")
+        cam_id = str(self.cfg.get("camera", {}).get("id", cam_name))
+        self.broadcast({
+            "type": "frame_overlay",
+            "camera_id": cam_id,
+            "ts_server_ns": time.time_ns(),
+            "frame_id": 0,
+            "mode": self.mode,
+            "objects": [],
+        })
+        if self.sleeping:
+            self._wake(time.time(), reason or "doi che do")
+
     def _run(self) -> None:
         det_iv = 1.0 / max(0.5, float(self.pcfg["detect_fps"]))
         st_iv = 1.0 / max(1.0, float(self.pcfg["stream_fps"]))
@@ -155,6 +211,7 @@ class Pipeline:
         last_fid = -1
         n_det, t_cnt = 0, time.time()
         while not self._stop.is_set():
+            self._apply_pending_reset()
             if self._next_camera is not None:  # track cu khong con y nghia voi nguon moi
                 self._end_all_tracks()
                 self.camera, self._next_camera = self._next_camera, None
@@ -173,10 +230,26 @@ class Pipeline:
                 continue
             last_fid = fid
             now = time.time()
-            if not self.recognize:
+            if not self.recognize and self.mode == "attendance":
                 if now - last_st >= st_iv:
                     last_st = now
                     self._render(frame, now)
+                continue
+            if self.mode == "sku":
+                if self.sleeping:
+                    self._wake(now, "che do hang hoa")
+                if now - last_det >= det_iv:
+                    last_det = now
+                    try:
+                        self._process_sku(frame, now)
+                    except Exception:  # noqa: BLE001
+                        log.exception("Loi xu ly frame SKU")
+                    n_det += 1
+                if now - t_cnt >= 2.0:
+                    self.det_fps, n_det, t_cnt = n_det / (now - t_cnt), 0, now
+                if now - last_st >= st_iv:
+                    last_st = now
+                    self._render_sku(frame, now)
                 continue
             if self.sleeping:
                 if now - last_det < self.sleep_iv:
@@ -695,13 +768,168 @@ class Pipeline:
             self.clips.push(view, now)
         self._publish(view)
 
+    # --------------------------------------------------------------- SKU mode
+    def _save_sku_snapshot(self, frame: np.ndarray, tr) -> str | None:
+        h, w = frame.shape[:2]
+        x1, y1, x2, y2 = (int(v) for v in tr.bbox)
+        bw, bh = max(1, x2 - x1), max(1, y2 - y1)
+        mx, my = int(bw * 0.15), int(bh * 0.15)
+        cx1, cy1 = max(0, x1 - mx), max(0, y1 - my)
+        cx2, cy2 = min(w, x2 + mx), min(h, y2 + my)
+        crop = frame[cy1:cy2, cx1:cx2]
+        if crop.size == 0:
+            crop = frame
+        day = datetime.now().strftime("%Y%m%d")
+        folder = self.cfg["_paths"]["snapshots"] / "sku" / day
+        folder.mkdir(parents=True, exist_ok=True)
+        tag = tr.code or "unknown"
+        fname = f"{datetime.now():%H%M%S}_{tr.track_id}_{tag}.jpg"
+        cv2.imwrite(str(folder / fname), crop)
+        return f"snapshots/sku/{day}/{fname}"
+
+    def _process_sku(self, frame: np.ndarray, now: float) -> None:
+        if self.sku_scanner is None:
+            return
+        t0 = time.time()
+        scfg = self.cfg.get("sku") or {}
+        roi = None
+        if self.motion_zone != FULL_ZONE:
+            xs = [p[0] for p in self.motion_zone]
+            ys = [p[1] for p in self.motion_zone]
+            roi = (min(xs), min(ys), max(xs), max(ys))
+        res = self.sku_scanner.scan_frame(
+            frame,
+            roi_norm=roi,
+            prefer_code_short_circuit=bool(scfg.get("prefer_code_short_circuit", True)),
+        )
+        self._sku_sharpness = float(res.get("sharpness", 0.0))
+        dets = res.get("detections") or []
+        tracks, committed = self.sku_counter.update(dets, now=now)
+        self._last_sku_tracks = tracks
+        cam_name = self.cfg["camera"]["name"]
+        log_unk = bool(scfg.get("log_unknown", True))
+        for tr in committed:
+            if tr.sku_id is None and not log_unk:
+                continue
+            snap = self._save_sku_snapshot(frame, tr)
+            ev = {
+                "ts": now,
+                "camera": cam_name,
+                "sku_id": tr.sku_id,
+                "code": tr.code,
+                "name": tr.name or (f"Mã lạ ({tr.barcode})" if tr.barcode else "Unknown SKU"),
+                "barcode": tr.barcode,
+                "method": tr.method,
+                "score": round(float(tr.score), 4),
+                "inliers": int(tr.inliers),
+                "direction": "IN",
+                "qty": 1.0,
+                "uom": tr.uom,
+                "track_id": int(tr.track_id),
+                "snapshot": snap,
+            }
+            ev["id"] = self.db.add_sku_event(**ev)
+            self.broadcast({"type": "sku_event", "event": ev})
+
+        # Phat overlay len WebSocket de WebRTC canvas ve khung chu nhat truc tiep
+        fh, fw = frame.shape[:2]
+        ts_ns = int(now * 1e9)
+        cam_id = str(self.cfg.get("camera", {}).get("id", cam_name))
+        overlay_objs = []
+        for tr in tracks:
+            if now - tr.last_seen > DRAW_FRESH:
+                continue
+            x1, y1, x2, y2 = tr.bbox
+            b_norm = (
+                max(0.0, min(1.0, float(x1) / max(1, fw))),
+                max(0.0, min(1.0, float(y1) / max(1, fh))),
+                max(0.0, min(1.0, float(x2) / max(1, fw))),
+                max(0.0, min(1.0, float(y2) / max(1, fh))),
+            )
+            if tr.sku_id is not None and tr.committed:
+                role = "ok"
+                state = "COMMITTED"
+                lbl = f"{tr.code} · {tr.name}"
+            elif tr.sku_id is not None:
+                role = "checking"
+                state = "IDENTIFIED"
+                lbl = f"{tr.code} · giữ ổn định..."
+            else:
+                role = "alert"
+                state = "UNKNOWN"
+                lbl = f"Mã lạ ({tr.barcode})" if tr.barcode else "Unknown SKU"
+            overlay_objs.append({
+                "camera_id": cam_id,
+                "ts_server_ns": ts_ns,
+                "track_id": int(tr.track_id),
+                "kind": "sku",
+                "bbox_norm": [round(v, 4) for v in b_norm],
+                "vel_norm": [0.0, 0.0],
+                "state": state,
+                "color_role": role,
+                "label": lbl,
+                "verification_tier": "verified" if tr.sku_id is not None else "unverified",
+                "meta": {
+                    "sku_id": tr.sku_id,
+                    "code": tr.code,
+                    "barcode": tr.barcode,
+                    "uom": tr.uom,
+                    "method": tr.method,
+                    "score": round(float(tr.score), 4),
+                    "inliers": int(tr.inliers),
+                },
+            })
+        self.broadcast({
+            "type": "frame_overlay",
+            "camera_id": cam_id,
+            "ts_server_ns": ts_ns,
+            "frame_id": int(now * 100) % 1000000,
+            "mode": "sku",
+            "objects": overlay_objs,
+        })
+
+        self.det_ms = (time.time() - t0) * 1000.0
+
+    def _render_sku(self, frame: np.ndarray, now: float) -> None:
+        h, w = frame.shape[:2]
+        s = min(1.0, float(self.pcfg["stream_width"]) / w)
+        view = cv2.resize(frame, (int(w * s), int(h * s))) if s < 1 else frame.copy()
+        vh, vw = view.shape[:2]
+        if self.motion_zone != FULL_ZONE:
+            pts = np.array([[x * (vw - 1), y * (vh - 1)] for x, y in self.motion_zone], np.int32)
+            cv2.polylines(view, [pts], True, ZONE_COLOR, 2, cv2.LINE_AA)
+        boxes = []
+        for tr in list(self._last_sku_tracks):
+            if now - tr.last_seen > DRAW_FRESH:
+                continue
+            if tr.sku_id is not None and tr.committed:
+                color = GREEN
+                label = f"{tr.code} · {tr.name} ({tr.method})"
+            elif tr.sku_id is not None:
+                color = ORANGE
+                label = f"{tr.code} · giữ ổn định..."
+            else:
+                color = RED
+                label = f"Mã lạ ({tr.barcode})" if tr.barcode else "Unknown SKU"
+            boxes.append({"bbox": tr.bbox * s, "color": color, "label": label})
+        n_sku = self.sku_gallery.size if self.sku_gallery is not None else 0
+        ft = str((self.cfg.get("sku") or {}).get("feature_type", "orb")).upper()
+        hud = (f"SKU ({ft}) | detect {self.det_fps:.1f} FPS {self.det_ms:.0f} ms | "
+               f"cam {self.camera.fps_in:.0f} FPS | SP: {n_sku}")
+        view = draw_overlay(view, boxes, hud)
+        self._publish(view)
+
     def status(self) -> dict:
         cam = self._next_camera or self.camera
         return {"backend": self.engine.name, "model_version": self.engine.model_version,
+                "mode": self.mode,
                 "source": cam.describe(),
                 "camera_connected": cam.connected, "camera_fps": round(cam.fps_in, 1),
                 "detect_fps": round(self.det_fps, 1), "detect_ms": round(self.det_ms, 1),
-                "gallery": self.gallery.size, "tracks": len(self.tracker.tracks),
+                "gallery": self.gallery.size,
+                "sku_gallery": self.sku_gallery.size if self.sku_gallery is not None else 0,
+                "sku_templates": self.sku_gallery.template_count if self.sku_gallery is not None else 0,
+                "tracks": len(self._last_sku_tracks) if self.mode == "sku" else len(self.tracker.tracks),
                 "threshold": self.threshold, "margin": self.margin,
                 "liveness": self.liveness is not None, "live_threshold": self.live_thr,
                 "sleeping": self.sleeping, "sleep_since": self.sleep_since,

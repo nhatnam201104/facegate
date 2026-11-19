@@ -678,7 +678,7 @@ class DB:
         t1: float | None = None,
         code: str | None = None,
         method: str | None = None,
-        limit: int = 200,
+        limit: int | None = 200,
     ) -> list[dict]:
         conds, args = [], []
         if t0 is not None:
@@ -694,4 +694,93 @@ class DB:
             conds.append("method=?")
             args.append(method)
         where = (" WHERE " + " AND ".join(conds)) if conds else ""
+        if limit is None:
+            return self.q(f"SELECT * FROM sku_events{where} ORDER BY ts DESC", tuple(args))
         return self.q(f"SELECT * FROM sku_events{where} ORDER BY ts DESC LIMIT ?", (*args, int(limit)))
+
+    def summarize_sku_events(
+        self,
+        t0: float | None = None,
+        t1: float | None = None,
+        code: str | None = None,
+    ) -> dict:
+        """Gop san luong SKU truc tiep bang SQL (khong bi cat o 50k dong, tuong thich SQLite & Postgres)."""
+        conds, args = [], []
+        if t0 is not None:
+            conds.append("ts>=?")
+            args.append(float(t0))
+        if t1 is not None:
+            conds.append("ts<?")
+            args.append(float(t1))
+        if code:
+            conds.append("code=?")
+            args.append(code)
+        where = (" WHERE " + " AND ".join(conds)) if conds else ""
+        totals = self.q(
+            f"""SELECT
+                    COUNT(*) AS total_events,
+                    COALESCE(SUM(CASE WHEN sku_id IS NULL OR code IS NULL OR code = '' THEN 1 ELSE 0 END), 0) AS unknown_count
+                FROM sku_events{where}""",
+            tuple(args),
+        )[0]
+
+        known_conds = ["sku_id IS NOT NULL", "code IS NOT NULL", "code != ''", *conds]
+        known_where = " WHERE " + " AND ".join(known_conds)
+        grouped = self.q(
+            f"""SELECT
+                    code,
+                    COALESCE(method, 'unknown') AS method,
+                    COUNT(*) AS cnt,
+                    COALESCE(SUM(COALESCE(qty, 1.0)), 0.0) AS sum_qty,
+                    MAX(ts) AS max_ts,
+                    MAX(name) AS any_name,
+                    MAX(uom) AS any_uom
+                FROM sku_events{known_where}
+                GROUP BY code, COALESCE(method, 'unknown')""",
+            tuple(args),
+        )
+
+        by_code: dict[str, dict] = {}
+        meta_ts: dict[str, float] = {}
+        total_qty = 0.0
+        for r in grouped:
+            c = str(r["code"])
+            cnt = int(r["cnt"] or 0)
+            sq = float(r["sum_qty"] or 0.0)
+            mts = float(r["max_ts"] or 0.0)
+            m = str(r["method"] or "unknown")
+            item = by_code.get(c)
+            if item is None:
+                item = {
+                    "code": c,
+                    "name": r.get("any_name") or c,
+                    "uom": r.get("any_uom") or "pcs",
+                    "count": 0,
+                    "qty": 0.0,
+                    "last_ts": mts,
+                    "methods": {},
+                }
+                by_code[c] = item
+                meta_ts[c] = mts
+            elif mts >= meta_ts[c]:
+                if r.get("any_name"):
+                    item["name"] = r["any_name"]
+                if r.get("any_uom"):
+                    item["uom"] = r["any_uom"]
+                meta_ts[c] = mts
+            item["count"] += cnt
+            item["qty"] += sq
+            item["last_ts"] = max(item["last_ts"], mts)
+            item["methods"][m] = item["methods"].get(m, 0) + cnt
+            total_qty += sq
+
+        for item in by_code.values():
+            item["qty"] = round(item["qty"], 3)
+        summary = sorted(by_code.values(), key=lambda x: (-x["qty"], x["code"]))
+        return {
+            "total_events": int(totals["total_events"] or 0),
+            "total_qty": round(total_qty, 3),
+            "unknown_count": int(totals["unknown_count"] or 0),
+            "sku_types": len(summary),
+            "summary": summary,
+        }
