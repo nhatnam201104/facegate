@@ -150,6 +150,14 @@ CREATE TABLE IF NOT EXISTS sku_items (
 );
 CREATE INDEX IF NOT EXISTS ix_sku_items_status ON sku_items(status);
 
+CREATE TABLE IF NOT EXISTS sku_barcodes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+    sku_id INTEGER NOT NULL REFERENCES sku_items(id) ON DELETE CASCADE,
+    barcode TEXT UNIQUE NOT NULL,
+    created_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_sku_bc_sku ON sku_barcodes(sku_id);
+
 CREATE TABLE IF NOT EXISTS sku_templates (
     id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
     sku_id INTEGER NOT NULL REFERENCES sku_items(id) ON DELETE CASCADE,
@@ -348,6 +356,12 @@ class DB:
                     verification_tier = COALESCE(verification_tier,
                         CASE WHEN kind='checkin' THEN 'verified' WHEN kind='spoof' THEN 'rejected_spoof' ELSE 'unverified' END)""")
         self.x("UPDATE appearances SET pose_group = COALESCE(pose_group, 'frontal'), legal_hold = COALESCE(legal_hold, 0)")
+        self.x(
+            """INSERT INTO sku_barcodes(sku_id, barcode, created_at)
+               SELECT id, barcode, created_at FROM sku_items
+               WHERE barcode IS NOT NULL AND barcode != ''
+               ON CONFLICT(barcode) DO NOTHING"""
+        )
 
     def _sql(self, sql: str) -> str:
         return sql.replace("?", "%s") if self.is_postgres else sql
@@ -599,59 +613,160 @@ class DB:
                (status, response[:500], ev_id))
 
     # --- sku (Phase 2: Hang hoa / Bao bi) ---
+    @staticmethod
+    def parse_barcodes(barcode: str | None = None, barcodes: list[str] | tuple[str, ...] | None = None) -> list[str]:
+        out: list[str] = []
+        seen: set[str] = set()
+        raw_parts: list[str] = []
+        if barcodes is not None:
+            for item in barcodes:
+                if item is not None:
+                    raw_parts.append(str(item))
+        if barcode is not None:
+            raw_parts.append(str(barcode))
+        for chunk in raw_parts:
+            for tok in re.split(r"[,;\r\n|]+", chunk):
+                b = tok.strip()
+                if b and b not in seen:
+                    seen.add(b)
+                    out.append(b)
+        return out
+
+    _SQL_IN_CHUNK = 500
+
+    def _attach_sku_barcodes(self, items: list[dict]) -> list[dict]:
+        if not items:
+            return items
+        ids = [int(it["id"]) for it in items]
+        by_sku: dict[int, list[str]] = {}
+        for i in range(0, len(ids), self._SQL_IN_CHUNK):
+            chunk = ids[i:i + self._SQL_IN_CHUNK]
+            ph = ",".join("?" * len(chunk))
+            rows = self.q(
+                f"SELECT sku_id, barcode FROM sku_barcodes WHERE sku_id IN ({ph}) ORDER BY id ASC",
+                tuple(chunk),
+            )
+            for r in rows:
+                by_sku.setdefault(int(r["sku_id"]), []).append(str(r["barcode"]))
+        for it in items:
+            bcs = list(by_sku.get(int(it["id"]), []))
+            legacy = (it.get("barcode") or "").strip()
+            if legacy and legacy not in bcs:
+                bcs.insert(0, legacy)
+            it["barcodes"] = bcs
+            it["barcode"] = bcs[0] if bcs else None
+        return items
+
     def get_sku_by_code(self, code: str) -> dict | None:
         r = self.q("SELECT * FROM sku_items WHERE code=?", (code.strip(),))
-        return r[0] if r else None
+        return self._attach_sku_barcodes(r)[0] if r else None
 
     def get_sku_by_barcode(self, barcode: str) -> dict | None:
         b = (barcode or "").strip()
         if not b:
             return None
-        r = self.q("SELECT * FROM sku_items WHERE barcode=?", (b,))
-        return r[0] if r else None
+        r = self.q(
+            """SELECT s.* FROM sku_barcodes b
+               JOIN sku_items s ON s.id=b.sku_id
+               WHERE b.barcode=?""",
+            (b,),
+        )
+        if not r:
+            r = self.q("SELECT * FROM sku_items WHERE barcode=?", (b,))
+        return self._attach_sku_barcodes(r)[0] if r else None
 
     def upsert_sku_item(self, code: str, name: str, barcode: str | None = None,
                         uom: str = "pcs", status: str = "active",
                         erp_item_code: str | None = None,
-                        erp_warehouse: str | None = None) -> int:
+                        erp_warehouse: str | None = None,
+                        barcodes: list[str] | tuple[str, ...] | None = None,
+                        replace_barcodes: bool = True) -> int:
         code_c = validate_sku_code(code)
         name_c = (name or "").strip()
         if not name_c:
             raise ValueError("Tên SKU không được rỗng")
-        b_c = (barcode or "").strip() or None
+        bc_list = self.parse_barcodes(barcode=barcode, barcodes=barcodes)
         uom_c = (uom or "pcs").strip() or "pcs"
         erp_code_c = (erp_item_code or "").strip() or None
         erp_wh_c = (erp_warehouse or "").strip() or None
         now = time.time()
-        existing = self.get_sku_by_code(code_c)
-        if b_c:
-            dup_bc = self.get_sku_by_barcode(b_c)
-            if dup_bc is not None and (not existing or int(dup_bc["id"]) != int(existing["id"])):
-                raise ValueError(f"Mã vạch '{b_c}' đã thuộc về SKU '{dup_bc['code']}'")
-        if existing:
-            final_erp_code = erp_code_c if erp_code_c is not None else existing.get("erp_item_code")
-            final_erp_wh = erp_wh_c if erp_wh_c is not None else existing.get("erp_warehouse")
-            self.x(
-                """UPDATE sku_items
-                   SET name=?, barcode=?, uom=?, status=?, erp_item_code=?, erp_warehouse=?, updated_at=?
-                   WHERE id=?""",
-                (name_c, b_c, uom_c, status, final_erp_code, final_erp_wh, now, existing["id"]),
-            )
-            return int(existing["id"])
-        return self.x(
-            """INSERT INTO sku_items(code,name,barcode,uom,status,erp_item_code,erp_warehouse,created_at,updated_at)
-               VALUES(?,?,?,?,?,?,?,?,?)""",
-            (code_c, name_c, b_c, uom_c, status, erp_code_c, erp_wh_c, now, now),
-        )
+        with self.lock:
+            existing = self.get_sku_by_code(code_c)
+            if existing and not replace_barcodes:
+                existing_bcs = list(existing.get("barcodes") or [])
+                bc_list = self.parse_barcodes(barcodes=existing_bcs + bc_list)
+            b_c = bc_list[0] if bc_list else None
+            for bc_val in bc_list:
+                dup_bc = self.get_sku_by_barcode(bc_val)
+                if dup_bc is not None and (not existing or int(dup_bc["id"]) != int(existing["id"])):
+                    raise ValueError(f"Mã vạch '{bc_val}' đã thuộc về SKU '{dup_bc['code']}'")
+            if existing:
+                sku_id = int(existing["id"])
+                final_erp_code = erp_code_c if erp_code_c is not None else existing.get("erp_item_code")
+                final_erp_wh = erp_wh_c if erp_wh_c is not None else existing.get("erp_warehouse")
+                self.x(
+                    """UPDATE sku_items
+                       SET name=?, barcode=?, uom=?, status=?, erp_item_code=?, erp_warehouse=?, updated_at=?
+                       WHERE id=?""",
+                    (name_c, b_c, uom_c, status, final_erp_code, final_erp_wh, now, sku_id),
+                )
+            else:
+                sku_id = self.x(
+                    """INSERT INTO sku_items(code,name,barcode,uom,status,erp_item_code,erp_warehouse,created_at,updated_at)
+                       VALUES(?,?,?,?,?,?,?,?,?)""",
+                    (code_c, name_c, b_c, uom_c, status, erp_code_c, erp_wh_c, now, now),
+                )
+            self.x("DELETE FROM sku_barcodes WHERE sku_id=?", (sku_id,))
+            for bc_val in bc_list:
+                self.x(
+                    "INSERT INTO sku_barcodes(sku_id, barcode, created_at) VALUES(?,?,?)",
+                    (sku_id, bc_val, now),
+                )
+            return sku_id
 
-    def list_sku_items(self) -> list[dict]:
-        return self.q("""
+    def _sku_filter_clause(self, q: str | None = None, status: str | None = None) -> tuple[str, list]:
+        clauses: list[str] = []
+        args: list = []
+        if status and status in ("active", "disabled"):
+            clauses.append("s.status=?")
+            args.append(status)
+        q_clean = (q or "").strip().lower()
+        if q_clean:
+            like = f"%{q_clean}%"
+            clauses.append(
+                "(LOWER(s.code) LIKE ? OR LOWER(s.name) LIKE ? "
+                "OR LOWER(COALESCE(s.barcode, '')) LIKE ? "
+                "OR EXISTS (SELECT 1 FROM sku_barcodes b WHERE b.sku_id=s.id AND LOWER(b.barcode) LIKE ?))"
+            )
+            args.extend([like, like, like, like])
+        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+        return where, args
+
+    def count_sku_items(self, q: str | None = None, status: str | None = None) -> int:
+        where, args = self._sku_filter_clause(q=q, status=status)
+        rows = self.q(f"SELECT COUNT(*) AS n FROM sku_items s{where}", tuple(args))
+        return int(rows[0]["n"]) if rows else 0
+
+    def list_sku_items(
+        self,
+        q: str | None = None,
+        status: str | None = None,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> list[dict]:
+        where, args = self._sku_filter_clause(q=q, status=status)
+        sql = f"""
             SELECT s.*,
               (SELECT COUNT(*) FROM sku_templates t WHERE t.sku_id=s.id) AS n_templates,
               (SELECT COALESCE(SUM(num_kps), 0) FROM sku_templates t WHERE t.sku_id=s.id) AS total_kps,
               (SELECT image_path FROM sku_templates t WHERE t.sku_id=s.id ORDER BY num_kps DESC, id DESC LIMIT 1) AS thumb
-            FROM sku_items s ORDER BY s.updated_at DESC
-        """)
+            FROM sku_items s{where}
+            ORDER BY s.updated_at DESC, s.id DESC
+        """
+        if limit is not None:
+            sql += " LIMIT ? OFFSET ?"
+            args.extend([max(1, int(limit)), max(0, int(offset))])
+        return self._attach_sku_barcodes(self.q(sql, tuple(args)))
 
     def set_sku_status(self, sku_id: int, status: str) -> None:
         self.x("UPDATE sku_items SET status=?, updated_at=? WHERE id=?", (status, time.time(), sku_id))
@@ -707,7 +822,9 @@ class DB:
         statuses: tuple = ("active",),
     ) -> tuple[list[dict], list[dict]]:
         ph = ",".join("?" * len(statuses))
-        items = self.q(f"SELECT * FROM sku_items WHERE status IN ({ph}) ORDER BY id", tuple(statuses))
+        items = self._attach_sku_barcodes(
+            self.q(f"SELECT * FROM sku_items WHERE status IN ({ph}) ORDER BY id", tuple(statuses))
+        )
         sql = f"""
             SELECT t.*, s.code, s.name, s.barcode, s.uom
             FROM sku_templates t

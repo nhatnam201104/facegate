@@ -34,6 +34,8 @@
         recvMs: now,
         objects: packet.objects || [],
         zones: packet.zones || [],
+        line: Array.isArray(packet.line) && packet.line.length === 2 ? packet.line : null,
+        inWhen: packet.in_when || "",
         mode: nextMode
       });
       if (this.overlayBuf.length > 12) this.overlayBuf.shift();
@@ -130,6 +132,25 @@
       const dtSec = dtMs / 1000.0;
       ctx2d.lineWidth = Math.max(2, Math.round(2 * dpr));
       ctx2d.font = `600 ${Math.round(14 * dpr)}px system-ui, -apple-system, "Segoe UI", sans-serif`;
+
+      if (snap.line && snap.line.length === 2) {
+        const [p0, p1] = snap.line;
+        const lx1 = p0[0] * cw, ly1 = p0[1] * ch;
+        const lx2 = p1[0] * cw, ly2 = p1[1] * ch;
+        ctx2d.save();
+        ctx2d.strokeStyle = "#ffc850";
+        ctx2d.lineWidth = Math.max(2, Math.round(2.5 * dpr));
+        ctx2d.setLineDash([8 * dpr, 6 * dpr]);
+        ctx2d.beginPath();
+        ctx2d.moveTo(lx1, ly1);
+        ctx2d.lineTo(lx2, ly2);
+        ctx2d.stroke();
+        ctx2d.setLineDash([]);
+        const lbl = snap.inWhen ? `Vạch IN/OUT (IN: ${String(snap.inWhen).toUpperCase()})` : "Vạch IN/OUT";
+        ctx2d.fillStyle = "#ffc850";
+        ctx2d.fillText(lbl, Math.min(lx1, lx2) + 8 * dpr, Math.max(18 * dpr, Math.min(ly1, ly2) - 8 * dpr));
+        ctx2d.restore();
+      }
 
       for (const z of (snap.zones || [])) {
         const poly = z.polygon || [];

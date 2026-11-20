@@ -100,8 +100,11 @@ function showStatus(s) {
   $("#camDot").classList.toggle("on", s.camera_connected);
   const mode = s.mode || "attendance";
   document.querySelectorAll(".modesw .mbtn").forEach(b => b.classList.toggle("active", b.dataset.mode === mode));
+  const skuTag = (s.sku_count_mode || "hold") === "hold"
+    ? `hold · ${s.sku_hold_direction || "IN"}`
+    : `line · IN=${s.sku_in_when || "down"}`;
   $("#statusLine").textContent = mode === "sku"
-    ? `SKU (${s.sku_count_mode || "hold"}) · cam ${s.camera_connected ? s.camera_fps + " FPS" : "MẤT KẾT NỐI"} · detect ${s.detect_fps} FPS / ${s.detect_ms} ms · ${s.sku_gallery ?? 0} SKU (${s.sku_templates ?? 0} mẫu)`
+    ? `SKU (${skuTag}) · cam ${s.camera_connected ? s.camera_fps + " FPS" : "MẤT KẾT NỐI"} · detect ${s.detect_fps} FPS / ${s.detect_ms} ms · ${s.sku_gallery ?? 0} SKU (${s.sku_templates ?? 0} mẫu)`
     : mode === "zone"
       ? `ZONE (YOLOX-Nano · FaceID OFF) · cam ${s.camera_connected ? s.camera_fps + " FPS" : "MẤT KẾT NỐI"} · detect ${s.detect_fps} FPS / ${s.detect_ms} ms · ${s.zones ?? 0} khu vực`
       : `${s.backend} · ngưỡng ${s.threshold} · cam ${s.camera_connected ? s.camera_fps + " FPS" : "MẤT KẾT NỐI"} · detect ${s.detect_fps} FPS / ${s.detect_ms} ms · ${s.gallery} NV active · HRM ${s.hrm}`;

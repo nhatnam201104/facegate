@@ -220,9 +220,14 @@ class SkuGallery:
             self.by_code = {str(it["code"]): it for it in items}
             self.by_barcode = {}
             for it in items:
+                bcs = list(it.get("barcodes") or [])
                 bc_val = (it.get("barcode") or "").strip()
-                if bc_val:
-                    self.by_barcode[bc_val] = it
+                if bc_val and bc_val not in bcs:
+                    bcs.insert(0, bc_val)
+                for b in bcs:
+                    b_s = str(b).strip()
+                    if b_s:
+                        self.by_barcode[b_s] = it
             for it in items:
                 # Cho phep ma QR chua chinh sku_code nhung khong bao gio ghi de barcode khai bao tuong minh
                 self.by_barcode.setdefault(str(it["code"]), it)
@@ -303,6 +308,7 @@ class SkuScanner:
         name: str,
         img: np.ndarray | None = None,
         barcode: str | None = None,
+        barcodes: list[str] | tuple[str, ...] | None = None,
         uom: str = "pcs",
         label: str | None = None,
         save_dir: Path | None = None,
@@ -310,7 +316,10 @@ class SkuScanner:
     ) -> dict:
         """Dang ky hoac cap nhat 1 SKU kem anh mau phang (khong bat buoc anh neu chi dung QR/Barcode)."""
         code_c = validate_sku_code(code)
-        sku_id = db.upsert_sku_item(code=code_c, name=name, barcode=barcode, uom=uom, status="active")
+        bc_list = db.parse_barcodes(barcode=barcode, barcodes=barcodes)
+        sku_id = db.upsert_sku_item(
+            code=code_c, name=name, barcodes=bc_list, uom=uom, status="active",
+        )
         if replace_templates:
             db.clear_sku_templates(sku_id, feature_type=self.feature_type)
 
@@ -358,7 +367,38 @@ class SkuScanner:
             }
 
         self.gallery.reload()
-        return {"sku_id": sku_id, "code": code_c, "barcode": barcode, "template": tpl_report}
+        return {
+            "sku_id": sku_id,
+            "code": code_c,
+            "barcode": bc_list[0] if bc_list else None,
+            "barcodes": bc_list,
+            "template": tpl_report,
+        }
+
+    def scan_codes_only(
+        self,
+        frame: np.ndarray,
+        roi_norm: tuple[float, float, float, float] | None = None,
+    ) -> list[SkuDetection]:
+        """Quet nhanh rieng QR/Barcode tren 1 khung hinh (khong chay ORB/SIFT) de tu dong dien form dang ky."""
+        if frame is None or frame.size == 0:
+            return []
+        h0, w0 = frame.shape[:2]
+        if roi_norm is not None:
+            rx1 = int(np.clip(round(roi_norm[0] * w0), 0, w0 - 1))
+            ry1 = int(np.clip(round(roi_norm[1] * h0), 0, h0 - 1))
+            rx2 = int(np.clip(round(roi_norm[2] * w0), rx1 + 1, w0))
+            ry2 = int(np.clip(round(roi_norm[3] * h0), ry1 + 1, h0))
+            sub = frame[ry1:ry2, rx1:rx2]
+            offset = (rx1, ry1)
+        else:
+            sub = frame
+            offset = (0, 0)
+        sh, sw = sub.shape[:2]
+        scale = min(1.0, float(self.scan_max_width) / max(sw, 1))
+        work = cv2.resize(sub, (max(1, int(round(sw * scale))), max(1, int(round(sh * scale))))) if scale < 1.0 else sub
+        with self._lock:
+            return self._scan_codes(work, offset_xy=offset, orig_scale=scale)
 
     def _scan_codes(self, img: np.ndarray, offset_xy: tuple[int, int], orig_scale: float) -> list[SkuDetection]:
         ox, oy = offset_xy
@@ -408,6 +448,7 @@ class SkuScanner:
                 ))
 
         # 0. Uu tien zxing-cpp (Apache-2.0) neu co cai dat tren may trien khai: nhay voi QR/DataMatrix/1D nghieng/mo
+        # Khi zxing-cpp chay thanh cong khong loi thi tra ve ngay (ke ca khi khung trong) de khong lang phi CPU cho 4 luot OpenCV fallback.
         if self._zxing is not None:
             try:
                 zx_hits = self._zxing.read_barcodes(img)
@@ -424,8 +465,7 @@ class SkuScanner:
                         ], dtype=np.float32)
                         m_kind = "qr" if "QR" in fmt_name.upper() else "barcode"
                         _add_decoded(txt, pts_zx, method=m_kind, code_type=fmt_name)
-                if found:
-                    return found
+                return found
             except Exception:  # noqa: BLE001
                 pass
 
@@ -680,9 +720,27 @@ def _crossing_direction(prev_side: int | None, cur_side: int, line_norm: list[li
     return "IN" if is_in else "OUT"
 
 
+DEFAULT_HORIZONTAL_LINE = [[0.0, 0.55], [1.0, 0.55]]
+DEFAULT_VERTICAL_LINE = [[0.5, 0.0], [0.5, 1.0]]
+
+
+def _default_line_for_in_when(in_when: str) -> list[list[float]]:
+    if (in_when or "down").lower() in ("right", "left"):
+        return [list(p) for p in DEFAULT_VERTICAL_LINE]
+    return [list(p) for p in DEFAULT_HORIZONTAL_LINE]
+
+
+def _line_matches_in_when(line_norm: list[list[float]], in_when: str) -> bool:
+    dx = abs(float(line_norm[1][0]) - float(line_norm[0][0]))
+    dy = abs(float(line_norm[1][1]) - float(line_norm[0][1]))
+    if (in_when or "down").lower() in ("right", "left"):
+        return dy > dx
+    return dx >= dy
+
+
 class SkuTrackCounter:
     """Bam vet kien hang qua cac frame, ho tro 2 che do dem:
-    - count_mode == 'hold': kien hang giu on dinh >= min_hold_sec -> +1 (khoa ma hoac vung trong cooldown_sec).
+    - count_mode == 'hold': kien hang giu on dinh >= min_hold_sec -> +1 theo hold_direction ('IN' | 'OUT').
     - count_mode == 'line': kien hang cat qua vach line_norm -> +1 kem phan chieu IN (Nhap) / OUT (Xuat).
     """
 
@@ -695,14 +753,22 @@ class SkuTrackCounter:
         count_mode: str = "hold",
         line_norm: list[list[float]] | None = None,
         in_when: str = "down",
+        hold_direction: str = "IN",
     ):
         self.min_hold_sec = max(0.0, float(min_hold_sec))
         self.cooldown_sec = max(0.0, float(cooldown_sec))
         self.max_age = max(0.1, float(max_age))
         self.iou_thr = float(iou_thr)
         self.count_mode = count_mode if count_mode in ("hold", "line") else "hold"
-        self.line_norm = line_norm if (line_norm and len(line_norm) == 2) else [[0.0, 0.55], [1.0, 0.55]]
         self.in_when = in_when if in_when in ("down", "up", "right", "left") else "down"
+        hd = str(hold_direction or "IN").strip().upper()
+        self.hold_direction = hd if hd in ("IN", "OUT") else "IN"
+        self.line_norm = (
+            [[float(line_norm[0][0]), float(line_norm[0][1])],
+             [float(line_norm[1][0]), float(line_norm[1][1])]]
+            if (line_norm and len(line_norm) == 2)
+            else _default_line_for_in_when(self.in_when)
+        )
         self.tracks: dict[int, _SkuTrack] = {}
         self._next_id = 1
         self._last_commit_at: dict[str, float] = {}
@@ -722,11 +788,18 @@ class SkuTrackCounter:
         in_when: str | None = None,
         min_hold_sec: float | None = None,
         cooldown_sec: float | None = None,
+        hold_direction: str | None = None,
     ) -> None:
         with self._lock:
             if count_mode in ("hold", "line") and count_mode != self.count_mode:
                 self.count_mode = count_mode
                 self.reset()
+            if hold_direction is not None:
+                hd = str(hold_direction).strip().upper()
+                if hd in ("IN", "OUT") and hd != self.hold_direction:
+                    self.hold_direction = hd
+                    if self.count_mode == "hold":
+                        self.reset()
             if line_norm is not None and len(line_norm) == 2:
                 self.line_norm = [[float(line_norm[0][0]), float(line_norm[0][1])],
                                   [float(line_norm[1][0]), float(line_norm[1][1])]]
@@ -734,6 +807,11 @@ class SkuTrackCounter:
                     tr.side = None
             if in_when in ("down", "up", "right", "left"):
                 self.in_when = in_when
+                # Neu nguoi dung doi chieu ngang <-> doc ma khong truyen toa do line rieng -> tu xoay vach cho khop
+                if line_norm is None and not _line_matches_in_when(self.line_norm, in_when):
+                    self.line_norm = _default_line_for_in_when(in_when)
+                    for tr in self.tracks.values():
+                        tr.side = None
             if min_hold_sec is not None:
                 self.min_hold_sec = max(0.0, float(min_hold_sec))
             if cooldown_sec is not None:
@@ -812,6 +890,7 @@ class SkuTrackCounter:
                 bbox=np.array(d.bbox, dtype=np.float32),
                 first_seen=now,
                 last_seen=now,
+                direction=self.hold_direction,
             )
             tr.side = _line_side(tr.center, self.line_norm, frame_shape)
             self._next_id += 1
@@ -828,24 +907,24 @@ class SkuTrackCounter:
                 active_same_key_count[tr.key] = active_same_key_count.get(tr.key, 0) + 1
 
         for tr in self.tracks.values():
-            cur_side = _line_side(tr.center, self.line_norm, frame_shape)
-            crossed = _crossing_direction(tr.side, cur_side, self.line_norm, self.in_when)
-            tr.side = cur_side
-            if crossed is not None:
-                tr.direction = crossed
-
-            if tr.committed:
-                continue
-
             if self.count_mode == "line":
-                if crossed is None:
+                cur_side = _line_side(tr.center, self.line_norm, frame_shape)
+                crossed = _crossing_direction(tr.side, cur_side, self.line_norm, self.in_when)
+                tr.side = cur_side
+                if crossed is not None:
+                    tr.direction = crossed
+                if tr.committed or crossed is None:
                     continue
                 tr.committed = True
                 self._last_commit_at[tr.key] = now
                 newly_committed.append(tr)
                 continue
 
-            # count_mode == "hold":
+            if tr.committed:
+                continue
+
+            # count_mode == "hold": giu dung chieu hold_direction (IN/OUT) da chon, khong bi cat vach ngam ghi de
+            tr.direction = self.hold_direction
             held = (now - tr.first_seen) >= self.min_hold_sec
             if not held:
                 continue

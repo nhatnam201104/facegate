@@ -215,14 +215,22 @@
     <div class="metrics" id="skuMetrics"></div>
     <div class="cols">
       <form id="skuForm" class="card">
-        <h3>Đăng ký mẫu Hàng hóa / SKU</h3>
-        <label>Mã SKU <input name="code" required placeholder="VD: SKU-TEA-01" pattern="[A-Za-z0-9_.\-]{1,64}"></label>
+        <div class="sku-head-row">
+          <h3 style="margin:0">Đăng ký / Bổ sung mẫu SKU</h3>
+          <button type="button" class="btn" id="skuClearFormBtn" title="Xóa trắng form để nhập SKU mới">Mới</button>
+        </div>
+        <label>Mã SKU <input name="code" required placeholder="VD: SKU-TEA-01 (hoặc chọn dòng ở bảng bên)" pattern="[A-Za-z0-9_.\-]{1,64}"></label>
         <label>Tên sản phẩm <input name="name" required placeholder="Trà Oolong MSW 500g"></label>
         <div class="sku-row2">
-          <label>Mã vạch / QR (tùy chọn) <input name="barcode" placeholder="893... hoặc chuỗi QR"></label>
+          <label>Mã vạch / QR <small class="muted">(nhiều mã cách nhau dấu phẩy)</small>
+            <div class="sku-bc-input">
+              <input name="barcode" placeholder="893..., 893...-CTN">
+              <button type="button" class="btn" id="skuScanCodeBtn" title="Đọc QR/Barcode từ camera hiện tại để tự điền">📷 Quét mã</button>
+            </div>
+          </label>
           <label>ĐVT <input name="uom" value="pcs" placeholder="hộp / thùng / pcs"></label>
         </div>
-        <p class="hint">Ưu tiên đọc <b>QR / Barcode</b> nếu có; nếu không có mã vạch, chụp hoặc tải ảnh mặt bao bì nhiều logo/chữ/hoa văn để khớp bằng ORB/SIFT + RANSAC.</p>
+        <p class="hint">Ưu tiên đọc <b>QR / Barcode</b> (<span id="skuZxingBadge">đang kiểm tra…</span>); click một dòng ở danh mục bên cạnh để đổ sẵn thông tin khi cần chụp bổ sung ảnh bao bì.</p>
         <div class="mode">
           <label><input type="radio" name="source" value="camera" checked> Chụp từ camera hiện tại</label>
           <label><input type="radio" name="source" value="upload"> Tải ảnh mẫu lên</label>
@@ -236,11 +244,36 @@
         <label class="sku-chk"><input type="checkbox" name="replace_templates"> Thay thế ảnh mẫu cũ của SKU này</label>
         <button type="submit" class="primary" id="skuSaveBtn">Lưu &amp; chụp mẫu</button>
         <div id="skuMsg" class="msg"></div>
+        <div class="sku-import-box">
+          <b>Nhập hàng loạt từ CSV</b>
+          <div class="sku-import-row">
+            <input type="file" id="skuCsvFile" accept=".csv,text/csv">
+            <button type="button" class="btn" id="skuCsvImportBtn">Nhập CSV</button>
+            <a class="btn" href="/api/sku/items/template.csv">Tải mẫu CSV</a>
+          </div>
+          <small class="muted">Cột: <code>code, name, barcodes, uom, status</code> (nhiều mã vạch cách nhau bằng <code>;</code> hoặc <code>|</code>).</small>
+          <div id="skuImportMsg" class="msg"></div>
+        </div>
       </form>
       <div class="card">
-        <h3>Danh mục SKU đang nhận diện <small class="muted">— tự cập nhật không cần restart</small></h3>
+        <div class="sku-head-row">
+          <h3 style="margin:0">Danh mục SKU <small class="muted" id="skuTotalLbl">— tự cập nhật không cần restart</small></h3>
+        </div>
+        <div class="sku-search-bar">
+          <input type="search" id="skuSearchInput" placeholder="Tìm theo mã SKU, tên sản phẩm hoặc mã vạch…">
+          <select id="skuStatusFilter">
+            <option value="">Tất cả trạng thái</option>
+            <option value="active">Đang quét</option>
+            <option value="disabled">Đã tắt</option>
+          </select>
+        </div>
         <table><thead><tr><th>Ảnh</th><th>Mã SKU</th><th>Tên sản phẩm</th><th>Barcode/QR</th><th>Keypoints</th><th>Trạng thái</th><th></th></tr></thead>
           <tbody id="skuItemsBody"></tbody></table>
+        <div class="sku-pager" id="skuPager">
+          <button type="button" class="btn" id="skuPrevPage">‹ Trước</button>
+          <span class="muted" id="skuPageInfo">Trang 1 / 1</span>
+          <button type="button" class="btn" id="skuNextPage">Sau ›</button>
+        </div>
       </div>
     </div>
     <div class="card" style="margin-top:16px">
@@ -256,12 +289,18 @@
               <option value="line">Qua vạch Nhập/Xuất (IN/OUT)</option>
             </select>
           </label>
+          <label id="skuHoldDirWrap">Phiên quét
+            <select id="skuHoldDir">
+              <option value="IN">Nhập kho (IN)</option>
+              <option value="OUT">Xuất kho (OUT)</option>
+            </select>
+          </label>
           <label id="skuInWhenWrap" hidden>Chiều Nhập (IN)
             <select id="skuInWhen">
-              <option value="down">Từ trên xuống</option>
-              <option value="up">Từ dưới lên</option>
-              <option value="right">Trái sang phải</option>
-              <option value="left">Phải sang trái</option>
+              <option value="down">Từ trên xuống (vạch ngang)</option>
+              <option value="up">Từ dưới lên (vạch ngang)</option>
+              <option value="right">Trái sang phải (vạch dọc)</option>
+              <option value="left">Phải sang trái (vạch dọc)</option>
             </select>
           </label>
           <button type="button" class="btn" id="skuSyncItemsBtn">🔄 Kéo danh mục Item ERP</button>
@@ -280,7 +319,7 @@
       <form class="filters" id="skuFilterForm" style="margin-bottom:12px">
         <label>Từ ngày <input type="date" name="date_from"></label>
         <label>Đến ngày <input type="date" name="date_to"></label>
-        <label>Mã SKU <select name="code" id="skuCodeFilter"><option value="">Tất cả</option></select></label>
+        <label>Mã SKU <input type="search" name="code" id="skuCodeFilter" list="skuCodeOptions" placeholder="Tất cả (gõ mã SKU…)" style="width:170px"><datalist id="skuCodeOptions"></datalist></label>
         <div class="quick">
           <button type="button" data-sku-range="today">Hôm nay</button>
           <button type="button" data-sku-range="week">Tuần này</button>

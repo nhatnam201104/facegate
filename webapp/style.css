@@ -195,6 +195,21 @@ button:focus-visible,.btn:focus-visible,input:focus-visible,select:focus-visible
 .sku-cfg-inline select{margin-top:4px;min-width:160px}
 .sku-erp-opts{display:flex;flex-wrap:wrap;align-items:center;gap:14px;margin-top:10px;padding-top:10px;border-top:1px solid var(--line)}
 .sku-erp-opts label{margin:0;display:inline-flex;align-items:center;gap:6px;font-size:13px}
+.sku-head-row{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px}
+.sku-bc-input{display:flex;gap:6px;align-items:center;margin-top:4px}
+.sku-bc-input input{flex:1;margin:0!important}
+.sku-bc-input .btn{white-space:nowrap;padding:6px 10px}
+.sku-import-box{margin-top:14px;padding-top:12px;border-top:1px solid var(--line);display:flex;flex-direction:column;gap:6px}
+.sku-import-row{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.sku-import-row input[type=file]{flex:1 1 170px;margin:0}
+.sku-search-bar{display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap}
+.sku-search-bar input{flex:1 1 200px;margin:0}
+.sku-search-bar select{width:auto;min-width:150px;margin:0}
+.sku-pager{display:flex;align-items:center;justify-content:flex-end;gap:10px;margin-top:10px}
+.sku-bc-list{display:flex;flex-wrap:wrap;gap:4px}
+#skuItemsBody tr.sku-row{cursor:pointer}
+#skuItemsBody tr.sku-row:hover{background:#ffffff0a}
+#skuItemsBody tr.sku-row.selected{background:#1c3b3055}
 .zone-edit-svg{position:absolute;inset:0;width:100%;height:100%;z-index:3}
 .zone-edit-svg polygon{fill:rgba(60,200,90,.22);stroke:#3cc85a;stroke-width:2}
 .zone-edit-svg polyline{fill:none;stroke:#3cc85a;stroke-width:2;stroke-dasharray:5 3}

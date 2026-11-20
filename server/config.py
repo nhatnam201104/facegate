@@ -175,11 +175,14 @@ def _apply_v4_defaults(cfg: dict) -> dict:
     sku["max_instances"] = int(_clamp(sku.get("max_instances", 4), 1, 20))
     cm = str(sku.get("count_mode", "hold")).strip().lower()
     sku["count_mode"] = cm if cm in ("hold", "line") else "hold"
+    hd = str(sku.get("hold_direction", "IN")).strip().upper()
+    sku["hold_direction"] = hd if hd in ("IN", "OUT") else "IN"
     sku.setdefault("line", [[0.0, 0.55], [1.0, 0.55]])
     iw = str(sku.get("in_when", "down")).strip().lower()
     sku["in_when"] = iw if iw in ("down", "up", "right", "left") else "down"
     sku["log_unknown"] = bool(sku.get("log_unknown", True))
     sku["prefer_code_short_circuit"] = bool(sku.get("prefer_code_short_circuit", True))
+    sku["erp_sync_interval_sec"] = _clamp(sku.get("erp_sync_interval_sec", 900.0), 0.0, 86400.0)
 
     zn = cfg.setdefault("zones", {})
     zn["person_conf"] = _clamp(zn.get("person_conf", 0.45), 0.15, 0.95)

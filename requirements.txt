@@ -12,5 +12,5 @@ cryptography>=42.0
 # psycopg[binary]>=3.1
 # Tuy chon: loa Tapo nhac "nhin vao camera" (audio_prompt.backend=tapo, thu vien khong chinh thuc, MIT):
 # pytapo>=3.4
-# Tuy chon Phase 2 SKU: doc QR / Barcode 1D sieu nhay (Apache-2.0, tu dong fallback ve OpenCV neu chua cai):
-# zxing-cpp>=2.2.0
+# Doc QR / Barcode 1D-2D sieu nhay cho Phase 2 SKU (Apache-2.0, tu dong fallback ve OpenCV neu thieu):
+zxing-cpp>=2.2.0

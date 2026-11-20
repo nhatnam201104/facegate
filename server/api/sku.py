@@ -118,9 +118,194 @@ async def set_mode(request: Request, mode: str = Body(..., embed=True)):
 
 
 # ------------------------------------------------------------------ SKU CRUD
+MAX_CSV_IMPORT_BYTES = 10 * 1024 * 1024
+MAX_CSV_IMPORT_ROWS = 20_000
+
+_CSV_HEADER_ALIASES = {
+    "code": {"code", "sku", "sku_code", "item_code", "ma_sku", "ma", "ma_hang", "mã sku", "mã hàng", "mã"},
+    "name": {"name", "item_name", "ten", "ten_san_pham", "ten_hang", "tên sản phẩm", "tên hàng", "tên"},
+    "barcode": {"barcode", "barcodes", "qr", "ma_vach", "ma_vach_qr", "mã vạch", "mã vạch/qr", "mã qr"},
+    "uom": {"uom", "stock_uom", "dvt", "don_vi", "đvt", "đơn vị", "đơn vị tính"},
+    "status": {"status", "trang_thai", "trạng thái"},
+    "erp_item_code": {"erp_item_code", "erp_code", "ma_erp"},
+}
+
+
+def _norm_header(h: str) -> str:
+    return " ".join((h or "").lstrip("\ufeff").strip().lower().replace("-", "_").split())
+
+
+def _map_csv_headers(fieldnames: list[str] | None) -> dict[str, str]:
+    mapping: dict[str, str] = {}
+    if not fieldnames:
+        return mapping
+    for raw in fieldnames:
+        norm = _norm_header(raw)
+        for canonical, aliases in _CSV_HEADER_ALIASES.items():
+            if norm in aliases and canonical not in mapping:
+                mapping[canonical] = raw
+                break
+    return mapping
+
+
+def parse_sku_csv_bytes(raw: bytes) -> list[dict]:
+    """Doc file CSV danh muc SKU (ho tro UTF-8 BOM, phay hoac cham phay) va chuan hoa cot."""
+    if not raw:
+        raise ValueError("File CSV rỗng")
+    if len(raw) > MAX_CSV_IMPORT_BYTES:
+        raise ValueError("File CSV vượt quá giới hạn 10 MB")
+    try:
+        text = raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        text = raw.decode("latin-1")
+    first_line = next((ln for ln in text.splitlines() if ln.strip()), "")
+    delim = ";" if (first_line.count(";") > first_line.count(",") and ";" in first_line) else ","
+    reader = csv.DictReader(io.StringIO(text), delimiter=delim)
+    hdr_map = _map_csv_headers(reader.fieldnames)
+    if "code" not in hdr_map or "name" not in hdr_map:
+        raise ValueError("File CSV cần có ít nhất 2 cột 'code' (hoặc 'Mã SKU') và 'name' (hoặc 'Tên sản phẩm')")
+    rows: list[dict] = []
+    for idx, row in enumerate(reader, start=2):
+        if len(rows) >= MAX_CSV_IMPORT_ROWS:
+            raise ValueError(f"Vượt quá giới hạn {MAX_CSV_IMPORT_ROWS} dòng mỗi lần nhập CSV")
+        if not any((v or "").strip() for v in row.values() if isinstance(v, str)):
+            continue
+        code = (row.get(hdr_map["code"]) or "").strip()
+        name = (row.get(hdr_map["name"]) or "").strip()
+        bc_raw = (row.get(hdr_map["barcode"]) or "").strip() if "barcode" in hdr_map else ""
+        uom = (row.get(hdr_map["uom"]) or "").strip() if "uom" in hdr_map else ""
+        status_raw = (row.get(hdr_map["status"]) or "").strip().lower() if "status" in hdr_map else ""
+        erp_code = (row.get(hdr_map["erp_item_code"]) or "").strip() if "erp_item_code" in hdr_map else ""
+        status = "disabled" if status_raw in ("disabled", "inactive", "off", "0", "false", "tat", "tắt") else "active"
+        has_bc_col = "barcode" in hdr_map
+        rows.append({
+            "line": idx,
+            "code": code,
+            "name": name,
+            "barcode_raw": bc_raw,
+            "has_barcode_col": has_bc_col,
+            "uom": uom or "pcs",
+            "status": status,
+            "erp_item_code": erp_code or None,
+        })
+    return rows
+
+
 @router.get("/api/sku/items")
-def list_sku_items():
-    return ctx.db.list_sku_items()
+def list_sku_items(
+    q: str | None = None,
+    status: str | None = None,
+    limit: int | None = None,
+    offset: int = 0,
+    paged: bool = False,
+):
+    off = max(0, int(offset))
+    lim = min(max(1, int(limit)), 500) if limit is not None else (50 if paged else None)
+    items = ctx.db.list_sku_items(q=q, status=status, limit=lim, offset=off)
+    if paged:
+        total = ctx.db.count_sku_items(q=q, status=status)
+        return {"items": items, "total": total, "limit": lim, "offset": off}
+    return items
+
+
+@router.get("/api/sku/items/template.csv")
+def sku_import_template_csv():
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["code", "name", "barcodes", "uom", "status"])
+    w.writerow(["SKU-MILK-01", "Sữa hạt óc chó 1L", "8936999000101;8936999000101-CTN", "box", "active"])
+    w.writerow(["SKU-CAKE-02", "Bánh quy bơ 400g", "8936999000202", "box", "active"])
+    return Response(
+        "\ufeff" + buf.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": "attachment; filename=sku_import_template.csv"},
+    )
+
+
+@router.post("/api/sku/items/import")
+async def import_sku_items_csv(request: Request, file: UploadFile = File(...)):
+    actor = require_role(request, ctx.cfg, min_role="hr")
+    if file is None or not file.filename:
+        raise HTTPException(400, "Vui lòng chọn file CSV danh mục sản phẩm")
+    raw = await file.read(MAX_CSV_IMPORT_BYTES + 1)
+    try:
+        parsed = await run_in_threadpool(parse_sku_csv_bytes, raw)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+    def _run_import() -> dict:
+        imported = 0
+        skipped = 0
+        errors: list[str] = []
+        for r in parsed:
+            try:
+                bcs = ctx.db.parse_barcodes(barcode=r["barcode_raw"])
+                # Chi ghi de danh sach barcode khi CSV co cot barcode VA co gia tri; de trong hoac thieu cot thi giu nguyen
+                replace_bcs = bool(r.get("has_barcode_col") and bcs)
+                ctx.db.upsert_sku_item(
+                    code=r["code"],
+                    name=r["name"],
+                    barcodes=bcs,
+                    uom=r["uom"],
+                    status=r["status"],
+                    erp_item_code=r["erp_item_code"],
+                    replace_barcodes=replace_bcs,
+                )
+                imported += 1
+            except ValueError as e:
+                skipped += 1
+                if len(errors) < 30:
+                    errors.append(f"Dòng {r['line']} ({r['code'] or '?'}): {e}")
+        ctx.sku_gallery.reload()
+        return {
+            "total_rows": len(parsed),
+            "imported": imported,
+            "skipped": skipped,
+            "errors": errors,
+        }
+
+    res = await run_in_threadpool(_run_import)
+    ctx.db.add_audit_log(
+        actor, "import_sku_csv", "sku_items", file.filename,
+        {"total_rows": res["total_rows"], "imported": res["imported"], "skipped": res["skipped"]},
+        ip_addr=request.client.host if request.client else None,
+    )
+    bc({"type": "sku_items"})
+    bc({"type": "status", "status": ctx.pipeline.status()})
+    return res
+
+
+@router.post("/api/sku/scan-code")
+async def scan_sku_code_once(request: Request):
+    """Quet nhanh 1 khung hinh tu camera hien tai de lay QR/Barcode tu dong dien vao form dang ky."""
+    require_role(request, ctx.cfg, min_role="viewer")
+    if not ctx.camera.connected:
+        raise HTTPException(503, "Camera chưa kết nối")
+    _, frame = ctx.camera.read()
+    if frame is None:
+        raise HTTPException(503, "Chưa đọc được khung hình từ camera")
+    dets = await run_in_threadpool(ctx.sku_scanner.scan_codes_only, frame)
+    if not dets:
+        return {"found": False, "codes": []}
+    out = []
+    for d in dets:
+        matched = ctx.db.get_sku_by_code(d.code) if d.code else (
+            ctx.db.get_sku_by_barcode(d.barcode) if d.barcode else None
+        )
+        out.append({
+            "barcode": d.barcode,
+            "code_type": d.code_type,
+            "method": d.method,
+            "matched_sku": {
+                "id": matched["id"],
+                "code": matched["code"],
+                "name": matched["name"],
+                "uom": matched["uom"],
+                "barcodes": matched.get("barcodes") or ([matched["barcode"]] if matched.get("barcode") else []),
+                "status": matched["status"],
+            } if matched else None,
+        })
+    return {"found": True, "codes": out}
 
 
 @router.post("/api/sku/items")
@@ -163,6 +348,7 @@ async def create_or_update_sku_item(
             raise HTTPException(400, "File ảnh mẫu rỗng")
         img = _decode_uploaded_image(raw)
 
+    bc_list = ctx.db.parse_barcodes(barcode=barcode)
     try:
         report = await run_in_threadpool(
             ctx.sku_scanner.register_template,
@@ -170,7 +356,7 @@ async def create_or_update_sku_item(
             code_c,
             name.strip(),
             img=img,
-            barcode=barcode.strip() or None,
+            barcodes=bc_list,
             uom=uom.strip() or "pcs",
             label="camera" if src_mode == "camera" else "upload",
             save_dir=ctx.cfg["_paths"]["data"],
@@ -181,7 +367,7 @@ async def create_or_update_sku_item(
 
     ctx.db.add_audit_log(
         actor, "upsert_sku", "sku_items", str(report["sku_id"]),
-        {"code": code_c, "source": src_mode, "has_image": img is not None},
+        {"code": code_c, "source": src_mode, "has_image": img is not None, "n_barcodes": len(bc_list)},
         ip_addr=request.client.host if request.client else None,
     )
     bc({"type": "sku_items"})
@@ -272,8 +458,10 @@ def sku_events_csv(date_from: str | None = None, date_to: str | None = None, cod
 @router.get("/api/sku/config")
 def get_sku_config():
     cnt = ctx.pipeline.sku_counter
+    worker = getattr(ctx, "sku_erp", None)
     return {
         "count_mode": cnt.count_mode,
+        "hold_direction": cnt.hold_direction,
         "line": cnt.line_norm,
         "in_when": cnt.in_when,
         "min_hold_sec": cnt.min_hold_sec,
@@ -281,6 +469,9 @@ def get_sku_config():
         "max_instances": ctx.sku_scanner.max_instances if getattr(ctx, "sku_scanner", None) else 4,
         "has_zxing": bool(getattr(getattr(ctx, "sku_scanner", None), "_zxing", None) is not None),
         "default_warehouse": str(ctx.cfg.get("hrm", {}).get("erpnext", {}).get("warehouse") or "Stores - MSW"),
+        "erp_adapter": worker.kind if worker is not None else str(ctx.cfg.get("hrm", {}).get("adapter", "mock")),
+        "erp_sync_interval_sec": worker.item_sync_interval_sec if worker is not None else 0.0,
+        "last_item_sync_at": worker.last_item_sync_at if worker is not None else None,
     }
 
 
@@ -288,6 +479,7 @@ def get_sku_config():
 def update_sku_config(
     request: Request,
     count_mode: str | None = Body(None),
+    hold_direction: str | None = Body(None),
     line: list[list[float]] | None = Body(None),
     in_when: str | None = Body(None),
     min_hold_sec: float | None = Body(None),
@@ -296,6 +488,11 @@ def update_sku_config(
     actor = require_role(request, ctx.cfg, min_role="hr")
     if count_mode is not None and count_mode not in ("hold", "line"):
         raise HTTPException(400, "count_mode phải là 'hold' hoặc 'line'")
+    hd_clean = None
+    if hold_direction is not None:
+        hd_clean = str(hold_direction).strip().upper()
+        if hd_clean not in ("IN", "OUT"):
+            raise HTTPException(400, "hold_direction phải là 'IN' hoặc 'OUT'")
     if in_when is not None and in_when not in ("down", "up", "right", "left"):
         raise HTTPException(400, "in_when phải là 'down', 'up', 'right' hoặc 'left'")
     clean_line = None
@@ -310,6 +507,7 @@ def update_sku_config(
             clean_line.append([round(x, 4), round(y, 4)])
     ctx.pipeline.sku_counter.configure(
         count_mode=count_mode,
+        hold_direction=hd_clean,
         line_norm=clean_line,
         in_when=in_when,
         min_hold_sec=min_hold_sec,

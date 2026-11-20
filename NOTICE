@@ -27,6 +27,9 @@ Apache License 2.0
 OpenCV Zoo repository license, Apache License 2.0
   third_party/licenses/opencv_zoo-LICENSE
 
+zxing-cpp (Python bindings for barcode/QR decoding), Apache License 2.0
+  https://github.com/zxing-cpp/zxing-cpp
+
 ----------------------------------------------------------------------------
 Licensed under the Apache License, Version 2.0 (the "License") for the
 Apache-2.0 components above; you may not use those files except in

@@ -533,3 +533,275 @@ def test_ransac_keeps_strict_ratio_on_first_hit_against_noise(tmp_path: Path):
     noise_scene = _textured_card(99, "KHAC HAN", size=(800, 480))
     res = scanner.scan_frame(noise_scene)
     assert [d for d in res["detections"] if d.code == "SKU-TEA-01"] == []
+
+
+def test_zxing_cpp_active_and_multi_barcode_lookup_and_conflict(tmp_path: Path):
+    """Muc 1 + 2A: zxing-cpp duoc kich hoat, 1 SKU nhan nhieu ma vach va chan trung ma vach giua 2 SKU."""
+    cfg = _make_cfg(tmp_path)
+    db = DB(cfg["_paths"]["db"])
+    gal = SkuGallery(db, feature_type="orb")
+    scanner = SkuScanner(cfg, gal)
+    assert scanner._zxing is not None
+
+    rep = scanner.register_template(
+        db,
+        code="SKU-MULTI-01",
+        name="Nước tinh khiết 500ml",
+        barcodes=["8930001110001", "8930001110001-BOX", "8930001110001-CTN"],
+        uom="chai",
+    )
+    assert rep["barcodes"] == ["8930001110001", "8930001110001-BOX", "8930001110001-CTN"]
+    for bc_val in rep["barcodes"]:
+        assert db.get_sku_by_barcode(bc_val)["code"] == "SKU-MULTI-01"
+        assert gal.lookup_code_string(bc_val)["code"] == "SKU-MULTI-01"
+
+    # Chan gan trung 1 trong cac ma phu sang SKU khac
+    with pytest.raises(ValueError, match="đã thuộc về SKU"):
+        db.upsert_sku_item("SKU-OTHER", "Sản phẩm khác", barcodes=["8930001110001-CTN"])
+
+    # Backfill tu DB cu: dong chi co sku_items.barcode cung duoc gan vao sku_barcodes
+    db2 = DB(cfg["_paths"]["db"])
+    item = db2.get_sku_by_code("SKU-MULTI-01")
+    assert item is not None and len(item["barcodes"]) == 3
+
+
+def test_erp_fetch_all_item_barcodes_and_periodic_sync(tmp_path: Path):
+    """Muc 2A + 2B: ERPNextSkuAdapter keo du nhieu Item Barcode/Item va SkuERPWorker tu dong bo dinh ky."""
+    from server.attendance.erp_sku import ERPNextSkuAdapter, SkuERPWorker
+
+    cfg = _make_cfg(tmp_path)
+    cfg["hrm"]["adapter"] = "erpnext"
+    cfg["sku"]["erp_sync_interval_sec"] = 60.0
+    db = DB(cfg["_paths"]["db"])
+    gal = SkuGallery(db, feature_type="orb")
+
+    adapter = ERPNextSkuAdapter(cfg)
+
+    def _fake_list(doctype, fields):
+        if doctype == "Item":
+            return [{"name": "ITEM-W-01", "item_code": "ITEM-W-01", "item_name": "Bánh quy bơ", "stock_uom": "box", "disabled": 0}]
+        if doctype == "Item Barcode":
+            return [
+                {"parent": "ITEM-W-01", "barcode": "8931111111111"},
+                {"parent": "ITEM-W-01", "barcode": "8931111111111-CTN"},
+                {"parent": "ITEM-W-01", "barcode": "8931111111111"},
+            ]
+        return []
+
+    adapter._list_resource = _fake_list
+    fetched = adapter.fetch_items()
+    assert len(fetched) == 1
+    assert fetched[0]["barcodes"] == ["8931111111111", "8931111111111-CTN"]
+
+    worker = SkuERPWorker(cfg, db, sku_gallery=gal)
+    worker.stop()
+    worker.adapter = adapter
+    worker._next_item_sync_at = 100.0
+    assert worker.maybe_periodic_item_sync(now=50.0) is None
+    res = worker.maybe_periodic_item_sync(now=100.0)
+    assert res is not None and res["synced"] == 1
+    assert gal.lookup_code_string("8931111111111")["code"] == "ITEM-W-01"
+    assert gal.lookup_code_string("8931111111111-CTN")["code"] == "ITEM-W-01"
+    assert worker.last_item_sync_at is not None and worker._next_item_sync_at > worker.last_item_sync_at
+
+
+def test_sku_csv_import_search_pagination_and_scan_code_api(tmp_path: Path):
+    """Muc 2B + 2C: Import CSV (nhieu barcode + bo qua dong loi), tim kiem/phan trang va /api/sku/scan-code."""
+    import asyncio
+    from types import SimpleNamespace
+
+    from server.api import sku as sku_api
+    from server.api.state import ctx
+
+    cfg = _make_cfg(tmp_path)
+    db = DB(cfg["_paths"]["db"])
+    gal = SkuGallery(db, feature_type="orb")
+    scanner = SkuScanner(cfg, gal)
+
+    csv_text = (
+        "\ufeffMã SKU,Tên sản phẩm,Mã vạch/QR,ĐVT,Trạng thái\n"
+        "SKU-001,Trà xanh không độ,893001;893001-CTN,chai,active\n"
+        "SKU-002,Sữa hạt óc chó,893002|893002-BOX,hộp,active\n"
+        "SKU-003,Hàng ngừng bán,893003,pcs,disabled\n"
+        "INVALID CODE!,Tên lỗi,893999,pcs,active\n"
+    ).encode("utf-8")
+
+    class _Upload:
+        def __init__(self, filename: str, data: bytes):
+            self.filename = filename
+            self._data = data
+
+        async def read(self, size: int = -1) -> bytes:
+            return self._data if size < 0 else self._data[:size]
+
+    qr_raw = cv2.QRCodeEncoder_create().encode("893001-CTN")
+    qr_bgr = cv2.cvtColor(cv2.resize(qr_raw, (220, 220), interpolation=cv2.INTER_NEAREST), cv2.COLOR_GRAY2BGR)
+    scene_qr = np.full((420, 640, 3), 240, dtype=np.uint8)
+    scene_qr[100:320, 210:430] = qr_bgr
+
+    fake_cam = SimpleNamespace(connected=True, read=lambda: (1, scene_qr))
+    fake_pl = SimpleNamespace(status=lambda: {"mode": "sku"})
+
+    keys = ("cfg", "db", "sku_gallery", "sku_scanner", "camera", "pipeline")
+    old = {k: getattr(ctx, k, None) for k in keys}
+    try:
+        ctx.cfg, ctx.db, ctx.sku_gallery, ctx.sku_scanner = cfg, db, gal, scanner
+        ctx.camera, ctx.pipeline = fake_cam, fake_pl
+        req = SimpleNamespace(headers={}, client=SimpleNamespace(host="127.0.0.1"), cookies={})
+
+        imp = asyncio.run(sku_api.import_sku_items_csv(req, file=_Upload("items.csv", csv_text)))
+        assert imp["total_rows"] == 4 and imp["imported"] == 3 and imp["skipped"] == 1
+        assert len(imp["errors"]) == 1
+
+        # Tim kiem theo ma phu (893002-BOX) + phan trang
+        page1 = sku_api.list_sku_items(limit=2, offset=0, paged=True)
+        assert page1["total"] == 3 and len(page1["items"]) == 2
+        page2 = sku_api.list_sku_items(limit=2, offset=2, paged=True)
+        assert page2["total"] == 3 and len(page2["items"]) == 1
+
+        found_bc = sku_api.list_sku_items(q="893002-BOX", paged=True)
+        assert found_bc["total"] == 1 and found_bc["items"][0]["code"] == "SKU-002"
+
+        only_dis = sku_api.list_sku_items(status="disabled", paged=True)
+        assert only_dis["total"] == 1 and only_dis["items"][0]["code"] == "SKU-003"
+
+        # Quet nhanh QR tu camera -> khop ngay SKU-001 qua ma phu 893001-CTN
+        scan = asyncio.run(sku_api.scan_sku_code_once(req))
+        assert scan["found"] is True
+        assert scan["codes"][0]["barcode"] == "893001-CTN"
+        assert scan["codes"][0]["matched_sku"]["code"] == "SKU-001"
+        assert "893001-CTN" in scan["codes"][0]["matched_sku"]["barcodes"]
+    finally:
+        for k, v in old.items():
+            if v is None and hasattr(ctx, k):
+                delattr(ctx, k)
+            elif v is not None:
+                setattr(ctx, k, v)
+
+
+def test_hold_direction_in_out_and_auto_rotate_line_orientation():
+    """Che do hold ghi dung IN/OUT da chon (khong bi vach ngam ghi de) va mode line tu xoay vach ngang <-> doc."""
+    cnt = SkuTrackCounter(min_hold_sec=0.3, cooldown_sec=4.0, count_mode="hold", hold_direction="OUT")
+    shape = (400, 600)
+    # Du di chuyen qua giua khung hinh (y=220) trong che do hold, chieu van phai giu nguyen la OUT
+    cnt.update([_det(bbox=(250, 170, 330, 230))], now=1.0, frame_shape=shape)
+    _, c1 = cnt.update([_det(bbox=(250, 200, 330, 260))], now=1.4, frame_shape=shape)
+    assert len(c1) == 1 and c1[0].direction == "OUT"
+
+    # Chuyen sang hold IN -> reset cooldown & ghi nhan IN
+    cnt.configure(hold_direction="IN")
+    cnt.update([_det(bbox=(250, 200, 330, 260))], now=2.0, frame_shape=shape)
+    _, c2 = cnt.update([_det(bbox=(250, 200, 330, 260))], now=2.4, frame_shape=shape)
+    assert len(c2) == 1 and c2[0].direction == "IN"
+
+    # Chuyen sang line + in_when='right' -> tu dong xoay vach sang doc x=0.5 (x=300)
+    cnt.configure(count_mode="line", in_when="right")
+    assert cnt.line_norm == [[0.5, 0.0], [0.5, 1.0]]
+    # Di chuyen lien tuc tu trai sang phai qua x=300 -> IN
+    cnt.update([_det(bbox=(180, 160, 260, 240))], now=5.0, frame_shape=shape)
+    cnt.update([_det(bbox=(250, 160, 330, 240))], now=5.2, frame_shape=shape)
+    _, lr_in = cnt.update([_det(bbox=(320, 160, 400, 240))], now=5.4, frame_shape=shape)
+    assert len(lr_in) == 1 and lr_in[0].direction == "IN"
+    # Di chuyen lien tuc tu phai sang trai qua x=300 -> OUT
+    cnt.update([], now=7.0, frame_shape=shape)
+    cnt.update([_det(bbox=(340, 160, 420, 240))], now=7.1, frame_shape=shape)
+    cnt.update([_det(bbox=(280, 160, 360, 240))], now=7.3, frame_shape=shape)
+    _, lr_out = cnt.update([_det(bbox=(180, 160, 260, 240))], now=7.5, frame_shape=shape)
+    assert len(lr_out) == 1 and lr_out[0].direction == "OUT"
+
+    # Doi ve 'down' -> tu xoay vach ve ngang y=0.55
+    cnt.configure(in_when="down")
+    assert cnt.line_norm == [[0.0, 0.55], [1.0, 0.55]]
+
+
+def test_codereview_fixes_csv_preserve_barcodes_chunked_in_and_zxing_short_circuit(tmp_path: Path):
+    """Regression cho 5 phat hien codereview: CSV khong xoa barcode cu, chia lo >500 SKU, zxing khong chay thua OpenCV va overlay gui line."""
+    import asyncio
+    from types import SimpleNamespace
+
+    from server.api import sku as sku_api
+    from server.api.state import ctx
+    from server.vision.pipeline import Pipeline
+
+    cfg = _make_cfg(tmp_path)
+    db = DB(cfg["_paths"]["db"])
+    gal = SkuGallery(db, feature_type="orb")
+    scanner = SkuScanner(cfg, gal)
+
+    # 1. CSV chi co 2 cot (code, name) hoac cot barcode de trong -> KHONG duoc xoa barcode da luu (kể cả ERP)
+    db.upsert_sku_item("SKU-KEEP", "Tên cũ", barcodes=["8930001", "8930001-CTN"], uom="box", erp_item_code="SKU-KEEP")
+    csv_no_bc = "code,name,uom\nSKU-KEEP,Tên mới từ CSV,thùng\n".encode("utf-8")
+    csv_blank_bc = "code,name,barcodes,uom\nSKU-KEEP,Tên mới 2,,thùng\n".encode("utf-8")
+
+    class _Upload:
+        def __init__(self, filename: str, data: bytes):
+            self.filename = filename
+            self._data = data
+
+        async def read(self, size: int = -1) -> bytes:
+            return self._data if size < 0 else self._data[:size]
+
+    fake_pl = SimpleNamespace(status=lambda: {"mode": "sku"})
+    keys = ("cfg", "db", "sku_gallery", "sku_scanner", "pipeline")
+    old = {k: getattr(ctx, k, None) for k in keys}
+    try:
+        ctx.cfg, ctx.db, ctx.sku_gallery, ctx.sku_scanner, ctx.pipeline = cfg, db, gal, scanner, fake_pl
+        req = SimpleNamespace(headers={}, client=SimpleNamespace(host="127.0.0.1"), cookies={})
+        r1 = asyncio.run(sku_api.import_sku_items_csv(req, file=_Upload("nobc.csv", csv_no_bc)))
+        assert r1["imported"] == 1
+        item = db.get_sku_by_code("SKU-KEEP")
+        assert item["name"] == "Tên mới từ CSV"
+        assert item["barcodes"] == ["8930001", "8930001-CTN"]
+
+        r2 = asyncio.run(sku_api.import_sku_items_csv(req, file=_Upload("blankbc.csv", csv_blank_bc)))
+        assert r2["imported"] == 1
+        assert db.get_sku_by_code("SKU-KEEP")["barcodes"] == ["8930001", "8930001-CTN"]
+    finally:
+        for k, v in old.items():
+            if v is None and hasattr(ctx, k):
+                delattr(ctx, k)
+            elif v is not None:
+                setattr(ctx, k, v)
+
+    # 2. _attach_sku_barcodes chia lo an toan khi so SKU > _SQL_IN_CHUNK
+    orig_chunk = db._SQL_IN_CHUNK
+    try:
+        db._SQL_IN_CHUNK = 2
+        for idx in range(5):
+            db.upsert_sku_item(f"SKU-CHK-{idx}", f"SP {idx}", barcodes=[f"8937700{idx}", f"8937700{idx}-B"])
+        all_items = db.list_sku_items()
+        by_code = {it["code"]: it for it in all_items}
+        for idx in range(5):
+            assert by_code[f"SKU-CHK-{idx}"]["barcodes"] == [f"8937700{idx}", f"8937700{idx}-B"]
+    finally:
+        db._SQL_IN_CHUNK = orig_chunk
+
+    # 3. Khi zxing-cpp hoat dong binh thuong tren khung trong, KHONG duoc goi them OpenCV fallback
+    assert scanner._zxing is not None
+    called_cv = {"n": 0}
+
+    class _TrapDet:
+        def detectAndDecodeMulti(self, _img):
+            called_cv["n"] += 1
+            return False, None, None, None
+
+    scanner._qr = _TrapDet()
+    scanner._qr_fallback = _TrapDet()
+    blank = np.full((240, 320, 3), 200, dtype=np.uint8)
+    assert scanner.scan_codes_only(blank) == []
+    assert called_cv["n"] == 0
+
+    # 5. _process_sku broadcast kem toa do vach `line` khi o che do line de WebRTC canvas ve duoc
+    emitted = []
+    cam = SimpleNamespace(connected=True, fps_in=15.0, idle=False,
+                          describe=lambda: {"kind": "webcam", "label": "Mock", "connected": True, "black": False},
+                          read=lambda: (1, blank))
+    pl = Pipeline(cfg, db, SimpleNamespace(name="opencv", model_version="t"),
+                  SimpleNamespace(version=1, size=0, has=lambda _: False), cam,
+                  SimpleNamespace(kind="mock", notify=lambda: None), emitted.append,
+                  sku_scanner=scanner, sku_gallery=gal)
+    pl.sku_counter.configure(count_mode="line", in_when="right")
+    pl._process_sku(blank, now=10.0)
+    overlays = [m for m in emitted if m.get("type") == "frame_overlay"]
+    assert overlays and overlays[-1]["line"] == [[0.5, 0.0], [0.5, 1.0]]
+    assert overlays[-1]["in_when"] == "right"

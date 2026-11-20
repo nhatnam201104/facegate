@@ -28,6 +28,7 @@ Bản sao văn bản giấy phép: `third_party/licenses/`.
 | onnxruntime | 1.32.0 | MIT | linked | https://github.com/microsoft/onnxruntime | |
 | pillow | 13.0.0 | MIT-CMU | linked | https://github.com/python-pillow/Pillow | |
 | cryptography | 50.0.2 | Apache-2.0 OR BSD-3-Clause | linked | https://github.com/pyca/cryptography | |
+| zxing-cpp | 3.1.1 | Apache-2.0 | linked | https://github.com/zxing-cpp/zxing-cpp | Đọc QR / Barcode 1D–2D cho chế độ Hàng hóa (SKU) |
 | psycopg[binary] | 3.x | LGPL-3.0-only | optional, linked | https://github.com/psycopg/psycopg | Chỉ khi dùng PostgreSQL; liên kết động, không sửa mã nguồn |
 | pytapo | 3.x | MIT | optional, linked | https://github.com/JurajNyiri/pytapo | `audio_prompt.backend: tapo`. API TP-Link **không chính thức**: kiểm tra điều khoản sử dụng (ToS) với khách |
 

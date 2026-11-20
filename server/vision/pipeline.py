@@ -93,6 +93,7 @@ class Pipeline:
             count_mode=str(scfg.get("count_mode", "hold")),
             line_norm=scfg.get("line") or [[0.0, 0.55], [1.0, 0.55]],
             in_when=str(scfg.get("in_when", "down")),
+            hold_direction=str(scfg.get("hold_direction", "IN")),
         )
         self._last_sku_tracks: list = []
         self._last_zone_eval: dict = {}
@@ -922,6 +923,8 @@ class Pipeline:
             "ts_server_ns": ts_ns,
             "frame_id": int(now * 100) % 1000000,
             "mode": "sku",
+            "line": self.sku_counter.line_norm if self.sku_counter.count_mode == "line" else None,
+            "in_when": self.sku_counter.in_when,
             "objects": overlay_objs,
         })
 
@@ -957,7 +960,11 @@ class Pipeline:
             boxes.append({"bbox": tr.bbox * s, "color": color, "label": label})
         n_sku = self.sku_gallery.size if self.sku_gallery is not None else 0
         ft = str((self.cfg.get("sku") or {}).get("feature_type", "orb")).upper()
-        cm = self.sku_counter.count_mode.upper()
+        cm = (
+            f"HOLD-{self.sku_counter.hold_direction}"
+            if self.sku_counter.count_mode == "hold"
+            else f"LINE/{self.sku_counter.in_when.upper()}"
+        )
         hud = (f"SKU ({ft}/{cm}) | detect {self.det_fps:.1f} FPS {self.det_ms:.0f} ms | "
                f"cam {self.camera.fps_in:.0f} FPS | SP: {n_sku}")
         view = draw_overlay(view, boxes, hud, line_px)
@@ -1075,6 +1082,7 @@ class Pipeline:
                 "sku_gallery": self.sku_gallery.size if self.sku_gallery is not None else 0,
                 "sku_templates": self.sku_gallery.template_count if self.sku_gallery is not None else 0,
                 "sku_count_mode": self.sku_counter.count_mode,
+                "sku_hold_direction": self.sku_counter.hold_direction,
                 "sku_line": self.sku_counter.line_norm,
                 "sku_in_when": self.sku_counter.in_when,
                 "zones": self.zone_engine.zone_count if self.zone_engine is not None else 0,

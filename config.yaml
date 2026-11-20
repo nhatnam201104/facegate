@@ -195,9 +195,11 @@ sku:                       # Phase 2A: Nhan dien Hang hoa / SKU & kiem dem kho (
   scan_max_width: 960
   max_instances: 4         # so hop cung ma SKU toi da tim trong 1 khung (Sequential RANSAC Experimental)
   count_mode: hold         # hold (giu on dinh min_hold_sec) | line (cat qua vach IN/OUT)
+  hold_direction: IN       # IN (Nhap kho) | OUT (Xuat kho) khi count_mode: hold
   min_hold_sec: 0.4
   cooldown_sec: 4.0
   track_max_age: 1.2
+  erp_sync_interval_sec: 900   # tu dong keo danh muc Item tu ERPNext moi N giay (0 = tat)
   line: [[0.0, 0.55], [1.0, 0.55]]  # vach dem chuan hoa 0..1 khi count_mode: line
   in_when: down            # down | up | right | left (chieu di chuyen tinh la Nhap kho IN)
   log_unknown: true

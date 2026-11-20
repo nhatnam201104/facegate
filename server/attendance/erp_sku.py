@@ -51,8 +51,10 @@ class MockSkuERP:
             except Exception as e:  # noqa: BLE001
                 log.warning("Khong doc duoc erp_items_mock.json: %s", e)
         return [
-            {"item_code": "ITEM-TEA-001", "item_name": "Trà Oolong MSW 500g", "stock_uom": "box", "barcode": "8936000000018", "disabled": 0},
-            {"item_code": "ITEM-COF-002", "item_name": "Cà phê Arabica Cầu Đất 1kg", "stock_uom": "bag", "barcode": "8936000000025", "disabled": 0},
+            {"item_code": "ITEM-TEA-001", "item_name": "Trà Oolong MSW 500g", "stock_uom": "box",
+             "barcodes": ["8936000000018", "8936000000018-CTN"], "disabled": 0},
+            {"item_code": "ITEM-COF-002", "item_name": "Cà phê Arabica Cầu Đất 1kg", "stock_uom": "bag",
+             "barcodes": ["8936000000025"], "disabled": 0},
         ]
 
     def push_draft_stock_entry(self, batch: dict) -> tuple[bool, str]:
@@ -106,12 +108,16 @@ class ERPNextSkuAdapter:
 
     def fetch_items(self) -> list[dict]:
         rows = self._list_resource("Item", ["name", "item_code", "item_name", "stock_uom", "disabled"])
-        # ERPNext luu barcode o bang con `Item Barcode` (parent = Item.name), khong nam tren Item
-        barcodes: dict[str, str] = {}
+        # ERPNext luu nhieu ma vach/Item o bang con `Item Barcode` (parent = Item.name): keo day du tat ca
+        barcodes: dict[str, list[str]] = {}
         try:
             for b in self._list_resource("Item Barcode", ["parent", "barcode"]):
-                if b.get("parent") and b.get("barcode"):
-                    barcodes.setdefault(str(b["parent"]), str(b["barcode"]))
+                parent = str(b.get("parent") or "").strip()
+                bc = str(b.get("barcode") or "").strip()
+                if parent and bc:
+                    lst = barcodes.setdefault(parent, [])
+                    if bc not in lst:
+                        lst.append(bc)
         except Exception as e:  # noqa: BLE001
             log.warning("Khong keo duoc Item Barcode (bo qua, giu barcode dang ky tai may): %s", e)
         out = []
@@ -119,11 +125,16 @@ class ERPNextSkuAdapter:
             code = str(it.get("item_code") or it.get("name") or "").strip()
             if not code:
                 continue
+            item_bcs = list(barcodes.get(str(it.get("name") or code), []))
+            single_bc = str(it.get("barcode") or "").strip()
+            if single_bc and single_bc not in item_bcs:
+                item_bcs.append(single_bc)
             out.append({
                 "item_code": code,
                 "item_name": str(it.get("item_name") or code),
                 "stock_uom": str(it.get("stock_uom") or "Nos"),
-                "barcode": barcodes.get(str(it.get("name") or code)) or it.get("barcode"),
+                "barcode": item_bcs[0] if item_bcs else None,
+                "barcodes": item_bcs,
                 "disabled": int(it.get("disabled") or 0),
             })
         return out
@@ -275,8 +286,17 @@ class SkuERPWorker:
         self._wake = threading.Event()
         self._stop = threading.Event()
         self._sync_lock = threading.Lock()
+        self._items_sync_lock = threading.Lock()
         self._consecutive_failures = 0
         self._circuit_open_until = 0.0
+        self.item_sync_interval_sec = float((cfg.get("sku") or {}).get("erp_sync_interval_sec", 900.0))
+        self.last_item_sync_at: float | None = None
+        self.last_item_sync_result: dict | None = None
+        self._next_item_sync_at = (
+            time.time() + self.item_sync_interval_sec
+            if (self.kind == "erpnext" and self.item_sync_interval_sec > 0)
+            else 0.0
+        )
         self._thread = threading.Thread(target=self._run, daemon=True, name="sku-erp")
         self._thread.start()
 
@@ -290,52 +310,84 @@ class SkuERPWorker:
             self._thread.join(timeout=2.0)
 
     def sync_items_from_erp(self) -> dict:
-        """Keo danh muc Item tu ERPNext / Mock ve bang sku_items, tu khoa Item disabled."""
-        raw_items = self.adapter.fetch_items()
-        upserted = 0
-        disabled_cnt = 0
-        skipped = 0
-        default_wh = str(self.cfg.get("hrm", {}).get("erpnext", {}).get("warehouse") or "Stores - MSW")
-        for it in raw_items:
-            erp_code = str(it.get("item_code") or "").strip()
-            local_code = _sanitize_item_code_for_local(erp_code)
-            if not local_code:
-                skipped += 1
-                continue
-            is_dis = bool(int(it.get("disabled") or 0))
-            existing = self.db.get_sku_by_code(local_code)
-            erp_barcode = str(it["barcode"]).strip() if it.get("barcode") else None
-            if existing is None:
-                name, uom, barcode, st = (str(it.get("item_name") or local_code),
-                                          str(it.get("stock_uom") or "pcs"), erp_barcode,
-                                          "disabled" if is_dis else "active")
-            elif existing.get("erp_item_code"):
-                # Item da lien ket ERP tu truoc: ERP la nguon su that cho ten/DVT; barcode & trang thai tat tay duoc giu
-                name, uom = str(it.get("item_name") or existing["name"]), str(it.get("stock_uom") or existing["uom"])
-                barcode = erp_barcode or existing.get("barcode")
-                st = "disabled" if is_dis else existing["status"]
-            else:
-                # SKU dang ky tay trung ma: chi gan erp_item_code, KHONG ghi de ten/DVT/barcode/trang thai da dat o may
-                name, uom, barcode = existing["name"], existing["uom"], existing.get("barcode")
-                st = "disabled" if is_dis else existing["status"]
-            try:
-                self.db.upsert_sku_item(
-                    code=local_code,
-                    name=name,
-                    barcode=barcode,
-                    uom=uom,
-                    status=st,
-                    erp_item_code=erp_code,
-                    erp_warehouse=default_wh,
+        """Keo danh muc Item + toan bo Item Barcode tu ERPNext / Mock ve bang sku_items, tu khoa Item disabled."""
+        with self._items_sync_lock:
+            raw_items = self.adapter.fetch_items()
+            upserted = 0
+            disabled_cnt = 0
+            skipped = 0
+            default_wh = str(self.cfg.get("hrm", {}).get("erpnext", {}).get("warehouse") or "Stores - MSW")
+            for it in raw_items:
+                erp_code = str(it.get("item_code") or "").strip()
+                local_code = _sanitize_item_code_for_local(erp_code)
+                if not local_code:
+                    skipped += 1
+                    continue
+                is_dis = bool(int(it.get("disabled") or 0))
+                existing = self.db.get_sku_by_code(local_code)
+                erp_barcodes = self.db.parse_barcodes(
+                    barcode=it.get("barcode"),
+                    barcodes=it.get("barcodes") if isinstance(it.get("barcodes"), (list, tuple)) else None,
                 )
-                upserted += 1
-                if is_dis:
-                    disabled_cnt += 1
-            except ValueError:
-                skipped += 1
-        if self.sku_gallery is not None:
-            self.sku_gallery.reload()
-        return {"synced": upserted, "disabled": disabled_cnt, "skipped": skipped, "adapter": self.kind}
+                existing_bcs = list(existing.get("barcodes") or []) if existing else []
+                if existing is None:
+                    name, uom, bcs, st = (
+                        str(it.get("item_name") or local_code),
+                        str(it.get("stock_uom") or "pcs"),
+                        erp_barcodes,
+                        "disabled" if is_dis else "active",
+                    )
+                elif existing.get("erp_item_code"):
+                    # Item da lien ket ERP tu truoc: ERP la nguon su that cho ten/DVT; gop barcode ERP voi barcode thu cong
+                    name = str(it.get("item_name") or existing["name"])
+                    uom = str(it.get("stock_uom") or existing["uom"])
+                    bcs = self.db.parse_barcodes(barcodes=erp_barcodes + existing_bcs)
+                    st = "disabled" if is_dis else existing["status"]
+                else:
+                    # SKU dang ky tay trung ma: chi gan erp_item_code & bo sung barcode ERP chua co
+                    name, uom = existing["name"], existing["uom"]
+                    bcs = self.db.parse_barcodes(barcodes=existing_bcs + erp_barcodes)
+                    st = "disabled" if is_dis else existing["status"]
+                try:
+                    self.db.upsert_sku_item(
+                        code=local_code,
+                        name=name,
+                        barcodes=bcs,
+                        uom=uom,
+                        status=st,
+                        erp_item_code=erp_code,
+                        erp_warehouse=default_wh,
+                    )
+                    upserted += 1
+                    if is_dis:
+                        disabled_cnt += 1
+                except ValueError:
+                    skipped += 1
+            if self.sku_gallery is not None:
+                self.sku_gallery.reload()
+            now = time.time()
+            res = {"synced": upserted, "disabled": disabled_cnt, "skipped": skipped, "adapter": self.kind, "ts": now}
+            self.last_item_sync_at = now
+            self.last_item_sync_result = res
+            if self.item_sync_interval_sec > 0:
+                self._next_item_sync_at = now + self.item_sync_interval_sec
+            return res
+
+    def maybe_periodic_item_sync(self, now: float | None = None) -> dict | None:
+        """Tu dong keo danh muc Item theo lich khi den han (chi chay tu dong voi adapter erpnext)."""
+        if self.kind != "erpnext" or self.item_sync_interval_sec <= 0:
+            return None
+        ts = time.time() if now is None else float(now)
+        if self._next_item_sync_at <= 0 or ts < self._next_item_sync_at:
+            return None
+        try:
+            res = self.sync_items_from_erp()
+            log.info("Tu dong dong bo %d Item tu ERPNext (khoa %d)", res["synced"], res["disabled"])
+            return res
+        except Exception as e:  # noqa: BLE001
+            self._next_item_sync_at = ts + min(self.item_sync_interval_sec, 120.0)
+            log.warning("Tu dong dong bo Item tu ERPNext that bai: %s", e)
+            return None
 
     def sync_once(self) -> int:
         with self._sync_lock:
@@ -375,6 +427,7 @@ class SkuERPWorker:
         while not self._stop.is_set():
             try:
                 self.sync_once()
+                self.maybe_periodic_item_sync()
             except Exception:  # noqa: BLE001
                 log.exception("Loi vong lap SkuERPWorker")
             self._wake.wait(timeout=10.0)
