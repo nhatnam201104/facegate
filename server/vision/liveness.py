@@ -41,8 +41,11 @@ class Liveness:
             raise FileNotFoundError(f"Thieu model chong gia mao {missing}. Chay: python server/scripts/download_models.py")
         for n, _ in MODELS:
             require(cfg, n, models_dir)
+        ort_threads = int((cfg or {}).get("pipeline", {}).get("ort_threads", 2))
         so = ort.SessionOptions()
         so.log_severity_level = 3
+        so.intra_op_num_threads = ort_threads
+        so.inter_op_num_threads = ort_threads
         self.sessions = [(ort.InferenceSession(str(models_dir / n), so, providers=["CPUExecutionProvider"]), sc)
                          for n, sc in MODELS]
 

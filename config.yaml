@@ -25,8 +25,17 @@ pipeline:
   stream_fps: 15
   stream_width: 960
   two_stage_roi: true                # resize chinh frame /stream1 ve 640px tim nguoi -> cat ROI 1:1 tren 3MP
-  always_fallback_unmatched: true    # quet bo sung toan khung neu YOLOX miss nguoi thu 2
+  always_fallback_unmatched: true    # bat co che quet bu toan khung co dieu kien khi miss nguoi
   fallback_det_width: 1280
+  max_roi_det_side: 640              # tran canh dai vung dau-vai dua vao bo phat hien (320-1024; 480 nhanh hon nhung giam do chinh xac)
+  roi_det_buckets: [320, 480, 640]   # cac moc dem khong noi suy de co dinh kich thuoc dau vao bo phat hien
+  roi_merge_iou: 0.60                # nguong IoU gop cac vung dau-vai chong lap (0.30-0.95)
+  roi_edge_margin: 2                 # sai so pixel coi hop mat cham ria noi bo vung dau-vai (0-16)
+  det_nms: 0.40                      # nguong khu trung lap cua bo phat hien khuon mat (0.20-0.70)
+  fallback_every_n_cycles: 4         # chu ky quet bu toan khung (1-30; dat 1 de tai lap hanh vi cu quet moi khung)
+  det_fallback_iou: 0.45             # nguong IoU toan cuc khi hop nhat ung vien mat (0.20-0.90)
+  det_fallback_containment: 0.75     # ti le dien tich bao long de loai manh mat bi cat trong hop lon (0.50-0.99)
+  ort_threads: 2                     # so luong suy luan cho ONNX Runtime va OpenCV DNN (1-8)
 
 license:                   # kiem tra giay phep model theo server/models/manifest.json (feature 002)
   research_mode: false     # CHI dung noi bo khi dev: true -> loi giay phep model chi canh bao. KHONG BAO GIO bat cho khach hang
@@ -80,6 +89,9 @@ tracking:
   crossing_person_iou: 0.40
   viewport_bottom_grace: 0.80        # y2 >= 0.80*H coi la cat khung hop le, tat phat unattached_face
   unattached_confirm_frames: 4       # chi khoa spoof unattached_face sau N frame miss lien tiep
+  unattached_min_det_score: 0.72     # diem tin cay phat hien toi thieu de xet unattached_face (chan nhieu nen)
+  unattached_static_cooldown_sec: 300.0  # thoi gian (giay) chan lap spoof unattached_face tai cung toa do tinh (0 = tat)
+  unattached_static_iou: 0.65        # nguong IoU chuan hoa coi 2 hop unattached la cung vat the tinh
 
 events:
   # Moi nhan vien chi check-in 1 lan/ngay; cac lan sau chi hien "Da cham cong luc ..."

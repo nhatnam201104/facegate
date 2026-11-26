@@ -210,7 +210,7 @@ def test_t034_two_stage_always_fallback_unmatched_finds_second_person():
 
     class _DummyCtx:
         def detect(self, small_img):
-            s = 640.0 / 2304.0
+            s = small_img.shape[1] / 2304.0
             return ContextScene(persons=[(p_a * s).astype(np.float32)], mediums=[])
 
     class _DummyEngine:
@@ -219,10 +219,10 @@ def test_t034_two_stage_always_fallback_unmatched_finds_second_person():
             # Neu la crop ROI cua nguoi A -> chi thay mat A (nam ben trong ROI [0..570])
             if w < 1000:
                 return [_face(80, 60, 200, 200)]
-            # Quet fallback toan khung (1280px) -> thay ca mat A (trong ROI) va mat B (ngoai ROI, bi YOLOX miss)
+            # Quet fallback toan khung (1280px) -> thay ca mat A (cung vi tri ROI [136,152,256,292] +-4px) va mat B (ngoai ROI, bi YOLOX miss)
             s = w / 2304.0
             return [
-                _face(180 * s, 260 * s, 300 * s, 400 * s),
+                _face(140 * s, 156 * s, 260 * s, 296 * s),
                 _face(1400 * s, 280 * s, 1540 * s, 430 * s),
             ]
 
@@ -370,7 +370,7 @@ def test_review_fixes_decision_profile_window_and_two_stage_in_roi_second_person
 
     class _DummyCtxOverlap:
         def detect(self, small_img):
-            s = 640.0 / 2304.0
+            s = small_img.shape[1] / 2304.0
             return ContextScene(persons=[(p_a * s).astype(np.float32)], mediums=[])
 
     class _DummyEngineOverlap:
@@ -576,4 +576,243 @@ def test_codereview_fixes_pipeline_context_spoof_legal_hold_and_worker_source(tm
         }
     })
     assert resolve_worker_source(cfg_mtx) == "rtsp://127.0.0.1:8554/gate1_main"
+
+
+def test_ceiling_sprinkler_false_spoof_blocked_and_static_suppression(tmp_path):
+    """Hoi quy bug ceiling-sprinkler-false-spoof: chan unattached_face nho/score thap, chong lap vat tinh va uu tien t.spoof_reason."""
+    from server.store.db import DB
+    from server.enrollment.gallery import Gallery
+    from server.vision.context_detector import StaticUnattachedSuppressor
+    from server.vision.pipeline import Pipeline
+    from server.vision.pose3d import PoseResult
+
+    def _box_face(x1: float, y1: float, x2: float, y2: float, score: float = 0.92, lm_valid: bool = True) -> Face:
+        w, h = x2 - x1, y2 - y1
+        kps = np.array([
+            [x1 + 0.30 * w, y1 + 0.35 * h],
+            [x1 + 0.70 * w, y1 + 0.35 * h],
+            [x1 + 0.50 * w, y1 + 0.55 * h],
+            [x1 + 0.35 * w, y1 + 0.75 * h],
+            [x1 + 0.65 * w, y1 + 0.75 * h],
+        ], dtype=np.float32)
+        return Face(np.array([x1, y1, x2, y2], dtype=np.float32), score, kps, landmarks_valid=lm_valid)
+
+    cfg = load_config()
+    cfg["_paths"] = {**cfg["_paths"], "enroll": tmp_path / "enroll", "snapshots": tmp_path / "snap"}
+    cfg["pipeline"]["two_stage_roi"] = True
+    cfg["pipeline"]["always_fallback_unmatched"] = True
+    cfg["tracking"]["unattached_confirm_frames"] = 4
+    cfg["tracking"]["unattached_min_det_score"] = 0.72
+    cfg["tracking"]["unattached_static_cooldown_sec"] = 300.0
+    cfg["tracking"]["unattached_static_iou"] = 0.65
+    cfg["recognition"]["track_max_age"] = 2.0
+
+    db = DB(tmp_path / "sprinkler.db")
+    gal = Gallery(db, "dummy_sprinkler")
+    broadcasted = []
+
+    class _Cam:
+        def read(self):
+            return 0, None
+
+    class _HRM:
+        def notify(self):
+            pass
+
+    state = {"face": _box_face(506, 52, 522, 73, score=0.80), "persons": []}
+
+    class _Eng:
+        name = "opencv"
+        model_version = "dummy_sprinkler"
+
+        def detect(self, img):
+            if img.shape[1] < 640:
+                return []
+            return [state["face"]] if state["face"] is not None else []
+
+        def align(self, img, face, pose=None, pose_group=None):
+            return img
+
+        def embed_aligned(self, aligned):
+            return np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)
+
+        def embed_batch(self, aligned_list):
+            return [np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32) for _ in aligned_list]
+
+    class _Pose:
+        def estimate(self, img, face, prev_group=None, **kw):
+            return PoseResult(0.0, 0.0, 0.0, "frontal", np.zeros((68, 3), np.float32), face.kps, 1.0)
+
+    class _Ctx:
+        def detect(self, img):
+            return ContextScene(persons=list(state["persons"]), mediums=[])
+
+    rng = np.random.default_rng(42)
+    frame = rng.integers(80, 180, (480, 640, 3), dtype=np.uint8)
+
+    pl = Pipeline(
+        cfg, db, _Eng(), gal, _Cam(), _HRM(),
+        broadcast=broadcasted.append, liveness=None, clips=None,
+        recognize=True, pose=_Pose(), context_detector=_Ctx(),
+    )
+
+    # 1. Voi chua chay ti hon tren tran (16x21 px < min_face=60) trong 6 frame lien tiep -> 0 spoof, 0 appearance
+    for k in range(6):
+        pl._process(frame, now=1.0 + k * 0.25)
+    t_tiny = next(iter(pl.tracker.tracks.values()))
+    assert t_tiny.unattached_streak == 0
+    assert t_tiny.spoof is False
+    pl._end_all_tracks()
+    assert db.list_events(20) == []
+    assert db.list_appearances(0.0, 9999999999.0) == []
+
+    # 2. Hop lon (>=60px) nhung score thap (0.60 < unattached_min_det_score=0.72) -> khong tang unattached_streak
+    state["face"] = _box_face(200, 80, 320, 220, score=0.60)
+    for k in range(6):
+        pl._process(frame, now=10.0 + k * 0.25)
+    t_low = next(iter(pl.tracker.tracks.values()))
+    assert t_low.unattached_streak == 0
+    assert t_low.spoof is False
+    pl._end_all_tracks()
+    assert db.list_appearances(0.0, 9999999999.0, kind="spoof") == []
+
+    # 3. Vat the lon hop le (120x140 px, score=0.92, khong co person): track dau phat dung 1 spoof;
+    #    cac track tai sinh sau khi het han tai cung toa do tinh bi chan khong spam spoof/unknown/legal_hold
+    state["face"] = _box_face(200, 80, 320, 220, score=0.92)
+    for k in range(4):
+        pl._process(frame, now=20.0 + k * 0.25)
+    t_sp1 = next(iter(pl.tracker.tracks.values()))
+    assert t_sp1.spoof is True
+    assert t_sp1.spoof_reason == "unattached_face"
+    # De track 1 het han tu nhien (> track_max_age=2.0s)
+    state["face"] = None
+    pl._process(frame, now=25.0)
+    assert len(db.list_appearances(0.0, 9999999999.0, kind="spoof")) == 1
+
+    # Track 2 & 3 tai sinh tai cung toa do (IoU >= 0.65) trong cua so cooldown -> khong phat them spoof hay unknown
+    unknown_before = len(db.list_appearances(0.0, 9999999999.0, kind="unknown"))
+    for base_t in (28.0, 36.0):
+        state["face"] = _box_face(202, 81, 321, 221, score=0.92)
+        for k in range(6):
+            pl._process(frame, now=base_t + k * 0.25)
+        t_rep = next(iter(pl.tracker.tracks.values()))
+        assert t_rep.spoof is False
+        assert t_rep.good_frames == 0
+        assert t_rep.last_reason == "static_unattached_suppressed"
+        state["face"] = None
+        pl._process(frame, now=base_t + 5.0)
+
+    assert len(db.list_appearances(0.0, 9999999999.0, kind="spoof")) == 1
+    assert len(db.list_appearances(0.0, 9999999999.0, kind="unknown")) == unknown_before
+
+    # Nguoi that dung vao dung toa do do (co body_coupled) KHONG bi chan boi static suppressor
+    state["face"] = _box_face(202, 81, 321, 221, score=0.92)
+    state["persons"] = [np.array([140, 40, 400, 460], dtype=np.float32)]
+    pl._process(frame, now=44.0)
+    t_real = next(iter(pl.tracker.tracks.values()))
+    assert t_real.spoof is False
+    assert t_real.good_frames == 1
+    assert t_real.last_reason == "ok"
+    pl._end_all_tracks()
+
+    # 4. PerceptionWorker: chan nhieu nho, chan tai sinh vat tinh, va uu tien t.spoof_reason khi phat REJECTED_SPOOF
+    state["persons"] = []
+    worker = PerceptionWorker.__new__(PerceptionWorker)
+    worker.cfg = cfg
+    worker.engine = _Eng()
+    worker.ctx_det = _Ctx()
+    worker.pose = _Pose()
+    worker.liveness = None
+    worker.gallery = gal
+    worker.tracker = IoUTracker(max_age=2.0)
+    worker.llr_cfg = LLRConfig.from_cfg(cfg)
+    worker.viewport_grace = 0.80
+    worker.unattached_confirm_frames = 4
+    worker.unattached_min_det_score = 0.72
+    worker.static_unattached_suppressor = StaticUnattachedSuppressor(cooldown_sec=300.0, iou_thr=0.65)
+    worker.split_cos = 0.25
+    worker.require_frontal_for_checkin = True
+    worker.camera_id = "gate-1"
+    worker.seq = 0
+    worker._cycle_index = 0
+    worker._chime_events = []
+    worker.mode = "attendance"
+
+    # Nhieu nho tren worker -> 0 spoof, va khi het han khong tao unknown/clip hay ro ri track_timelines
+    import server.main as main_mod
+    from server.api.state import ctx as app_ctx
+
+    old_ctx = {k: getattr(app_ctx, k, None) for k in ("cfg", "db", "pipeline", "engine", "track_timelines", "track_event_ids")}
+    clip_calls = []
+    orig_archive = main_mod._archive_playback_clip_bg
+    try:
+        app_ctx.cfg = cfg
+        app_ctx.db = db
+        app_ctx.pipeline = None
+        app_ctx.engine = worker.engine
+        app_ctx.track_timelines = {}
+        app_ctx.track_event_ids = {}
+        main_mod._archive_playback_clip_bg = lambda *a, **kw: clip_calls.append(a)
+
+        unk_before_w = len(db.list_appearances(0.0, 9999999999.0, kind="unknown"))
+        state["face"] = _box_face(506, 52, 522, 73, score=0.80)
+        for k in range(6):
+            pkt, evs = worker.process_frame(frame, ts_ns=int((50.0 + k * 0.25) * 1e9))
+            assert not any(e.get("event_kind") == "spoof" for e in evs)
+            main_mod._handle_worker_ipc(pkt)
+            for ev in evs:
+                main_mod._handle_worker_ipc(ev)
+        # Cho track nho het han -> track_timelines duoc don sach, 0 unknown, 0 clip
+        state["face"] = None
+        pkt_exp, evs_exp = worker.process_frame(frame, ts_ns=int(55.0 * 1e9))
+        assert any(e.get("event_kind") == "appearance_closed" and e.get("good_frames") == 0 for e in evs_exp)
+        for ev in evs_exp:
+            main_mod._handle_worker_ipc(ev)
+        assert app_ctx.track_timelines == {}
+        assert len(db.list_appearances(0.0, 9999999999.0, kind="unknown")) == unk_before_w
+        assert clip_calls == []
+
+        # Vat the tinh bi StaticUnattachedSuppressor chan tren worker khi het han cung khong tao unknown/clip
+        state["face"] = _box_face(200, 80, 320, 220, score=0.92)
+        for k in range(4):
+            pkt, evs = worker.process_frame(frame, ts_ns=int((56.0 + k * 0.25) * 1e9))
+            main_mod._handle_worker_ipc(pkt)
+        state["face"] = None
+        _, evs_sp_exp = worker.process_frame(frame, ts_ns=int(59.5 * 1e9))
+        for ev in evs_sp_exp:
+            main_mod._handle_worker_ipc(ev)
+        sp_clips = len(clip_calls)
+
+        state["face"] = _box_face(202, 81, 321, 221, score=0.92)
+        for k in range(4):
+            pkt, evs = worker.process_frame(frame, ts_ns=int((61.0 + k * 0.25) * 1e9))
+            assert not any(e.get("event_kind") == "spoof" for e in evs)
+            main_mod._handle_worker_ipc(pkt)
+        state["face"] = None
+        _, evs_sup_exp = worker.process_frame(frame, ts_ns=int(65.0 * 1e9))
+        for ev in evs_sup_exp:
+            main_mod._handle_worker_ipc(ev)
+        assert app_ctx.track_timelines == {}
+        assert len(db.list_appearances(0.0, 9999999999.0, kind="unknown")) == unk_before_w
+        assert len(clip_calls) == sp_clips
+    finally:
+        main_mod._archive_playback_clip_bg = orig_archive
+        for k, v in old_ctx.items():
+            if v is None and hasattr(app_ctx, k):
+                delattr(app_ctx, k)
+            elif v is not None:
+                setattr(app_ctx, k, v)
+
+    # Uu tien t.spoof_reason ke ca khi ctx_eval["spoof_reason"] la None o frame phat su kien
+    worker.tracker = IoUTracker(max_age=2.0)
+    state["face"] = _box_face(120, 90, 240, 230, score=0.92)
+    state["persons"] = [np.array([60, 40, 320, 460], dtype=np.float32)]
+    _, _ = worker.process_frame(frame, ts_ns=int(70.0 * 1e9))
+    tr_w = next(iter(worker.tracker.tracks.values()))
+    tr_w.spoof = True
+    tr_w.spoof_reason = "unattached_face"
+    _, evs_prio = worker.process_frame(frame, ts_ns=int(70.3 * 1e9))
+    sp_evs = [e for e in evs_prio if e.get("event_kind") == "spoof"]
+    assert len(sp_evs) == 1
+    assert sp_evs[0]["spoof_reason"] == "unattached_face"
 

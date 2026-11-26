@@ -161,7 +161,21 @@ FACEGATE_ISOLATED_WORKER=1 ./run.sh
 </tr>
 <tr>
 <td>Tắt/bật Two-Stage ROI 3MP</td>
-<td><code>pipeline.two_stage_roi: true</code>, chỉnh <code>pipeline.max_faces: 10</code></td>
+<td><code>pipeline.two_stage_roi: true</code>, chỉnh <code>pipeline.max_faces: 10</code>, <code>pipeline.fallback_det_width: 1280</code> (dùng chung cho cả chấm công một tầng và đăng ký)</td>
+</tr>
+<tr>
+<td>Tinh chỉnh phát hiện khuôn mặt &amp; hiệu năng CPU (feature 006)</td>
+<td>
+  <code>pipeline.max_roi_det_side: 640</code> (320–1024; có thể hạ xuống <code>480</code> trên máy yếu nhưng giảm độ chính xác ở góc nghiêng sâu),
+  <code>pipeline.roi_det_buckets: [320, 480, 640]</code> (mốc đệm không nội suy),
+  <code>pipeline.roi_merge_iou: 0.60</code> (gộp vùng đầu–vai chồng lấp),
+  <code>pipeline.roi_edge_margin: 2</code> (biên kiểm tra mảnh mặt bị cắt ở rìa vùng),
+  <code>pipeline.det_nms: 0.40</code> (ngưỡng NMS của bộ phát hiện mặt),
+  <code>pipeline.fallback_every_n_cycles: 4</code> (chu kỳ quét bù; đặt <code>1</code> để tái lập hành vi cũ quét mọi khung),
+  <code>pipeline.det_fallback_iou: 0.45</code> (ngưỡng IoU hợp nhất toàn cục),
+  <code>pipeline.det_fallback_containment: 0.75</code> (tỉ lệ bao lồng loại mảnh cắt),
+  <code>pipeline.ort_threads: 2</code> (giới hạn luồng ONNX Runtime và OpenCV DNN)
+</td>
 </tr>
 <tr>
 <td>Chỉnh LLR &amp; rào cứng</td>

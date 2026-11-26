@@ -1,13 +1,57 @@
+import logging
 import os
 from pathlib import Path
 
 import yaml
 
 ROOT = Path(__file__).resolve().parent.parent
+log = logging.getLogger("config")
 
 
 def _clamp(val: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, float(val)))
+
+
+def _clamp_pipeline_val(pl: dict, key: str, default: float, lo: float, hi: float, as_int: bool = False):
+    if key not in pl or pl[key] is None:
+        return int(default) if as_int else float(default)
+    raw = pl[key]
+    try:
+        num = float(raw)
+    except (TypeError, ValueError):
+        log.warning("pipeline.%s=%r khong hop le -> dung mac dinh %s", key, raw, default)
+        return int(default) if as_int else float(default)
+    clamped = _clamp(num, lo, hi)
+    if clamped != num:
+        out = int(clamped) if as_int else clamped
+        log.warning("pipeline.%s=%r ngoai khoang [%s, %s] -> kep ve %s", key, raw, lo, hi, out)
+        return out
+    return int(clamped) if as_int else clamped
+
+
+def _normalize_roi_buckets(pl: dict, max_side: int) -> list[int]:
+    derived = [b for b in (320, 480, 640) if b < max_side] + [max_side]
+    if "roi_det_buckets" not in pl or pl["roi_det_buckets"] is None:
+        return derived
+    raw = pl["roi_det_buckets"]
+    if not isinstance(raw, list) or not raw:
+        log.warning("pipeline.roi_det_buckets=%r sai quy cach -> thay bang %s", raw, derived)
+        return derived
+    parsed: list[int] = []
+    for item in raw:
+        if isinstance(item, bool) or not isinstance(item, (int, float)):
+            log.warning("pipeline.roi_det_buckets=%r sai quy cach -> thay bang %s", raw, derived)
+            return derived
+        v = int(item)
+        if v < 160 or v > 1024 or (parsed and v <= parsed[-1]):
+            log.warning("pipeline.roi_det_buckets=%r sai quy cach -> thay bang %s", raw, derived)
+            return derived
+        parsed.append(v)
+    if parsed[-1] != max_side:
+        log.warning("pipeline.roi_det_buckets=%r phan tu cuoi != max_roi_det_side(%d) -> thay bang %s",
+                    raw, max_side, derived)
+        return derived
+    return parsed
 
 
 def _apply_v4_defaults(cfg: dict) -> dict:
@@ -34,6 +78,15 @@ def _apply_v4_defaults(cfg: dict) -> dict:
     pl.setdefault("two_stage_roi", True)
     pl.setdefault("always_fallback_unmatched", True)
     pl["fallback_det_width"] = int(_clamp(pl.get("fallback_det_width", 1280), 480, 2560))
+    pl["max_roi_det_side"] = _clamp_pipeline_val(pl, "max_roi_det_side", 640, 320, 1024, as_int=True)
+    pl["roi_det_buckets"] = _normalize_roi_buckets(pl, pl["max_roi_det_side"])
+    pl["roi_merge_iou"] = _clamp_pipeline_val(pl, "roi_merge_iou", 0.60, 0.30, 0.95)
+    pl["roi_edge_margin"] = _clamp_pipeline_val(pl, "roi_edge_margin", 2, 0, 16, as_int=True)
+    pl["det_nms"] = _clamp_pipeline_val(pl, "det_nms", 0.40, 0.20, 0.70)
+    pl["fallback_every_n_cycles"] = _clamp_pipeline_val(pl, "fallback_every_n_cycles", 4, 1, 30, as_int=True)
+    pl["det_fallback_iou"] = _clamp_pipeline_val(pl, "det_fallback_iou", 0.45, 0.20, 0.90)
+    pl["det_fallback_containment"] = _clamp_pipeline_val(pl, "det_fallback_containment", 0.75, 0.50, 0.99)
+    pl["ort_threads"] = _clamp_pipeline_val(pl, "ort_threads", 2, 1, 8, as_int=True)
     # Mac dinh bat isolated_worker cho luong mang RTSP/HTTP; webcam USB va file cuc bo giu single-process (ngoai le FR-006)
     src_val = str(cam.get("source", 0)).strip().lower()
     is_network_stream = src_val.startswith(("rtsp://", "rtsps://", "http://", "https://"))
@@ -91,6 +144,9 @@ def _apply_v4_defaults(cfg: dict) -> dict:
     trk["crossing_person_iou"] = _clamp(trk.get("crossing_person_iou", 0.40), 0.05, 0.95)
     trk["viewport_bottom_grace"] = _clamp(trk.get("viewport_bottom_grace", 0.80), 0.50, 1.0)
     trk["unattached_confirm_frames"] = int(_clamp(trk.get("unattached_confirm_frames", 4), 1, 30))
+    trk["unattached_min_det_score"] = _clamp(trk.get("unattached_min_det_score", 0.72), 0.20, 0.99)
+    trk["unattached_static_cooldown_sec"] = _clamp(trk.get("unattached_static_cooldown_sec", 300.0), 0.0, 86400.0)
+    trk["unattached_static_iou"] = _clamp(trk.get("unattached_static_iou", 0.65), 0.20, 0.99)
 
     liv = cfg.setdefault("liveness", {})
     liv.setdefault("enabled", True)

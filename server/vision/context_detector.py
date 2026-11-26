@@ -128,6 +128,131 @@ def evaluate_face_context(
     }
 
 
+def is_unattached_face_eligible(
+    face,
+    *,
+    min_face: float = 60.0,
+    min_det_score: float = 0.72,
+    quality=None,
+) -> bool:
+    """Kiem tra phat hien co du tieu chuan toi thieu de xet gia mao unattached_face hay chi la nhieu nen."""
+    if not getattr(face, "landmarks_valid", True):
+        return False
+    if min(float(face.w), float(face.h)) < float(min_face):
+        return False
+    if float(getattr(face, "score", 0.0)) < float(min_det_score):
+        return False
+    if quality is not None and getattr(quality, "reason", "ok") in ("out_of_frame", "small"):
+        return False
+    return True
+
+
+def _norm_box_iou(a: tuple[float, float, float, float], b: tuple[float, float, float, float]) -> float:
+    x1, y1 = max(a[0], b[0]), max(a[1], b[1])
+    x2, y2 = min(a[2], b[2]), min(a[3], b[3])
+    inter = max(0.0, x2 - x1) * max(0.0, y2 - y1)
+    ua = max(0.0, a[2] - a[0]) * max(0.0, a[3] - a[1]) + max(0.0, b[2] - b[0]) * max(0.0, b[3] - b[1]) - inter
+    return float(inter / ua) if ua > 0.0 else 0.0
+
+
+class StaticUnattachedSuppressor:
+    """Chan lap su kien spoof unattached_face tu vat the tinh tai sinh track tai cung toa do."""
+
+    def __init__(self, cooldown_sec: float = 300.0, iou_thr: float = 0.65, max_spots: int = 32):
+        self.cooldown_sec = max(0.0, float(cooldown_sec))
+        self.iou_thr = float(iou_thr)
+        self.max_spots = max(1, int(max_spots))
+        self._spots: list[list] = []
+
+    @staticmethod
+    def _normalize(bbox: np.ndarray, frame_shape: tuple[int, int]) -> tuple[float, float, float, float]:
+        h, w = max(int(frame_shape[0]), 1), max(int(frame_shape[1]), 1)
+        return (
+            float(bbox[0]) / w,
+            float(bbox[1]) / h,
+            float(bbox[2]) / w,
+            float(bbox[3]) / h,
+        )
+
+    def _prune(self, now: float) -> None:
+        if self.cooldown_sec <= 0.0:
+            self._spots.clear()
+            return
+        cutoff = now - self.cooldown_sec
+        self._spots = [s for s in self._spots if s[1] >= cutoff]
+
+    def is_suppressed(self, bbox: np.ndarray, frame_shape: tuple[int, int], now: float) -> bool:
+        if self.cooldown_sec <= 0.0:
+            return False
+        self._prune(now)
+        nb = self._normalize(bbox, frame_shape)
+        for spot in self._spots:
+            if _norm_box_iou(nb, spot[0]) >= self.iou_thr:
+                spot[1] = now
+                return True
+        return False
+
+    def record(self, bbox: np.ndarray, frame_shape: tuple[int, int], now: float) -> None:
+        if self.cooldown_sec <= 0.0:
+            return
+        self._prune(now)
+        nb = self._normalize(bbox, frame_shape)
+        for spot in self._spots:
+            if _norm_box_iou(nb, spot[0]) >= self.iou_thr:
+                spot[0] = nb
+                spot[1] = now
+                return
+        self._spots.append([nb, now])
+        if len(self._spots) > self.max_spots:
+            self._spots = self._spots[-self.max_spots:]
+
+
+def apply_context_spoof_decision(
+    track,
+    face,
+    ctx_eval: dict | None,
+    *,
+    frame_shape: tuple[int, int],
+    now: float,
+    min_face: float,
+    min_det_score: float,
+    confirm_frames: int,
+    quality=None,
+    suppressor: StaticUnattachedSuppressor | None = None,
+) -> bool:
+    """Cap nhat trang thai spoof ngu canh cho track. Tra ve True neu track bi chan do vat the tinh lap toa do."""
+    if ctx_eval is None:
+        return False
+    reason = ctx_eval.get("spoof_reason")
+    if reason == "screen_detected":
+        if min(float(face.w), float(face.h)) >= float(min_face):
+            track.spoof = True
+            track.spoof_reason = "screen_detected"
+        return False
+    if reason == "unattached_face":
+        if track.spoof:
+            if suppressor is not None and track.spoof_reason == "unattached_face":
+                suppressor.record(face.bbox, frame_shape, now)
+            return False
+        if not is_unattached_face_eligible(
+            face, min_face=min_face, min_det_score=min_det_score, quality=quality,
+        ):
+            return False
+        if suppressor is not None and suppressor.is_suppressed(face.bbox, frame_shape, now):
+            track.unattached_streak = 0
+            track.last_reason = "static_unattached_suppressed"
+            return True
+        track.unattached_streak += 1
+        if track.unattached_streak >= confirm_frames:
+            track.spoof = True
+            track.spoof_reason = track.spoof_reason or "unattached_face"
+            if suppressor is not None:
+                suppressor.record(face.bbox, frame_shape, now)
+        return False
+    track.unattached_streak = 0
+    return False
+
+
 class ContextDetector:
     MODEL_FILE = "yolox_nano_coco.onnx"
 
@@ -139,8 +264,11 @@ class ContextDetector:
         if not model_path.exists():
             raise FileNotFoundError(f"Thieu model {self.MODEL_FILE}")
         require(cfg, self.MODEL_FILE, models_dir)
+        ort_threads = int((cfg or {}).get("pipeline", {}).get("ort_threads", 2))
         so = ort.SessionOptions()
         so.log_severity_level = 3
+        so.intra_op_num_threads = ort_threads
+        so.inter_op_num_threads = ort_threads
         self.session = ort.InferenceSession(str(model_path), so, providers=providers or ["CPUExecutionProvider"])
         inp = self.session.get_inputs()[0]
         self.in_name = inp.name
