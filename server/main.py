@@ -154,7 +154,13 @@ def _handle_worker_ipc(msg: dict) -> None:
             tid = int(msg.get("track_id", 0))
             hist = ctx.track_timelines.pop(tid, [])
             linked_event_id = _pop_track_event(str(msg.get("camera_id", "gate-1")), tid, msg.get("employee_id"))
-            kind = "spoof" if msg.get("spoof") else ("employee" if msg.get("employee_id") else "unknown")
+            is_spoof = bool(msg.get("spoof"))
+            emp_id = msg.get("employee_id")
+            good_frames = msg.get("good_frames")
+            min_good = int((getattr(ctx, "cfg", None) or {}).get("recognition", {}).get("min_good_frames", 2))
+            if not is_spoof and emp_id is None and good_frames is not None and int(good_frames) < min_good:
+                return
+            kind = "spoof" if is_spoof else ("employee" if emp_id else "unknown")
             app_id = ctx.db.add_appearance(
                 kind=kind, employee_id=msg.get("employee_id"), code=msg.get("code"), name=msg.get("name"),
                 start_ts=float(msg.get("start_ts", now - 2.0)), end_ts=float(msg.get("end_ts", now)),

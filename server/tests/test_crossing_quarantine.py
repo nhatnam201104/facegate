@@ -93,8 +93,8 @@ def test_viewport_aware_truncation_and_3mp_1to1_roi_and_shift_schedule():
 
     class _DummyCtx:
         def detect(self, small_img):
-            # Nhan vao anh 640px thu nho tu chinh frame 3MP
-            scale = 640.0 / 2304.0
+            # Tinh ty le theo chieu rong anh that truyen vao ContextDetector.detect
+            scale = small_img.shape[1] / 2304.0
             return ContextScene(persons=[(pbox * scale).astype(np.float32)], mediums=[])
 
     faces, _ = detect_faces_two_stage_3mp(frame_3mp, _DummyEngine(), _DummyCtx())

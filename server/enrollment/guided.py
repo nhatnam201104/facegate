@@ -210,7 +210,8 @@ class GuidedSession:
         """Tra ve (face, quality, hint, pose). face=None neu khong du dieu kien de xet goc."""
         eng, lck = self._engine_and_lock()
         pose_est = getattr(self.ctx, "pose", None)
-        small, s = _resize_for_detect(frame)
+        det_w = int((self.ctx.cfg.get("pipeline") or {}).get("fallback_det_width", 1280))
+        small, s = _resize_for_detect(frame, width=det_w)
         if lck is not None:
             with lck:
                 faces = eng.detect(small)

@@ -35,6 +35,7 @@ class Face:
     bbox: np.ndarray      # x1, y1, x2, y2 (float)
     score: float
     kps: np.ndarray       # (5, 2)
+    landmarks_valid: bool = True
 
     @property
     def w(self) -> float:
@@ -43,6 +44,33 @@ class Face:
     @property
     def h(self) -> float:
         return float(self.bbox[3] - self.bbox[1])
+
+
+def landmarks_valid(bbox: np.ndarray, kps: np.ndarray, margin: float = 0.25) -> bool:
+    """Kiem tra hop le hinh hoc 5 diem moc: huu han, trong hop mo rong 25%, mat tren mieng, kc hai mat >= 25% rong hop."""
+    b = np.asarray(bbox, dtype=np.float64)
+    k = np.asarray(kps, dtype=np.float64)
+    if b.shape != (4,) or k.shape != (5, 2):
+        return False
+    if not (np.all(np.isfinite(b)) and np.all(np.isfinite(k))):
+        return False
+    x1, y1, x2, y2 = float(b[0]), float(b[1]), float(b[2]), float(b[3])
+    bw, bh = x2 - x1, y2 - y1
+    if bw <= 0.0 or bh <= 0.0:
+        return False
+    mx, my = margin * bw, margin * bh
+    if np.any(k[:, 0] < x1 - mx) or np.any(k[:, 0] > x2 + mx):
+        return False
+    if np.any(k[:, 1] < y1 - my) or np.any(k[:, 1] > y2 + my):
+        return False
+    eye_mid_y = 0.5 * (k[0, 1] + k[1, 1])
+    mouth_mid_y = 0.5 * (k[3, 1] + k[4, 1])
+    if not (eye_mid_y < mouth_mid_y):
+        return False
+    eye_dist = float(np.hypot(k[1, 0] - k[0, 0], k[1, 1] - k[0, 1]))
+    if eye_dist < 0.25 * bw:
+        return False
+    return True
 
 
 def _order_kps(kps: np.ndarray) -> np.ndarray:
@@ -89,23 +117,40 @@ class OpenCVEngine:
             if not p.exists():
                 raise FileNotFoundError(f"Thieu model {p.name}. Chay: python server/scripts/download_models.py")
             require(cfg, p.name, models_dir)
-        self.detector = cv2.FaceDetectorYN.create(str(det), "", (320, 320), det_score, 0.3, 5000)
+        pcfg = (cfg or {}).get("pipeline", {})
+        ort_threads = int(pcfg.get("ort_threads", 2))
+        cv2.setNumThreads(ort_threads)
+        det_nms = float(pcfg.get("det_nms", 0.40))
+        buckets = pcfg.get("roi_det_buckets", [320, 480, 640])
+        self._roi_det_buckets = sorted(int(b) for b in buckets) if buckets else [320, 480, 640]
+        self.detector = cv2.FaceDetectorYN.create(str(det), "", (320, 320), det_score, det_nms, 5000)
         self.recognizer = cv2.FaceRecognizerSF.create(str(rec), "")
         self._size = (0, 0)
 
     def detect(self, img: np.ndarray) -> list[Face]:
         h, w = img.shape[:2]
-        if (w, h) != self._size:
-            self.detector.setInputSize((w, h))
-            self._size = (w, h)
-        _, rows = self.detector.detect(img)
+        det_img = img
+        max_dim = max(h, w)
+        if self._roi_det_buckets and max_dim < self._roi_det_buckets[-1]:
+            target = next(b for b in self._roi_det_buckets if b >= max_dim)
+            if h != target or w != target:
+                det_img = cv2.copyMakeBorder(
+                    img, 0, target - h, 0, target - w,
+                    cv2.BORDER_CONSTANT, value=(114, 114, 114),
+                )
+        dh, dw = det_img.shape[:2]
+        if (dw, dh) != self._size:
+            self.detector.setInputSize((dw, dh))
+            self._size = (dw, dh)
+        _, rows = self.detector.detect(det_img)
         faces = []
         if rows is None:
             return faces
         for r in rows:
             x, y, bw, bh = r[:4]
+            bbox = np.array([x, y, x + bw, y + bh], np.float32)
             kps = _order_kps(r[4:14].reshape(5, 2))
-            faces.append(Face(np.array([x, y, x + bw, y + bh], np.float32), float(r[14]), kps))
+            faces.append(Face(bbox, float(r[14]), kps, landmarks_valid=landmarks_valid(bbox, kps)))
         return faces
 
     def align(self, img: np.ndarray, face: Face, pose=None, pose_group: str | None = None) -> np.ndarray:

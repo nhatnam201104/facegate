@@ -122,6 +122,12 @@ class Pipeline:
         self.llr_cfg = LLRConfig.from_cfg(cfg)
         self.viewport_grace = float(trk_cfg.get("viewport_bottom_grace", 0.80))
         self.unattached_confirm_frames = int(trk_cfg.get("unattached_confirm_frames", 4))
+        self.unattached_min_det_score = float(trk_cfg.get("unattached_min_det_score", 0.72))
+        from .context_detector import StaticUnattachedSuppressor
+        self.static_unattached_suppressor = StaticUnattachedSuppressor(
+            cooldown_sec=float(trk_cfg.get("unattached_static_cooldown_sec", 300.0)),
+            iou_thr=float(trk_cfg.get("unattached_static_iou", 0.65)),
+        )
         lc = cfg.get("liveness", {})
         self.live_thr = float(lc.get("threshold", 0.7))
         self.spoof_thr = float(lc.get("spoof_below", 0.35))
@@ -134,7 +140,8 @@ class Pipeline:
         self.qcfg = cfg.get("quality", {})
         self.ecfg = cfg.get("events", {})
         self.pcfg = cfg.get("pipeline", {})
-        self.det_width = 960
+        self.det_width = int(self.pcfg.get("fallback_det_width", 1280))
+        self._cycle_index = 0
         self.jpeg: bytes | None = None
         self.jpeg_id = 0
         self.jpeg_cond = threading.Condition()
@@ -396,6 +403,8 @@ class Pipeline:
 
     # --------------------------------------------------------------- process
     def _detect(self, frame: np.ndarray) -> list[Face]:
+        cyc = getattr(self, "_cycle_index", 0)
+        self._cycle_index = cyc + 1
         if self.pcfg.get("two_stage_roi", True) and self.ctx_det is not None:
             from .worker_perception import detect_faces_two_stage_3mp
             with self.engine_lock:
@@ -404,11 +413,15 @@ class Pipeline:
                     fallback_det_width=int(self.pcfg.get("fallback_det_width", 1280)),
                     max_faces=int(self.pcfg["max_faces"]),
                     always_fallback_unmatched=bool(self.pcfg.get("always_fallback_unmatched", True)),
+                    cycle_index=cyc,
+                    det_cfg=self.pcfg,
+                    min_clipped_face=float(getattr(self, "qcfg", {}).get("min_face", 60)),
                 )
             self._last_scene = scene
             return faces
         h, w = frame.shape[:2]
-        s = min(1.0, self.det_width / w)
+        det_w = int(self.pcfg.get("fallback_det_width", 1280))
+        s = min(1.0, float(det_w) / max(w, 1))
         small = cv2.resize(frame, (int(w * s), int(h * s))) if s < 1 else frame
         with self.engine_lock:
             faces = self.engine.detect(small)
@@ -458,6 +471,35 @@ class Pipeline:
 
     def _update_track(self, t: Track, f: Face, frame: np.ndarray, now: float, scene=None,
                       prev_meta: tuple[float, float] | None = None) -> None:
+        min_face = float(getattr(self, "qcfg", {}).get("min_face", 60))
+        unattached_min_score = float(getattr(self, "unattached_min_det_score", 0.72))
+        suppressor = getattr(self, "static_unattached_suppressor", None)
+        if not getattr(f, "landmarks_valid", True):
+            t.last_reason = "landmarks_invalid"
+            if t.best_crop is None:
+                t.best_crop = crop_with_margin(frame, f.bbox)
+            if scene is not None:
+                from .context_detector import apply_context_spoof_decision, evaluate_face_context
+                ctx_eval = evaluate_face_context(f.bbox, scene, frame_height=frame.shape[0], viewport_bottom_grace=self.viewport_grace)
+                apply_context_spoof_decision(
+                    t, f, ctx_eval,
+                    frame_shape=frame.shape[:2], now=now,
+                    min_face=min_face, min_det_score=unattached_min_score,
+                    confirm_frames=self.unattached_confirm_frames,
+                    suppressor=suppressor,
+                )
+            if t.spoof:
+                if t.decision_acc is not None:
+                    t.decision_acc.apply_liveness("spoof")
+                prompter = getattr(self, "look_prompter", None)
+                if prompter is not None:
+                    prompter.update(t.id, now, t.last_yaw, "spoof", spoof=True, event_done=t.event_done)
+                if not t.event_done:
+                    t.spoof_reason = t.spoof_reason or "texture_spoof"
+                    log.warning("Track %d: nghi gia mao (%s, landmarks_invalid) -> khong cham cong",
+                                t.id, t.spoof_reason)
+                    self._emit(t, None, kind="spoof")
+            return
         pose = (
             self.pose.estimate(frame, f, prev_group=t.pose_group if t.hits > 1 else None, track_id=t.id, ts=now)
             if self.pose is not None else None
@@ -474,21 +516,20 @@ class Pipeline:
             t.pose_group, t.last_yaw = pose.pose_group, pose.gate_yaw()
             t.min_abs_yaw = min(t.min_abs_yaw, abs(pose.gate_yaw()))
         ctx_eval = None
+        static_suppressed = False
         if scene is not None:
-            from .context_detector import evaluate_face_context
+            from .context_detector import apply_context_spoof_decision, evaluate_face_context, is_unattached_face_eligible
             ctx_eval = evaluate_face_context(f.bbox, scene, frame_height=frame.shape[0], viewport_bottom_grace=self.viewport_grace)
-            if ctx_eval["spoof_reason"] == "screen_detected":
-                t.spoof = True
-                t.spoof_reason = "screen_detected"
-            elif ctx_eval["spoof_reason"] == "unattached_face":
-                t.unattached_streak += 1
-                if t.unattached_streak >= self.unattached_confirm_frames:
-                    t.spoof = True
-                    t.spoof_reason = t.spoof_reason or "unattached_face"
-            else:
-                t.unattached_streak = 0
+            static_suppressed = apply_context_spoof_decision(
+                t, f, ctx_eval,
+                frame_shape=frame.shape[:2], now=now,
+                min_face=min_face, min_det_score=unattached_min_score,
+                confirm_frames=self.unattached_confirm_frames,
+                quality=q,
+                suppressor=suppressor,
+            )
 
-        if q.ok and pose_ok and not t.crossing_active and not t.spoof:
+        if q.ok and pose_ok and not t.crossing_active and not t.spoof and not static_suppressed:
             with self.engine_lock:
                 aligned = (
                     self.engine.align(frame, f, pose=pose, pose_group=pose.pose_group if pose is not None else None)
@@ -507,7 +548,11 @@ class Pipeline:
                 if pose is not None:
                     t.pose_group, t.last_yaw, t.min_abs_yaw = pose.pose_group, pose.gate_yaw(), abs(pose.gate_yaw())
                 t.last_reason = q.reason
-                if ctx_eval is not None and ctx_eval["spoof_reason"] == "unattached_face":
+                if (
+                    ctx_eval is not None
+                    and ctx_eval["spoof_reason"] == "unattached_face"
+                    and is_unattached_face_eligible(f, min_face=min_face, min_det_score=unattached_min_score, quality=q)
+                ):
                     t.unattached_streak = 1
                 self._start_clip(t)
             t.embs.append((emb, max(q.score, 0.05)))

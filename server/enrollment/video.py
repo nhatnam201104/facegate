@@ -67,9 +67,9 @@ def read_video_frames(path: Path, sample_fps: float, max_frames: int = 300) -> l
     return frames
 
 
-def _resize_for_detect(frame: np.ndarray, width: int = 960):
+def _resize_for_detect(frame: np.ndarray, width: int = 1280):
     h, w = frame.shape[:2]
-    s = min(1.0, width / w)
+    s = min(1.0, float(width) / max(w, 1))
     return (cv2.resize(frame, (int(w * s), int(h * s))) if s < 1 else frame), s
 
 
@@ -88,10 +88,11 @@ def process_enrollment(frames: list[np.ndarray], code: str, name: str, ctx) -> d
     ecfg, qcfg = cfg["enrollment"], dict(cfg["quality"])
     qcfg["max_yaw"] = max(float(qcfg.get("max_yaw", 90)), 90.0)
 
+    det_w = int((cfg.get("pipeline") or {}).get("fallback_det_width", 1280))
     stats = {"frames_total": len(frames), "no_face": 0, "multi_face": 0, "rejected": {}}
     cands = []
     for idx, fr in enumerate(frames):
-        small, s = _resize_for_detect(fr)
+        small, s = _resize_for_detect(fr, width=det_w)
         if lock is not None:
             with lock:
                 faces = engine.detect(small)
